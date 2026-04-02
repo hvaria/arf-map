@@ -1,0 +1,10 @@
+node_modules
+dist
+android
+ios
+.git
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*

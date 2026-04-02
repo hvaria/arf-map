@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="#2563eb"/>
+  <!-- Map pin body -->
+  <path d="M256 96c-66.3 0-120 53.7-120 120 0 90 120 200 120 200s120-110 120-200c0-66.3-53.7-120-120-120z" fill="white"/>
+  <!-- Map pin inner circle -->
+  <circle cx="256" cy="216" r="44" fill="#2563eb"/>
+  <!-- Briefcase icon (jobs) - small, bottom right -->
+  <rect x="340" y="340" width="120" height="96" rx="12" fill="white" opacity="0.95"/>
+  <rect x="364" y="328" width="72" height="24" rx="8" fill="white" opacity="0.95"/>
+  <line x1="340" y1="374" x2="460" y2="374" stroke="#2563eb" stroke-width="8"/>
+</svg>

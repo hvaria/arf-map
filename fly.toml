@@ -1,0 +1,31 @@
+# Fly.io configuration for ARF Map
+# Deploy with: fly deploy
+app = "arf-map"
+primary_region = "sjc"   # San Jose — closest to California data
+
+[build]
+  # Dockerfile at project root is used automatically
+
+[env]
+  PORT     = "8080"
+  NODE_ENV = "production"
+  # SQLite lives on the persistent volume mounted at /data
+  DATA_DIR = "/data"
+
+[http_service]
+  internal_port       = 8080
+  force_https         = true
+  auto_stop_machines  = "stop"   # spin down when idle (free tier)
+  auto_start_machines = true     # wake up on first request
+  min_machines_running = 0
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus     = 1
+  memory   = "256mb"
+
+# Persistent volume — keeps data.db alive across deploys
+[[mounts]]
+  source      = "arf_data"
+  destination = "/data"
+  processes   = ["app"]
