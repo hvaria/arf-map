@@ -20,8 +20,6 @@ import Database from "better-sqlite3";
 import { eq, and } from "drizzle-orm";
 import path from "path";
 
-// In production (Fly.io) DATA_DIR=/data points to the persistent volume.
-// Locally it stays at the project root.
 const DB_PATH = process.env.DATA_DIR
   ? path.join(process.env.DATA_DIR, "data.db")
   : "data.db";
@@ -71,6 +69,9 @@ sqlite.exec(`
     username TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    verification_token TEXT,
+    verification_expiry INTEGER,
     created_at INTEGER NOT NULL
   );
 
@@ -86,6 +87,25 @@ sqlite.exec(`
     updated_at INTEGER NOT NULL
   );
 `);
+
+// Migrations: safely add new columns to existing tables
+function addColumnIfMissing(table: string, column: string, definition: string) {
+  const cols = (sqlite.pragma(`table_info(${table})`) as any[]).map((c) => c.name);
+  if (!cols.includes(column)) {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+addColumnIfMissing("job_seeker_accounts", "email_verified", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("job_seeker_accounts", "verification_token", "TEXT");
+addColumnIfMissing("job_seeker_accounts", "verification_expiry", "INTEGER");
+
+addColumnIfMissing("job_seeker_profiles", "first_name", "TEXT");
+addColumnIfMissing("job_seeker_profiles", "last_name", "TEXT");
+addColumnIfMissing("job_seeker_profiles", "address", "TEXT");
+addColumnIfMissing("job_seeker_profiles", "state", "TEXT");
+addColumnIfMissing("job_seeker_profiles", "zip_code", "TEXT");
+addColumnIfMissing("job_seeker_profiles", "profile_picture_url", "TEXT");
 
 export const db = drizzle(sqlite);
 
@@ -107,16 +127,6 @@ export interface IStorage {
 
   getAllJobPostings(): Promise<DbJobPosting[]>;
   getJobPostings(facilityNumber: string): Promise<DbJobPosting[]>;
-
-  getJobSeekerAccount(id: number): Promise<JobSeekerAccount | undefined>;
-  getJobSeekerAccountByUsername(username: string): Promise<JobSeekerAccount | undefined>;
-  getJobSeekerAccountByEmail(email: string): Promise<JobSeekerAccount | undefined>;
-  createJobSeekerAccount(data: InsertJobSeekerAccount): Promise<JobSeekerAccount>;
-  getJobSeekerProfile(accountId: number): Promise<JobSeekerProfile | undefined>;
-  upsertJobSeekerProfile(
-    accountId: number,
-    data: Partial<Pick<JobSeekerProfile, "name" | "phone" | "city" | "yearsExperience" | "jobTypes" | "bio">>
-  ): Promise<JobSeekerProfile>;
   createJobPosting(
     facilityNumber: string,
     data: Pick<DbJobPosting, "title" | "type" | "salary" | "description" | "requirements">
@@ -127,6 +137,21 @@ export interface IStorage {
     data: Partial<Pick<DbJobPosting, "title" | "type" | "salary" | "description" | "requirements">>
   ): Promise<DbJobPosting | undefined>;
   deleteJobPosting(id: number, facilityNumber: string): Promise<boolean>;
+
+  getJobSeekerAccount(id: number): Promise<JobSeekerAccount | undefined>;
+  getJobSeekerAccountByEmail(email: string): Promise<JobSeekerAccount | undefined>;
+  getJobSeekerAccountByVerificationToken(token: string): Promise<JobSeekerAccount | undefined>;
+  createJobSeekerAccount(data: InsertJobSeekerAccount): Promise<JobSeekerAccount>;
+  updateJobSeekerAccount(id: number, data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>): Promise<void>;
+
+  getJobSeekerProfile(accountId: number): Promise<JobSeekerProfile | undefined>;
+  upsertJobSeekerProfile(
+    accountId: number,
+    data: Partial<Pick<JobSeekerProfile,
+      "name" | "firstName" | "lastName" | "phone" | "address" | "city" |
+      "state" | "zipCode" | "profilePictureUrl" | "yearsExperience" | "jobTypes" | "bio"
+    >>
+  ): Promise<JobSeekerProfile>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -250,25 +275,47 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(jobSeekerAccounts).where(eq(jobSeekerAccounts.id, id)).get();
   }
 
-  async getJobSeekerAccountByUsername(username: string): Promise<JobSeekerAccount | undefined> {
-    return db.select().from(jobSeekerAccounts).where(eq(jobSeekerAccounts.username, username)).get();
-  }
-
   async getJobSeekerAccountByEmail(email: string): Promise<JobSeekerAccount | undefined> {
     return db.select().from(jobSeekerAccounts).where(eq(jobSeekerAccounts.email, email)).get();
+  }
+
+  async getJobSeekerAccountByVerificationToken(token: string): Promise<JobSeekerAccount | undefined> {
+    return db
+      .select()
+      .from(jobSeekerAccounts)
+      .where(eq(jobSeekerAccounts.verificationToken, token))
+      .get();
   }
 
   async createJobSeekerAccount(data: InsertJobSeekerAccount): Promise<JobSeekerAccount> {
     return db.insert(jobSeekerAccounts).values(data).returning().get();
   }
 
+  async updateJobSeekerAccount(
+    id: number,
+    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>
+  ): Promise<void> {
+    await db
+      .update(jobSeekerAccounts)
+      .set(data)
+      .where(eq(jobSeekerAccounts.id, id))
+      .run();
+  }
+
   async getJobSeekerProfile(accountId: number): Promise<JobSeekerProfile | undefined> {
-    return db.select().from(jobSeekerProfiles).where(eq(jobSeekerProfiles.accountId, accountId)).get();
+    return db
+      .select()
+      .from(jobSeekerProfiles)
+      .where(eq(jobSeekerProfiles.accountId, accountId))
+      .get();
   }
 
   async upsertJobSeekerProfile(
     accountId: number,
-    data: Partial<Pick<JobSeekerProfile, "name" | "phone" | "city" | "yearsExperience" | "jobTypes" | "bio">>
+    data: Partial<Pick<JobSeekerProfile,
+      "name" | "firstName" | "lastName" | "phone" | "address" | "city" |
+      "state" | "zipCode" | "profilePictureUrl" | "yearsExperience" | "jobTypes" | "bio"
+    >>
   ): Promise<JobSeekerProfile> {
     const existing = await this.getJobSeekerProfile(accountId);
     const now = Date.now();

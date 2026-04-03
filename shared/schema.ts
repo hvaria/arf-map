@@ -14,15 +14,26 @@ export const jobSeekerAccounts = sqliteTable("job_seeker_accounts", {
   username: text("username").notNull().unique(),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
+  emailVerified: integer("email_verified").notNull().default(0),
+  verificationToken: text("verification_token"),
+  verificationExpiry: integer("verification_expiry"),
   createdAt: integer("created_at").notNull(),
 });
 
 export const jobSeekerProfiles = sqliteTable("job_seeker_profiles", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   accountId: integer("account_id").notNull().unique(),
+  // Legacy name field (kept for backward compatibility)
   name: text("name"),
+  // New split name fields
+  firstName: text("first_name"),
+  lastName: text("last_name"),
   phone: text("phone"),
+  address: text("address"),
   city: text("city"),
+  state: text("state"),
+  zipCode: text("zip_code"),
+  profilePictureUrl: text("profile_picture_url"),
   yearsExperience: integer("years_experience"),
   jobTypes: text("job_types"), // JSON array stored as string
   bio: text("bio"),

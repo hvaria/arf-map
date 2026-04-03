@@ -2,8 +2,10 @@ import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import passport from "passport";
 import { z } from "zod";
+import { randomInt } from "crypto";
 import { storage } from "./storage";
 import { hashPassword, comparePassword } from "./auth";
+import { sendVerificationEmail } from "./email";
 
 declare module "express-session" {
   interface SessionData {
@@ -23,6 +25,10 @@ function requireJobSeekerAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Not authenticated" });
   }
   next();
+}
+
+function generateOTP(): string {
+  return randomInt(100000, 999999).toString();
 }
 
 const registerSchema = z.object({
@@ -46,12 +52,31 @@ const jobPostingInputSchema = z.object({
   requirements: z.array(z.string()),
 });
 
+const jobSeekerRegisterSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+const jobSeekerProfileSchema = z.object({
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  zipCode: z.string().optional(),
+  profilePictureUrl: z.string().optional(),
+  yearsExperience: z.number().int().min(0).max(50).optional(),
+  jobTypes: z.array(z.string()).optional(),
+  bio: z.string().optional(),
+});
+
 export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
   });
 
-  // ── Auth ────────────────────────────────────────────────────────────────────
+  // ── Facility Auth ────────────────────────────────────────────────────────────
 
   app.post("/api/facility/register", async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
@@ -133,7 +158,7 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json(override);
   });
 
-  // ── Public job listings (job seeker portal) ──────────────────────────────────
+  // ── Public job listings ──────────────────────────────────────────────────────
 
   app.get("/api/jobs", async (_req, res) => {
     const jobs = await storage.getAllJobPostings();
@@ -222,55 +247,107 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ── Job Seeker Auth ──────────────────────────────────────────────────────────
 
-  const jobSeekerRegisterSchema = z.object({
-    username: z.string().min(3, "Username must be at least 3 characters").max(50),
-    email: z.string().email("Invalid email address"),
-    password: z.string().min(8, "Password must be at least 8 characters"),
-  });
-
-  const jobSeekerProfileSchema = z.object({
-    name: z.string().optional(),
-    phone: z.string().optional(),
-    city: z.string().optional(),
-    yearsExperience: z.number().int().min(0).max(50).optional(),
-    jobTypes: z.array(z.string()).optional(),
-    bio: z.string().optional(),
-  });
-
+  // Register: email + password, sends OTP verification email
   app.post("/api/jobseeker/register", async (req, res) => {
     const parsed = jobSeekerRegisterSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
-    const { username, email, password } = parsed.data;
+    const { email, password } = parsed.data;
 
-    const existingByUsername = await storage.getJobSeekerAccountByUsername(username);
-    if (existingByUsername) {
-      return res.status(409).json({ message: "Username is already taken" });
-    }
     const existingByEmail = await storage.getJobSeekerAccountByEmail(email);
     if (existingByEmail) {
+      // If already registered but not verified, resend OTP
+      if (!existingByEmail.emailVerified) {
+        const otp = generateOTP();
+        const expiry = Date.now() + 15 * 60 * 1000; // 15 minutes
+        await storage.updateJobSeekerAccount(existingByEmail.id, {
+          verificationToken: otp,
+          verificationExpiry: expiry,
+        });
+        await sendVerificationEmail(email, otp);
+        return res.status(200).json({ emailSent: true, needsVerification: true });
+      }
       return res.status(409).json({ message: "Email is already registered" });
     }
 
     const hashed = await hashPassword(password);
+    const otp = generateOTP();
+    const expiry = Date.now() + 15 * 60 * 1000;
+
     const account = await storage.createJobSeekerAccount({
-      username,
+      username: email, // use email as username
       email,
       password: hashed,
+      emailVerified: 0,
+      verificationToken: otp,
+      verificationExpiry: expiry,
       createdAt: Date.now(),
     });
 
-    req.session.jobSeekerId = account.id;
-    res.status(201).json({ id: account.id, username: account.username, email: account.email });
+    await sendVerificationEmail(email, otp);
+
+    res.status(201).json({ emailSent: true, needsVerification: true, id: account.id });
   });
 
-  app.post("/api/jobseeker/login", async (req, res) => {
-    const { username, password } = req.body as { username?: string; password?: string };
-    if (!username || !password) {
-      return res.status(400).json({ message: "Username and password are required" });
+  // Verify OTP
+  app.post("/api/jobseeker/verify-email", async (req, res) => {
+    const { email, otp } = req.body as { email?: string; otp?: string };
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP are required" });
     }
-    const account = await storage.getJobSeekerAccountByUsername(username);
+
+    const account = await storage.getJobSeekerAccountByEmail(email);
+    if (!account) {
+      return res.status(404).json({ message: "Account not found" });
+    }
+    if (account.emailVerified) {
+      return res.status(400).json({ message: "Email already verified" });
+    }
+    if (!account.verificationToken || account.verificationToken !== otp) {
+      return res.status(400).json({ message: "Invalid verification code" });
+    }
+    if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {
+      return res.status(400).json({ message: "Verification code has expired. Please request a new one." });
+    }
+
+    await storage.updateJobSeekerAccount(account.id, {
+      emailVerified: 1,
+      verificationToken: null,
+      verificationExpiry: null,
+    });
+
+    req.session.jobSeekerId = account.id;
+    res.json({ ok: true, id: account.id, email: account.email });
+  });
+
+  // Resend OTP
+  app.post("/api/jobseeker/resend-otp", async (req, res) => {
+    const { email } = req.body as { email?: string };
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    const account = await storage.getJobSeekerAccountByEmail(email);
+    if (!account) return res.status(404).json({ message: "Account not found" });
+    if (account.emailVerified) return res.status(400).json({ message: "Email already verified" });
+
+    const otp = generateOTP();
+    const expiry = Date.now() + 15 * 60 * 1000;
+    await storage.updateJobSeekerAccount(account.id, {
+      verificationToken: otp,
+      verificationExpiry: expiry,
+    });
+    await sendVerificationEmail(email, otp);
+
+    res.json({ emailSent: true });
+  });
+
+  // Login: by email + password
+  app.post("/api/jobseeker/login", async (req, res) => {
+    const { email, password } = req.body as { email?: string; password?: string };
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+    const account = await storage.getJobSeekerAccountByEmail(email);
     if (!account) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -278,8 +355,11 @@ export async function registerRoutes(server: Server, app: Express) {
     if (!valid) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
+    if (!account.emailVerified) {
+      return res.status(403).json({ message: "Please verify your email before signing in.", needsVerification: true });
+    }
     req.session.jobSeekerId = account.id;
-    res.json({ id: account.id, username: account.username, email: account.email });
+    res.json({ id: account.id, email: account.email });
   });
 
   app.post("/api/jobseeker/logout", (req, res) => {
@@ -296,12 +376,16 @@ export async function registerRoutes(server: Server, app: Express) {
       req.session.jobSeekerId = undefined;
       return res.status(401).json({ message: "Not authenticated" });
     }
-    res.json({ id: account.id, username: account.username, email: account.email });
+    res.json({ id: account.id, email: account.email });
   });
 
   app.get("/api/jobseeker/profile", requireJobSeekerAuth, async (req, res) => {
     const profile = await storage.getJobSeekerProfile(req.session.jobSeekerId!);
-    res.json(profile ?? null);
+    if (!profile) return res.json(null);
+    res.json({
+      ...profile,
+      jobTypes: profile.jobTypes ? JSON.parse(profile.jobTypes) : [],
+    });
   });
 
   app.put("/api/jobseeker/profile", requireJobSeekerAuth, async (req, res) => {
