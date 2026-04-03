@@ -18,6 +18,10 @@ export const jobSeekerAccounts = sqliteTable("job_seeker_accounts", {
   verificationToken: text("verification_token"),
   verificationExpiry: integer("verification_expiry"),
   createdAt: integer("created_at").notNull(),
+  // Extended fields — added via addColumnIfMissing migration in storage.ts
+  lastLoginAt: integer("last_login_at"),
+  failedLoginCount: integer("failed_login_count").notNull().default(0),
+  updatedAt: integer("updated_at"),
 });
 
 export const jobSeekerProfiles = sqliteTable("job_seeker_profiles", {

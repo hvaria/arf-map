@@ -6,9 +6,10 @@ import { createServer } from "http";
 import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
-import createMemoryStore from "memorystore";
 import { storage } from "./storage";
 import { comparePassword } from "./auth";
+import { sqlite } from "./db/index";
+import { SqliteSessionStore } from "./session/sqliteSessionStore";
 import type { FacilityAccount } from "@shared/schema";
 
 declare global {
@@ -16,8 +17,6 @@ declare global {
     interface User extends FacilityAccount {}
   }
 }
-
-const MemoryStore = createMemoryStore(session);
 
 const app = express();
 const httpServer = createServer(app);
@@ -43,10 +42,14 @@ app.use(
     secret: process.env.SESSION_SECRET || "arf-map-facility-portal-secret",
     resave: false,
     saveUninitialized: false,
-    store: new MemoryStore({ checkPeriod: 86400000 }),
+    // Production-safe SQLite session store — survives server restarts.
+    // Swap for connect-pg-simple (PostgreSQL) or connect-redis as you scale.
+    store: new SqliteSessionStore(sqlite),
     cookie: {
       secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days default; overridable per-session
     },
   }),
 );

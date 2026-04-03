@@ -15,19 +15,12 @@ import {
   type InsertJobSeekerAccount,
   type JobSeekerProfile,
 } from "@shared/schema";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import Database from "better-sqlite3";
 import { eq, and } from "drizzle-orm";
-import path from "path";
+import { sqlite, db } from "./db/index";
 
-const DB_PATH = process.env.DATA_DIR
-  ? path.join(process.env.DATA_DIR, "data.db")
-  : "data.db";
-
-const sqlite = new Database(DB_PATH);
-sqlite.pragma("journal_mode = WAL");
-
-// Auto-create tables on startup
+// ── Schema bootstrap ─────────────────────────────────────────────────────────
+// These CREATE TABLE IF NOT EXISTS statements are idempotent; they run on every
+// startup and are a lightweight alternative to running drizzle-kit migrations.
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +92,32 @@ function addColumnIfMissing(table: string, column: string, definition: string) {
 addColumnIfMissing("job_seeker_accounts", "email_verified", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("job_seeker_accounts", "verification_token", "TEXT");
 addColumnIfMissing("job_seeker_accounts", "verification_expiry", "INTEGER");
+addColumnIfMissing("job_seeker_accounts", "last_login_at", "INTEGER");
+addColumnIfMissing("job_seeker_accounts", "failed_login_count", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("job_seeker_accounts", "updated_at", "INTEGER");
+
+// Sessions table used by SqliteSessionStore
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    sid TEXT PRIMARY KEY,
+    sess TEXT NOT NULL,
+    expired_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_expired_at ON sessions (expired_at);
+`);
+
+// Login attempt audit log
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS login_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    ip TEXT,
+    success INTEGER NOT NULL DEFAULT 0,
+    failure_reason TEXT,
+    attempted_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts (email);
+`);
 
 addColumnIfMissing("job_seeker_profiles", "first_name", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "last_name", "TEXT");
@@ -106,8 +125,6 @@ addColumnIfMissing("job_seeker_profiles", "address", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "state", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "zip_code", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "profile_picture_url", "TEXT");
-
-export const db = drizzle(sqlite);
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
@@ -142,7 +159,10 @@ export interface IStorage {
   getJobSeekerAccountByEmail(email: string): Promise<JobSeekerAccount | undefined>;
   getJobSeekerAccountByVerificationToken(token: string): Promise<JobSeekerAccount | undefined>;
   createJobSeekerAccount(data: InsertJobSeekerAccount): Promise<JobSeekerAccount>;
-  updateJobSeekerAccount(id: number, data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>): Promise<void>;
+  updateJobSeekerAccount(
+    id: number,
+    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "lastLoginAt" | "failedLoginCount" | "updatedAt">>
+  ): Promise<void>;
 
   getJobSeekerProfile(accountId: number): Promise<JobSeekerProfile | undefined>;
   upsertJobSeekerProfile(
@@ -293,7 +313,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateJobSeekerAccount(
     id: number,
-    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>
+    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "lastLoginAt" | "failedLoginCount" | "updatedAt">>
   ): Promise<void> {
     await db
       .update(jobSeekerAccounts)

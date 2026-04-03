@@ -9,6 +9,7 @@
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
+    "db:seed": "tsx server/db/seed.ts",
     "mobile:build": "tsx script/build.ts && npx cap sync",
     "mobile:android": "tsx script/build.ts && npx cap sync && npx cap open android",
     "mobile:ios": "tsx script/build.ts && npx cap sync && npx cap open ios",

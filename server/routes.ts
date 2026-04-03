@@ -4,24 +4,13 @@ import passport from "passport";
 import { z } from "zod";
 import { randomInt } from "crypto";
 import { storage } from "./storage";
-import { hashPassword, comparePassword } from "./auth";
+import { hashPassword } from "./auth";
 import { sendVerificationEmail } from "./email";
-
-declare module "express-session" {
-  interface SessionData {
-    jobSeekerId?: number;
-  }
-}
+import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
+import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-  next();
-}
-
-function requireJobSeekerAuth(req: Request, res: Response, next: NextFunction) {
-  if (!req.session.jobSeekerId) {
     return res.status(401).json({ message: "Not authenticated" });
   }
   next();
@@ -72,6 +61,11 @@ const jobSeekerProfileSchema = z.object({
 });
 
 export async function registerRoutes(server: Server, app: Express) {
+  // ── Job Seeker Auth (login / logout / me / dashboard) ────────────────────
+  // Handled by the clean-architecture router.  Registration, OTP verification,
+  // and profile management remain below for now.
+  app.use("/api/jobseeker", jobseekerAuthRouter);
+
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
   });
@@ -339,44 +333,6 @@ export async function registerRoutes(server: Server, app: Express) {
     await sendVerificationEmail(email, otp);
 
     res.json({ emailSent: true });
-  });
-
-  // Login: by email + password
-  app.post("/api/jobseeker/login", async (req, res) => {
-    const { email, password } = req.body as { email?: string; password?: string };
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" });
-    }
-    const account = await storage.getJobSeekerAccountByEmail(email);
-    if (!account) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-    const valid = await comparePassword(password, account.password);
-    if (!valid) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-    if (!account.emailVerified) {
-      return res.status(403).json({ message: "Please verify your email before signing in.", needsVerification: true });
-    }
-    req.session.jobSeekerId = account.id;
-    res.json({ id: account.id, email: account.email });
-  });
-
-  app.post("/api/jobseeker/logout", (req, res) => {
-    req.session.jobSeekerId = undefined;
-    res.json({ ok: true });
-  });
-
-  app.get("/api/jobseeker/me", async (req, res) => {
-    if (!req.session.jobSeekerId) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
-    const account = await storage.getJobSeekerAccount(req.session.jobSeekerId);
-    if (!account) {
-      req.session.jobSeekerId = undefined;
-      return res.status(401).json({ message: "Not authenticated" });
-    }
-    res.json({ id: account.id, email: account.email });
   });
 
   app.get("/api/jobseeker/profile", requireJobSeekerAuth, async (req, res) => {
