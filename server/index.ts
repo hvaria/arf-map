@@ -154,5 +154,6 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
+    log(`[email] RESEND_API_KEY set: ${!!process.env.RESEND_API_KEY}`);
   });
 })();
