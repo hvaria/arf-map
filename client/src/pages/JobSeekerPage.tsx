@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -289,9 +289,19 @@ function VerifyEmailScreen({ email, onVerified }: { email: string; onVerified: (
   const [otp, setOtp] = useState("");
 
   const verifyMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/jobseeker/verify-email", { email, otp }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/jobseeker/me"] });
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/jobseeker/verify-email", { email, otp });
+      // Parse the JSON here so onSuccess receives the account data directly.
+      return res.json() as Promise<{ ok: boolean; id: number; email: string }>;
+    },
+    onSuccess: (data) => {
+      // Populate the /me cache immediately — no separate refetch needed.
+      // This prevents the auth form from flashing while the network round-trip
+      // to /api/jobseeker/me completes.
+      qc.setQueryData<JobSeekerAccount>(["/api/jobseeker/me"], {
+        id: data.id,
+        email: data.email,
+      });
       onVerified();
     },
     onError: (err: any) => toast({ title: "Verification failed", description: err.message, variant: "destructive" }),
@@ -626,6 +636,16 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  // Auto-open the profile editor for first-time users who have no saved profile.
+  // Once opened (or once a profile exists), never auto-open again this session.
+  const didAutoOpen = useRef(false);
+  useEffect(() => {
+    if (!didAutoOpen.current && profile === null) {
+      didAutoOpen.current = true;
+      setEditingProfile(true);
+    }
+  }, [profile]);
+
   const { data: jobs = [] } = useQuery<PublicJob[]>({
     queryKey: ["/api/jobs"],
     staleTime: 60000,
@@ -888,7 +908,11 @@ export default function JobSeekerPage() {
         ) : effectiveView === "verify" && pageState.view === "verify" ? (
           <VerifyEmailScreen
             email={pageState.email}
-            onVerified={() => setPageState({ view: "auth" })}
+            onVerified={() => {
+              // No page-state change needed: qc.setQueryData in the verify
+              // mutation already populates the /me cache, which drives
+              // effectiveView → "dashboard" in the same render cycle.
+            }}
           />
         ) : (
           <AuthSection
