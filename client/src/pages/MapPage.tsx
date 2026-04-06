@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { MapView } from "@/components/MapView";
 import { FacilityPanel } from "@/components/FacilityPanel";
 import { JobsPanel } from "@/components/JobsPanel";
@@ -13,6 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Building2, Briefcase, LogIn } from "lucide-react";
+import { getQueryFn } from "@/lib/queryClient";
 import facilitiesData from "@/data/facilities.json";
 import type { Facility } from "@shared/schema";
 
@@ -29,6 +31,18 @@ export default function MapPage() {
   const [capacityFilters, setCapacityFilters] = useState<Set<string>>(new Set());
   const [facilityType, setFacilityType] = useState<"small" | "large" | null>(null);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+
+  const { data: jobSeeker } = useQuery<{ id: number; email: string } | null>({
+    queryKey: ["/api/jobseeker/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 60000,
+  });
+
+  const { data: jobSeekerProfile } = useQuery<{ profilePictureUrl?: string | null; firstName?: string | null } | null>({
+    queryKey: ["/api/jobseeker/profile"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!jobSeeker,
+  });
 
   const filteredFacilities = useMemo(() => {
     let result = facilities;
@@ -119,17 +133,35 @@ export default function MapPage() {
                 filteredCount={filteredFacilities.length}
               />
             </div>
-            {/* Mobile-only login button */}
-            <div className="pointer-events-auto ml-auto">
-              <Button
-                variant="outline"
-                size="sm"
-                className="md:hidden bg-background/90 backdrop-blur-sm shadow-sm"
-                onClick={() => setLoginDialogOpen(true)}
-              >
-                <LogIn className="h-4 w-4 mr-1.5" />
-                Login
-              </Button>
+            {/* Mobile-only: profile avatar or login button */}
+            <div className="pointer-events-auto ml-auto md:hidden">
+              {jobSeeker ? (
+                <a href="/#/job-seeker">
+                  <div className="w-9 h-9 rounded-full bg-background/90 backdrop-blur-sm shadow-sm border border-border overflow-hidden flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-primary transition-all">
+                    {jobSeekerProfile?.profilePictureUrl ? (
+                      <img
+                        src={jobSeekerProfile.profilePictureUrl}
+                        alt="Profile"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-xs font-semibold text-foreground">
+                        {jobSeeker.email[0].toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                </a>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-background/90 backdrop-blur-sm shadow-sm"
+                  onClick={() => setLoginDialogOpen(true)}
+                >
+                  <LogIn className="h-4 w-4 mr-1.5" />
+                  Login
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -157,15 +189,36 @@ export default function MapPage() {
             <Building2 className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold">ARF Map</span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setLoginDialogOpen(true)}
-          >
-            <LogIn className="h-3.5 w-3.5 mr-1" />
-            Login
-          </Button>
+          {jobSeeker ? (
+            <a href="/#/job-seeker" className="flex items-center gap-2 group">
+              <div className="w-7 h-7 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0 group-hover:ring-2 group-hover:ring-primary transition-all">
+                {jobSeekerProfile?.profilePictureUrl ? (
+                  <img
+                    src={jobSeekerProfile.profilePictureUrl}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="text-[10px] font-semibold text-foreground">
+                    {jobSeeker.email[0].toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors max-w-[100px] truncate">
+                {jobSeekerProfile?.firstName ?? jobSeeker.email.split("@")[0]}
+              </span>
+            </a>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setLoginDialogOpen(true)}
+            >
+              <LogIn className="h-3.5 w-3.5 mr-1" />
+              Login
+            </Button>
+          )}
         </div>
 
         <JobsPanel

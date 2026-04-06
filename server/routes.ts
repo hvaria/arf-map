@@ -312,7 +312,13 @@ export async function registerRoutes(server: Server, app: Express) {
     });
 
     req.session.jobSeekerId = account.id;
-    res.json({ ok: true, id: account.id, email: account.email });
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save failed after OTP verification:", err);
+        return res.status(500).json({ message: "Session creation failed. Please try logging in." });
+      }
+      res.json({ ok: true, id: account.id, email: account.email });
+    });
   });
 
   // Resend OTP

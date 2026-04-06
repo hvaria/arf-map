@@ -295,13 +295,16 @@ function VerifyEmailScreen({ email, onVerified }: { email: string; onVerified: (
       return res.json() as Promise<{ ok: boolean; id: number; email: string }>;
     },
     onSuccess: (data) => {
-      // Populate the /me cache immediately — no separate refetch needed.
-      // This prevents the auth form from flashing while the network round-trip
-      // to /api/jobseeker/me completes.
+      // Pre-populate the cache so the dashboard shows immediately, then
+      // invalidate to trigger a real /me request. The real request confirms
+      // the session cookie was actually set — if it wasn't (e.g. cross-origin
+      // or a session-save failure), /me returns 401 → null and the login form
+      // is shown instead of letting the user reach a broken authenticated state.
       qc.setQueryData<JobSeekerAccount>(["/api/jobseeker/me"], {
         id: data.id,
         email: data.email,
       });
+      qc.invalidateQueries({ queryKey: ["/api/jobseeker/me"] });
       onVerified();
     },
     onError: (err: any) => toast({ title: "Verification failed", description: err.message, variant: "destructive" }),
@@ -464,7 +467,15 @@ function ProfileEditor({
       toast({ title: "Profile saved!" });
       onSaved();
     },
-    onError: (err: any) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
+    onError: (err: any) => {
+      // A 401 means the session expired while the dashboard was still showing
+      // (stale React Query cache). Force-refresh the /me query so the app
+      // redirects the user back to the login form immediately.
+      if (err.message?.startsWith("401:")) {
+        qc.invalidateQueries({ queryKey: ["/api/jobseeker/me"] });
+      }
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    },
   });
 
   const toggleJobType = (type: string) => {

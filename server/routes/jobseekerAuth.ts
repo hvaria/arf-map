@@ -75,7 +75,10 @@ jobseekerAuthRouter.post("/login", async (req, res, next) => {
     }
 
     req.session.jobSeekerId = result.account.id;
-    return res.json(result.account);
+    req.session.save((saveErr) => {
+      if (saveErr) return next(saveErr);
+      return res.json(result.account);
+    });
   } catch (err) {
     next(err);
   }
