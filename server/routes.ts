@@ -8,6 +8,18 @@ import { hashPassword } from "./auth";
 import { sendVerificationEmail } from "./email";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
+import {
+  getCachedFacilities,
+  invalidateFacilitiesCache,
+  isDatabaseSeeded,
+  typeToGroup,
+} from "./services/facilitiesService";
+import {
+  queryFacilitiesAll,
+  searchFacilitiesAutocomplete,
+  getFacilitiesMeta,
+  type FacilityDbRow,
+} from "./storage";
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
@@ -68,6 +80,231 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // ── Facilities (live from CHHS open data, 24 h server-side cache) ─────────
+
+  // ── /api/facilities/meta — filter UI metadata ────────────────────────────────
+  app.get("/api/facilities/meta", async (_req, res, next) => {
+    try {
+      if (isDatabaseSeeded()) {
+        res.json(getFacilitiesMeta());
+      } else {
+        // Compute from in-memory cache
+        const facilities = await getCachedFacilities();
+        const countByType: Record<string, number> = {};
+        const countByGroup: Record<string, number> = {};
+        const countByCounty: Record<string, number> = {};
+        const countByStatus: Record<string, number> = {};
+        for (const f of facilities) {
+          countByType[f.facilityType] = (countByType[f.facilityType] ?? 0) + 1;
+          countByGroup[f.facilityGroup] = (countByGroup[f.facilityGroup] ?? 0) + 1;
+          countByCounty[f.county] = (countByCounty[f.county] ?? 0) + 1;
+          countByStatus[f.status] = (countByStatus[f.status] ?? 0) + 1;
+        }
+        res.json({
+          totalCount: facilities.length,
+          facilityTypes: Object.keys(countByType).sort(),
+          facilityGroups: Object.keys(countByGroup).sort(),
+          counties: Object.keys(countByCounty).sort(),
+          statuses: Object.keys(countByStatus).sort(),
+          countByType,
+          countByGroup,
+          countByCounty,
+          countByStatus,
+          lastUpdated: null,
+        });
+      }
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── /api/facilities/search — typeahead autocomplete ───────────────────────────
+  app.get("/api/facilities/search", async (req, res, next) => {
+    try {
+      const q = String(req.query.q ?? "").trim();
+      if (!q) return res.json([]);
+
+      if (isDatabaseSeeded()) {
+        const rows = searchFacilitiesAutocomplete(q, 10);
+        res.json(rows.map((r) => ({
+          number: r.number,
+          name: r.name,
+          city: r.city,
+          county: r.county,
+          facilityType: r.facility_type,
+        })));
+      } else {
+        const facilities = await getCachedFacilities();
+        const ql = q.toLowerCase();
+        const matches = facilities
+          .filter(
+            (f) =>
+              f.name.toLowerCase().includes(ql) ||
+              f.city.toLowerCase().includes(ql) ||
+              f.number.includes(ql)
+          )
+          .slice(0, 10)
+          .map((f) => ({
+            number: f.number,
+            name: f.name,
+            city: f.city,
+            county: f.county,
+            facilityType: f.facilityType,
+          }));
+        res.json(matches);
+      }
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── /api/facilities — full list with optional filtering ───────────────────────
+  app.get("/api/facilities", async (req, res, next) => {
+    try {
+      const jobs = await storage.getAllJobPostings();
+
+      // Index job postings by facility number
+      const jobsByFacility = new Map<string, any[]>();
+      const hiringNumbers = new Set<string>();
+      for (const job of jobs) {
+        const arr = jobsByFacility.get(job.facilityNumber) ?? [];
+        arr.push(job);
+        jobsByFacility.set(job.facilityNumber, arr);
+        hiringNumbers.add(job.facilityNumber);
+      }
+
+      // Parse filter query params
+      const search = String(req.query.search ?? "").trim() || undefined;
+      const county = String(req.query.county ?? "").trim() || undefined;
+      const facilityType = String(req.query.facilityType ?? "").trim() || undefined;
+      const facilityGroup = String(req.query.facilityGroup ?? "").trim() || undefined;
+      const statusParam = String(req.query.status ?? "").trim();
+      const statuses = statusParam ? statusParam.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      const hiringOnly = req.query.isHiring === "true";
+      const minCap = req.query.minCapacity ? parseInt(String(req.query.minCapacity), 10) : undefined;
+      const maxCap = req.query.maxCapacity ? parseInt(String(req.query.maxCapacity), 10) : undefined;
+      const bboxParam = String(req.query.bbox ?? "").trim();
+      const bbox = bboxParam
+        ? (() => {
+            const [minLat, minLng, maxLat, maxLng] = bboxParam.split(",").map(Number);
+            return { minLat, minLng, maxLat, maxLng };
+          })()
+        : undefined;
+
+      const mergeJobs = (number: string, facilityData: any) => {
+        const fJobs = jobsByFacility.get(number) ?? [];
+        return {
+          ...facilityData,
+          jobPostings: fJobs.map((j: any) => ({
+            title: j.title,
+            type: j.type,
+            salary: j.salary,
+            description: j.description,
+            requirements: JSON.parse(j.requirements) as string[],
+            postedDaysAgo: Math.floor((Date.now() - j.postedAt) / 86_400_000),
+          })),
+          isHiring: fJobs.length > 0,
+        };
+      };
+
+      if (isDatabaseSeeded()) {
+        let rows = queryFacilitiesAll({
+          search,
+          county,
+          facilityType,
+          facilityGroup,
+          statuses,
+          minCapacity: minCap,
+          maxCapacity: maxCap,
+          bbox,
+        });
+
+        // Apply isHiring filter post-query (requires job_postings data)
+        if (hiringOnly) {
+          rows = rows.filter((r) => hiringNumbers.has(r.number));
+        }
+
+        const result = rows.map((r: FacilityDbRow) =>
+          mergeJobs(r.number, {
+            number: r.number,
+            name: r.name,
+            facilityType: r.facility_type,
+            facilityGroup: r.facility_group,
+            county: r.county,
+            address: r.address,
+            city: r.city,
+            zip: r.zip,
+            phone: r.phone,
+            licensee: r.licensee,
+            administrator: r.administrator,
+            status: r.status,
+            capacity: r.capacity ?? 0,
+            firstLicenseDate: r.first_license_date,
+            closedDate: r.closed_date,
+            lastInspectionDate: r.last_inspection_date,
+            totalVisits: r.total_visits ?? 0,
+            inspectionVisits: 0,
+            complaintVisits: 0,
+            inspectTypeB: 0,
+            otherTypeB: 0,
+            complaintTypeB: 0,
+            totalTypeB: r.total_type_b ?? 0,
+            citations: r.citations ? String(r.citations) : "",
+            lat: r.lat!,
+            lng: r.lng!,
+            geocodeQuality: r.geocode_quality,
+          })
+        );
+
+        res.json(result);
+      } else {
+        // Fallback: in-memory CHHS data
+        let facilities = await getCachedFacilities();
+
+        // Apply filters client-side on the in-memory list
+        if (search) {
+          const ql = search.toLowerCase();
+          facilities = facilities.filter(
+            (f) =>
+              f.name.toLowerCase().includes(ql) ||
+              f.address.toLowerCase().includes(ql) ||
+              f.city.toLowerCase().includes(ql) ||
+              f.county.toLowerCase().includes(ql) ||
+              f.licensee.toLowerCase().includes(ql) ||
+              f.administrator.toLowerCase().includes(ql) ||
+              f.number.includes(ql) ||
+              f.zip.includes(ql)
+          );
+        }
+        if (county) facilities = facilities.filter((f) => f.county === county);
+        if (facilityType) facilities = facilities.filter((f) => f.facilityType === facilityType);
+        if (facilityGroup) facilities = facilities.filter((f) => f.facilityGroup === facilityGroup);
+        if (statuses && statuses.length > 0) facilities = facilities.filter((f) => statuses.includes(f.status));
+        if (hiringOnly) facilities = facilities.filter((f) => hiringNumbers.has(f.number));
+        if (minCap != null) facilities = facilities.filter((f) => f.capacity >= minCap);
+        if (maxCap != null) facilities = facilities.filter((f) => f.capacity <= maxCap);
+        if (bbox) {
+          facilities = facilities.filter(
+            (f) =>
+              f.lat >= bbox.minLat && f.lat <= bbox.maxLat &&
+              f.lng >= bbox.minLng && f.lng <= bbox.maxLng
+          );
+        }
+
+        const result = facilities.map((f) => mergeJobs(f.number, f));
+        res.json(result);
+      }
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /** POST /api/facilities/refresh — force-invalidate the 24 h cache */
+  app.post("/api/facilities/refresh", requireAuth, (_req, res) => {
+    invalidateFacilitiesCache();
+    res.json({ ok: true, message: "Facility cache cleared — next GET will re-fetch from CHHS." });
   });
 
   // ── Facility Auth ────────────────────────────────────────────────────────────

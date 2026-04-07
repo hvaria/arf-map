@@ -119,6 +119,40 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts (email);
 `);
 
+// Persistent store for ALL California CCLD facilities (all types, all counties)
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS facilities (
+    number TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    facility_type TEXT NOT NULL DEFAULT '',
+    facility_group TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    address TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    county TEXT NOT NULL DEFAULT '',
+    zip TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    licensee TEXT NOT NULL DEFAULT '',
+    administrator TEXT NOT NULL DEFAULT '',
+    capacity INTEGER DEFAULT 0,
+    first_license_date TEXT DEFAULT '',
+    closed_date TEXT DEFAULT '',
+    last_inspection_date TEXT DEFAULT '',
+    total_visits INTEGER DEFAULT 0,
+    total_type_b INTEGER DEFAULT 0,
+    citations INTEGER DEFAULT 0,
+    lat REAL,
+    lng REAL,
+    geocode_quality TEXT DEFAULT '',
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_facilities_county ON facilities(county);
+  CREATE INDEX IF NOT EXISTS idx_facilities_type ON facilities(facility_type);
+  CREATE INDEX IF NOT EXISTS idx_facilities_group ON facilities(facility_group);
+  CREATE INDEX IF NOT EXISTS idx_facilities_status ON facilities(status);
+  CREATE INDEX IF NOT EXISTS idx_facilities_latln ON facilities(lat, lng);
+`);
+
 addColumnIfMissing("job_seeker_profiles", "first_name", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "last_name", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "address", "TEXT");
@@ -356,3 +390,212 @@ export class DatabaseStorage implements IStorage {
 }
 
 export const storage = new DatabaseStorage();
+
+// ── Facility DB helpers (raw SQL for performance) ─────────────────────────────
+
+export interface FacilityDbRow {
+  number: string;
+  name: string;
+  facility_type: string;
+  facility_group: string;
+  status: string;
+  address: string;
+  city: string;
+  county: string;
+  zip: string;
+  phone: string;
+  licensee: string;
+  administrator: string;
+  capacity: number;
+  first_license_date: string;
+  closed_date: string;
+  last_inspection_date: string;
+  total_visits: number;
+  total_type_b: number;
+  citations: number;
+  lat: number | null;
+  lng: number | null;
+  geocode_quality: string;
+  updated_at: number;
+}
+
+export interface FacilityQueryFilters {
+  search?: string;
+  county?: string;
+  facilityType?: string;
+  facilityGroup?: string;
+  statuses?: string[];
+  isHiring?: boolean;
+  hiringNumbers?: Set<string>;
+  minCapacity?: number;
+  maxCapacity?: number;
+  bbox?: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+}
+
+function buildFacilityWhere(filters: FacilityQueryFilters): { where: string; params: any[] } {
+  const clauses: string[] = [];
+  const params: any[] = [];
+
+  if (filters.search) {
+    const q = `%${filters.search.toLowerCase()}%`;
+    clauses.push(
+      "(LOWER(name) LIKE ? OR LOWER(address) LIKE ? OR LOWER(city) LIKE ? OR LOWER(county) LIKE ? OR LOWER(licensee) LIKE ? OR LOWER(administrator) LIKE ? OR number LIKE ?)"
+    );
+    params.push(q, q, q, q, q, q, q);
+  }
+  if (filters.county) {
+    clauses.push("county = ?");
+    params.push(filters.county);
+  }
+  if (filters.facilityType) {
+    clauses.push("facility_type = ?");
+    params.push(filters.facilityType);
+  }
+  if (filters.facilityGroup) {
+    clauses.push("facility_group = ?");
+    params.push(filters.facilityGroup);
+  }
+  if (filters.statuses && filters.statuses.length > 0) {
+    clauses.push(`status IN (${filters.statuses.map(() => "?").join(",")})`);
+    params.push(...filters.statuses);
+  }
+  if (filters.minCapacity != null) {
+    clauses.push("capacity >= ?");
+    params.push(filters.minCapacity);
+  }
+  if (filters.maxCapacity != null) {
+    clauses.push("capacity <= ?");
+    params.push(filters.maxCapacity);
+  }
+  if (filters.bbox) {
+    clauses.push("lat >= ? AND lat <= ? AND lng >= ? AND lng <= ?");
+    params.push(filters.bbox.minLat, filters.bbox.maxLat, filters.bbox.minLng, filters.bbox.maxLng);
+  }
+  // isHiring filter handled post-query by the caller (requires job_postings join)
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  return { where, params };
+}
+
+/** Total number of facility rows in the DB — 0 means DB is empty/not seeded. */
+export function getFacilityDbCount(): number {
+  const row = sqlite.prepare("SELECT COUNT(*) as n FROM facilities").get() as { n: number };
+  return row.n;
+}
+
+/** Query all facilities matching filters (no pagination — full list for map). */
+export function queryFacilitiesAll(filters: FacilityQueryFilters): FacilityDbRow[] {
+  const { where, params } = buildFacilityWhere(filters);
+  return sqlite
+    .prepare(`SELECT * FROM facilities ${where} ORDER BY name`)
+    .all(...params) as FacilityDbRow[];
+}
+
+/** Autocomplete: top matches on name, city, number. */
+export function searchFacilitiesAutocomplete(q: string, limit = 10): FacilityDbRow[] {
+  const pattern = `%${q.toLowerCase()}%`;
+  return sqlite
+    .prepare(
+      "SELECT * FROM facilities WHERE LOWER(name) LIKE ? OR number LIKE ? OR LOWER(city) LIKE ? LIMIT ?"
+    )
+    .all(pattern, pattern, pattern, limit) as FacilityDbRow[];
+}
+
+export interface FacilitiesMetaResult {
+  totalCount: number;
+  facilityTypes: string[];
+  facilityGroups: string[];
+  counties: string[];
+  statuses: string[];
+  countByType: Record<string, number>;
+  countByGroup: Record<string, number>;
+  countByCounty: Record<string, number>;
+  countByStatus: Record<string, number>;
+  lastUpdated: number | null;
+}
+
+/** Metadata for building the filter UI — counts by type/group/county/status. */
+export function getFacilitiesMeta(): FacilitiesMetaResult {
+  const totalCount = getFacilityDbCount();
+
+  const byType = sqlite
+    .prepare("SELECT facility_type as k, COUNT(*) as n FROM facilities GROUP BY facility_type ORDER BY facility_type")
+    .all() as { k: string; n: number }[];
+
+  const byGroup = sqlite
+    .prepare("SELECT facility_group as k, COUNT(*) as n FROM facilities GROUP BY facility_group ORDER BY facility_group")
+    .all() as { k: string; n: number }[];
+
+  const byCounty = sqlite
+    .prepare("SELECT county as k, COUNT(*) as n FROM facilities GROUP BY county ORDER BY county")
+    .all() as { k: string; n: number }[];
+
+  const byStatus = sqlite
+    .prepare("SELECT status as k, COUNT(*) as n FROM facilities GROUP BY status ORDER BY status")
+    .all() as { k: string; n: number }[];
+
+  const lastRow = sqlite
+    .prepare("SELECT MAX(updated_at) as t FROM facilities")
+    .get() as { t: number | null };
+
+  return {
+    totalCount,
+    facilityTypes: byType.map((r) => r.k).filter(Boolean),
+    facilityGroups: byGroup.map((r) => r.k).filter(Boolean),
+    counties: byCounty.map((r) => r.k).filter(Boolean),
+    statuses: byStatus.map((r) => r.k).filter(Boolean),
+    countByType: Object.fromEntries(byType.map((r) => [r.k, r.n])),
+    countByGroup: Object.fromEntries(byGroup.map((r) => [r.k, r.n])),
+    countByCounty: Object.fromEntries(byCounty.map((r) => [r.k, r.n])),
+    countByStatus: Object.fromEntries(byStatus.map((r) => [r.k, r.n])),
+    lastUpdated: lastRow.t,
+  };
+}
+
+/** Bulk upsert facilities — used by the seed/extract scripts. */
+export function bulkUpsertFacilities(rows: Omit<FacilityDbRow, "updated_at">[]): void {
+  const stmt = sqlite.prepare(`
+    INSERT INTO facilities (
+      number, name, facility_type, facility_group, status,
+      address, city, county, zip, phone,
+      licensee, administrator, capacity,
+      first_license_date, closed_date, last_inspection_date,
+      total_visits, total_type_b, citations,
+      lat, lng, geocode_quality, updated_at
+    ) VALUES (
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?,
+      ?, ?, ?,
+      ?, ?, ?,
+      ?, ?, ?, ?
+    ) ON CONFLICT(number) DO UPDATE SET
+      name=excluded.name, facility_type=excluded.facility_type,
+      facility_group=excluded.facility_group, status=excluded.status,
+      address=excluded.address, city=excluded.city, county=excluded.county,
+      zip=excluded.zip, phone=excluded.phone, licensee=excluded.licensee,
+      administrator=excluded.administrator, capacity=excluded.capacity,
+      first_license_date=excluded.first_license_date, closed_date=excluded.closed_date,
+      last_inspection_date=excluded.last_inspection_date,
+      total_visits=excluded.total_visits, total_type_b=excluded.total_type_b,
+      citations=excluded.citations, lat=excluded.lat, lng=excluded.lng,
+      geocode_quality=excluded.geocode_quality, updated_at=excluded.updated_at
+  `);
+
+  const now = Date.now();
+  const insertMany = sqlite.transaction((items: Omit<FacilityDbRow, "updated_at">[]) => {
+    for (const row of items) {
+      stmt.run(
+        row.number, row.name, row.facility_type, row.facility_group, row.status,
+        row.address, row.city, row.county, row.zip, row.phone,
+        row.licensee, row.administrator, row.capacity ?? 0,
+        row.first_license_date, row.closed_date, row.last_inspection_date,
+        row.total_visits ?? 0, row.total_type_b ?? 0, row.citations ?? 0,
+        row.lat, row.lng, row.geocode_quality,
+        now
+      );
+    }
+  });
+
+  insertMany(rows);
+}

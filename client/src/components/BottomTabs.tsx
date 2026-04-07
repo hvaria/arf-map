@@ -4,10 +4,7 @@ import { Briefcase, Building2, MapPin, DollarSign, Clock, ChevronUp, ChevronDown
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { Facility } from "@shared/schema";
-import facilitiesData from "@/data/facilities.json";
-
-const allFacilities = facilitiesData as Facility[];
-const facilityByNumber = new Map(allFacilities.map((f) => [f.number, f]));
+import { useFacilities } from "@/hooks/useFacilities";
 
 interface PublicJob {
   id: number;
@@ -35,6 +32,7 @@ function daysAgo(ts: number) {
 export function BottomTabs({ filteredFacilities, onSelectFacility }: BottomTabsProps) {
   const [activeTab, setActiveTab] = useState<"jobs" | "facilities">("jobs");
   const [expanded, setExpanded] = useState(false);
+  const { facilityByNumber } = useFacilities();
 
   const { data: jobs = [], isLoading } = useQuery<PublicJob[]>({
     queryKey: ["/api/jobs"],

@@ -193,6 +193,11 @@ export function FacilityPanel({ facility, open, onClose }: FacilityPanelProps) {
             <span className="w-1.5 h-1.5 rounded-full mr-1 inline-block" style={{ backgroundColor: statusConfig.color }} />
             {facility.status}
           </Badge>
+          {facility.facilityType && facility.facilityType !== "Adult Residential Facility" && (
+            <Badge variant="outline" className="text-xs px-2 py-0.5 text-muted-foreground">
+              {facility.facilityType}
+            </Badge>
+          )}
           {facility.capacity > 0 && (
             <Badge variant="secondary" className="text-xs px-2 py-0.5">
               {facility.capacity} beds
@@ -219,6 +224,9 @@ export function FacilityPanel({ facility, open, onClose }: FacilityPanelProps) {
           <Section title="Location & Contact">
             <InfoRow icon={MapPin} label="Address">
               {facility.address}, {facility.city}, CA {facility.zip}
+              {facility.county && (
+                <span className="block text-[10px] text-muted-foreground mt-0.5">{facility.county} County</span>
+              )}
             </InfoRow>
             {displayPhone && (
               <InfoRow icon={Phone} label="Phone">

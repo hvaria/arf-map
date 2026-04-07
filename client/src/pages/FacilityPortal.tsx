@@ -17,10 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
-import facilitiesData from "@/data/facilities.json";
 import type { Facility } from "@shared/schema";
-
-const facilities = facilitiesData as Facility[];
+import { useFacilities } from "@/hooks/useFacilities";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -561,8 +559,9 @@ function JobsManager({ facilityNumber }: { facilityNumber: string }) {
 function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { facilityByNumber } = useFacilities();
 
-  const facility = facilities.find((f) => f.number === user.facilityNumber);
+  const facility = facilityByNumber.get(user.facilityNumber) ?? null;
 
   const { data: publicData } = useQuery<{ overrides: FacilityOverride | null }>({
     queryKey: [`/api/facilities/${user.facilityNumber}/public`],

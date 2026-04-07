@@ -4,10 +4,7 @@ import { Briefcase, MapPin, DollarSign, Clock, ChevronRight } from "lucide-react
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import type { Facility } from "@shared/schema";
-import facilitiesData from "@/data/facilities.json";
-
-const allFacilities = facilitiesData as Facility[];
-const facilityByNumber = new Map(allFacilities.map((f) => [f.number, f]));
+import { useFacilities } from "@/hooks/useFacilities";
 
 interface DbJob {
   id: number;
@@ -44,30 +41,31 @@ function daysAgo(ts: number) {
 }
 
 export function JobsPanel({ selectedFacility, onSelectFacility }: JobsPanelProps) {
+  const { facilities, facilityByNumber } = useFacilities();
+
   // DB jobs from the facility portal
   const { data: dbJobs = [], isLoading } = useQuery<DbJob[]>({
     queryKey: ["/api/jobs"],
     staleTime: 60000,
   });
 
-  // Merge DB jobs + static JSON jobs (deduplicated by facility)
+  // Merge DB jobs + facility-embedded jobs (deduplicated by facility)
   const jobs = useMemo<DisplayJob[]>(() => {
-    // Facilities that already have DB jobs — don't double-count with static
     const dbFacilityNumbers = new Set(dbJobs.map((j) => j.facilityNumber));
 
-    // Static jobs from hiring facilities that have no DB portal account
-    const staticJobs: DisplayJob[] = allFacilities
+    // Jobs embedded in facilities that have no DB portal account
+    const embeddedJobs: DisplayJob[] = facilities
       .filter((f) => f.isHiring && f.jobPostings.length > 0 && !dbFacilityNumbers.has(f.number))
       .flatMap((f) =>
         f.jobPostings.map((jp, i) => ({
-          key: `static-${f.number}-${i}`,
+          key: `emb-${f.number}-${i}`,
           facilityNumber: f.number,
           title: jp.title,
           type: jp.type,
           salary: jp.salary,
           description: jp.description,
           requirements: jp.requirements,
-          postedAt: Date.now() - jp.postedDaysAgo * 86400000,
+          postedAt: Date.now() - jp.postedDaysAgo * 86_400_000,
         }))
       );
 
@@ -82,12 +80,11 @@ export function JobsPanel({ selectedFacility, onSelectFacility }: JobsPanelProps
       postedAt: j.postedAt,
     }));
 
-    // DB jobs first, then static — sorted newest first within each group
     return [
       ...mapped.sort((a, b) => b.postedAt - a.postedAt),
-      ...staticJobs.sort((a, b) => b.postedAt - a.postedAt),
+      ...embeddedJobs.sort((a, b) => b.postedAt - a.postedAt),
     ];
-  }, [dbJobs]);
+  }, [dbJobs, facilities]);
 
   return (
     <div className="flex flex-col h-full min-h-0">

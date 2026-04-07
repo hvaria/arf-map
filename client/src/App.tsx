@@ -7,6 +7,7 @@ import { AuthProvider } from "@/context/AuthContext";
 import MapPage from "./pages/MapPage";
 import FacilityPortal from "./pages/FacilityPortal";
 import JobSeekerPage from "./pages/JobSeekerPage";
+import StatsPage from "./pages/StatsPage";
 import LoginPage from "./pages/jobseeker/LoginPage";
 import DashboardPage from "./pages/jobseeker/DashboardPage";
 import NotFound from "./pages/not-found";
@@ -16,6 +17,7 @@ function AppRouter() {
     <Router hook={useHashLocation}>
       <Switch>
         <Route path="/" component={MapPage} />
+        <Route path="/stats" component={StatsPage} />
         <Route path="/facility-portal" component={FacilityPortal} />
         <Route path="/job-seeker" component={JobSeekerPage} />
         {/* Job seeker auth + dashboard routes */}

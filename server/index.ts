@@ -10,6 +10,7 @@ import { storage } from "./storage";
 import { comparePassword } from "./auth";
 import { sqlite } from "./db/index";
 import { SqliteSessionStore } from "./session/sqliteSessionStore";
+import { getCachedFacilities } from "./services/facilitiesService";
 import type { FacilityAccount } from "@shared/schema";
 
 declare global {
@@ -110,8 +111,11 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      // Skip serializing large array responses (e.g. /api/facilities) to avoid blocking the event loop
+      if (capturedJsonResponse && !Array.isArray(capturedJsonResponse)) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      } else if (Array.isArray(capturedJsonResponse)) {
+        logLine += ` :: [${capturedJsonResponse.length} items]`;
       }
 
       log(logLine);
@@ -155,5 +159,10 @@ app.use((req, res, next) => {
   httpServer.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
     log(`[email] RESEND_API_KEY set: ${!!process.env.RESEND_API_KEY}`);
+
+    // Pre-warm facility cache in the background so the first user request is instant
+    getCachedFacilities()
+      .then((f) => log(`[facilitiesService] pre-warmed ${f.length} facilities`))
+      .catch((err) => log(`[facilitiesService] pre-warm failed: ${err.message}`));
   });
 })();

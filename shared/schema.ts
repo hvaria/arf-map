@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 
 // ============ DRIZZLE TABLES ============
@@ -73,6 +73,33 @@ export const jobPostingsTable = sqliteTable("job_postings", {
   postedAt: integer("posted_at").notNull(),
 });
 
+// Persistent store for all California CCLD facilities (all types, all counties)
+export const facilitiesTable = sqliteTable("facilities", {
+  number: text("number").primaryKey(),
+  name: text("name").notNull(),
+  facilityType: text("facility_type").notNull().default(""),
+  facilityGroup: text("facility_group").notNull().default(""),
+  status: text("status").notNull(),
+  address: text("address").notNull().default(""),
+  city: text("city").notNull().default(""),
+  county: text("county").notNull().default(""),
+  zip: text("zip").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  licensee: text("licensee").notNull().default(""),
+  administrator: text("administrator").notNull().default(""),
+  capacity: integer("capacity").default(0),
+  firstLicenseDate: text("first_license_date").default(""),
+  closedDate: text("closed_date").default(""),
+  lastInspectionDate: text("last_inspection_date").default(""),
+  totalVisits: integer("total_visits").default(0),
+  totalTypeB: integer("total_type_b").default(0),
+  citations: integer("citations").default(0),
+  lat: real("lat"),
+  lng: real("lng"),
+  geocodeQuality: text("geocode_quality").default(""),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 // ============ DRIZZLE TYPES ============
 
 export type User = typeof users.$inferSelect;
@@ -99,10 +126,14 @@ export const jobPostingSchema = z.object({
 
 export type JobPosting = z.infer<typeof jobPostingSchema>;
 
-// Facility schema - all data is static/embedded, no database needed
 export const facilitySchema = z.object({
-  name: z.string(),
   number: z.string(),
+  name: z.string(),
+  // New fields — optional with defaults for backward compat
+  facilityType: z.string().default("Adult Residential Facility"),
+  facilityGroup: z.string().default("Adult & Senior Care"),
+  county: z.string().default(""),
+  // Core location/contact
   address: z.string(),
   city: z.string(),
   zip: z.string(),
@@ -114,12 +145,13 @@ export const facilitySchema = z.object({
   firstLicenseDate: z.string(),
   closedDate: z.string(),
   lastInspectionDate: z.string(),
+  // Inspection stats — detailed breakdown optional (may not be available for all types)
   totalVisits: z.number(),
-  inspectionVisits: z.number(),
-  complaintVisits: z.number(),
-  inspectTypeB: z.number(),
-  otherTypeB: z.number(),
-  complaintTypeB: z.number(),
+  inspectionVisits: z.number().default(0),
+  complaintVisits: z.number().default(0),
+  inspectTypeB: z.number().default(0),
+  otherTypeB: z.number().default(0),
+  complaintTypeB: z.number().default(0),
   totalTypeB: z.number(),
   citations: z.string(),
   lat: z.number(),
@@ -130,3 +162,18 @@ export const facilitySchema = z.object({
 });
 
 export type Facility = z.infer<typeof facilitySchema>;
+
+// Metadata shape returned by /api/facilities/meta
+export const facilitiesMetaSchema = z.object({
+  totalCount: z.number(),
+  facilityTypes: z.array(z.string()),
+  facilityGroups: z.array(z.string()),
+  counties: z.array(z.string()),
+  statuses: z.array(z.string()),
+  countByType: z.record(z.number()),
+  countByGroup: z.record(z.number()),
+  countByCounty: z.record(z.number()),
+  countByStatus: z.record(z.number()),
+  lastUpdated: z.number().nullable(),
+});
+export type FacilitiesMeta = z.infer<typeof facilitiesMetaSchema>;

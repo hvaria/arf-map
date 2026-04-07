@@ -1,11 +1,3 @@
-{
-  "mcpServers": {
-    "code-review-graph": {
-      "command": "code-review-graph",
-      "args": [
-        "serve"
-      ],
-      "type": "stdio"
-    }
-  }
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:7c9beea123a48ba4a0210531e483f4f180c51f1e67ff02a7465a64b2ea7a6532
+size 171

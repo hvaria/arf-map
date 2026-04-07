@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,11 +17,8 @@ import {
   Camera, ChevronRight, MailCheck, RefreshCw, Eye, EyeOff,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import facilitiesData from "@/data/facilities.json";
 import type { Facility } from "@shared/schema";
-
-const allFacilities = facilitiesData as Facility[];
-const facilityByNumber = new Map(allFacilities.map((f) => [f.number, f]));
+import { useFacilities } from "@/hooks/useFacilities";
 
 // All job types relevant to Adult Residential Facilities
 const JOB_TYPE_OPTIONS = [
@@ -193,15 +192,20 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
 
 function LoginForm({ onNeedsVerification }: { onNeedsVerification: (email: string) => void }) {
   const { toast } = useToast();
-  const qc = useQueryClient();
+  const { login } = useAuth();
+  const [, navigate] = useLocation();
   const [form, setForm] = useState({ email: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
 
   const mutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/jobseeker/login", { email: form.email, password: form.password }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/jobseeker/me"] }),
+    // auth.login() calls the API, sets AuthProvider state, and syncs the
+    // React Query cache — all in one place.
+    mutationFn: () => login({ email: form.email, password: form.password }),
+    onSuccess: () => {
+      navigate("/");
+    },
     onError: (err: any) => {
-      if (err.needsVerification) {
+      if (err.code === "EMAIL_NOT_VERIFIED") {
         onNeedsVerification(form.email);
       } else {
         toast({ title: "Sign in failed", description: err.message, variant: "destructive" });
@@ -285,26 +289,23 @@ function AuthSection({ onNeedsVerification }: { onNeedsVerification: (email: str
 
 function VerifyEmailScreen({ email, onVerified }: { email: string; onVerified: () => void }) {
   const { toast } = useToast();
+  const { setUser } = useAuth();
   const qc = useQueryClient();
   const [otp, setOtp] = useState("");
 
   const verifyMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/jobseeker/verify-email", { email, otp });
-      // Parse the JSON here so onSuccess receives the account data directly.
       return res.json() as Promise<{ ok: boolean; id: number; email: string }>;
     },
     onSuccess: (data) => {
-      // Pre-populate the cache so the dashboard shows immediately, then
-      // invalidate to trigger a real /me request. The real request confirms
-      // the session cookie was actually set — if it wasn't (e.g. cross-origin
-      // or a session-save failure), /me returns 401 → null and the login form
-      // is shown instead of letting the user reach a broken authenticated state.
+      // setUser syncs both AuthProvider state and React Query cache atomically.
+      setUser({ id: data.id, email: data.email });
+      // Also update via React Query so JobSeekerPage's useQuery sees the new account.
       qc.setQueryData<JobSeekerAccount>(["/api/jobseeker/me"], {
         id: data.id,
         email: data.email,
       });
-      qc.invalidateQueries({ queryKey: ["/api/jobseeker/me"] });
       onVerified();
     },
     onError: (err: any) => toast({ title: "Verification failed", description: err.message, variant: "destructive" }),
@@ -640,7 +641,9 @@ function ProfileEditor({
 function Dashboard({ account }: { account: JobSeekerAccount }) {
   const [editingProfile, setEditingProfile] = useState(false);
   const { toast } = useToast();
+  const { logout } = useAuth();
   const qc = useQueryClient();
+  const { facilityByNumber } = useFacilities();
 
   const { data: profile } = useQuery<JobSeekerProfile | null>({
     queryKey: ["/api/jobseeker/profile"],
@@ -663,11 +666,9 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
   });
 
   const logoutMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/jobseeker/logout", {}),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/jobseeker/me"] });
-      qc.invalidateQueries({ queryKey: ["/api/jobseeker/profile"] });
-    },
+    // auth.logout() calls the API, clears AuthProvider state, and removes
+    // both /me and /profile from the React Query cache atomically.
+    mutationFn: () => logout(),
     onError: () => toast({ title: "Logout failed", variant: "destructive" }),
   });
 

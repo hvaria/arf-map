@@ -1,10 +1,10 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MapView } from "@/components/MapView";
 import { FacilityPanel } from "@/components/FacilityPanel";
 import { JobsPanel } from "@/components/JobsPanel";
 import { SearchBar } from "@/components/SearchBar";
-import { FilterBar } from "@/components/FilterBar";
+import { FilterPanel, DEFAULT_FILTERS, countActiveFilters, type FacilityFilters } from "@/components/FilterPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,65 +13,28 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Building2, Briefcase, LogIn } from "lucide-react";
+import { Building2, Briefcase, LogIn, BarChart2 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
-import facilitiesData from "@/data/facilities.json";
+import { useAuth } from "@/context/AuthContext";
+import { useFacilities } from "@/hooks/useFacilities";
 import type { Facility } from "@shared/schema";
-
-const facilities = facilitiesData as Facility[];
 
 export default function MapPage() {
   const [selectedFacility, setSelectedFacility] = useState<Facility | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilters, setStatusFilters] = useState<Set<string>>(
-    new Set(["LICENSED", "PENDING", "ON PROBATION"])
-  );
-  const [hiringOnly, setHiringOnly] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
-  const [capacityFilters, setCapacityFilters] = useState<Set<string>>(new Set());
-  const [facilityType, setFacilityType] = useState<"small" | "large" | null>(null);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+  const [filters, setFilters] = useState<FacilityFilters>(DEFAULT_FILTERS);
 
-  const { data: jobSeeker } = useQuery<{ id: number; email: string } | null>({
-    queryKey: ["/api/jobseeker/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 60000,
-  });
+  // Facilities with server-side filters applied
+  const { facilities, isLoading: facilitiesLoading } = useFacilities(filters);
+
+  const { user: jobSeeker } = useAuth();
 
   const { data: jobSeekerProfile } = useQuery<{ profilePictureUrl?: string | null; firstName?: string | null } | null>({
     queryKey: ["/api/jobseeker/profile"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!jobSeeker,
   });
-
-  const filteredFacilities = useMemo(() => {
-    let result = facilities;
-    if (statusFilters.size > 0)
-      result = result.filter((f) => statusFilters.has(f.status));
-    if (hiringOnly)
-      result = result.filter((f) => f.isHiring);
-    if (capacityFilters.size > 0)
-      result = result.filter((f) => {
-        if (capacityFilters.has(String(f.capacity))) return true;
-        if (capacityFilters.has("7+") && f.capacity >= 7) return true;
-        return false;
-      });
-    if (facilityType === "small") result = result.filter((f) => f.capacity <= 6);
-    if (facilityType === "large") result = result.filter((f) => f.capacity >= 7);
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (f) =>
-          f.name.toLowerCase().includes(q) ||
-          f.address.toLowerCase().includes(q) ||
-          f.city.toLowerCase().includes(q) ||
-          f.zip.includes(q) ||
-          f.licensee.toLowerCase().includes(q) ||
-          f.number.includes(q)
-      );
-    }
-    return result;
-  }, [searchQuery, statusFilters, hiringOnly, capacityFilters, facilityType]);
 
   const handleSelectFacility = useCallback((facility: Facility) => {
     setSelectedFacility(facility);
@@ -83,30 +46,7 @@ export default function MapPage() {
     setTimeout(() => setSelectedFacility(null), 300);
   }, []);
 
-  const handleToggleStatus = useCallback((status: string) => {
-    setStatusFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(status)) next.delete(status);
-      else next.add(status);
-      return next;
-    });
-  }, []);
-
-  const handleToggleHiring = useCallback(() => setHiringOnly((p) => !p), []);
-
-  const handleToggleCapacity = useCallback((cap: string) => {
-    setCapacityFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(cap)) next.delete(cap);
-      else next.add(cap);
-      return next;
-    });
-  }, []);
-
-  const handleClearAdvanced = useCallback(() => {
-    setCapacityFilters(new Set());
-    setFacilityType(null);
-  }, []);
+  const activeFilterCount = countActiveFilters(filters);
 
   return (
     <div className="h-screen w-screen flex overflow-hidden bg-background" data-testid="map-page">
@@ -118,38 +58,94 @@ export default function MapPage() {
         <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
           <div className="p-3 flex items-start gap-2">
             <div className="flex flex-col gap-2 pointer-events-auto max-w-md w-full">
-              <SearchBar value={searchQuery} onChange={setSearchQuery} />
-              <FilterBar
-                activeFilters={statusFilters}
-                onToggle={handleToggleStatus}
-                hiringOnly={hiringOnly}
-                onToggleHiring={handleToggleHiring}
-                capacityFilters={capacityFilters}
-                onToggleCapacity={handleToggleCapacity}
-                facilityType={facilityType}
-                onSetFacilityType={setFacilityType}
-                onClearAdvanced={handleClearAdvanced}
-                totalCount={facilities.length}
-                filteredCount={filteredFacilities.length}
+              <SearchBar
+                value={filters.search}
+                onChange={(search) => setFilters((f) => ({ ...f, search }))}
               />
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Filter panel toggle */}
+                <FilterPanel
+                  filters={filters}
+                  onChange={setFilters}
+                  totalShowing={facilities.length}
+                />
+
+                {/* Quick status pills */}
+                {(["LICENSED", "PENDING", "ON PROBATION", "CLOSED"] as const).map((status) => {
+                  const colors: Record<string, string> = {
+                    LICENSED: "bg-green-500",
+                    PENDING: "bg-amber-500",
+                    "ON PROBATION": "bg-purple-500",
+                    CLOSED: "bg-red-500",
+                  };
+                  const labels: Record<string, string> = {
+                    LICENSED: "Licensed",
+                    PENDING: "Pending",
+                    "ON PROBATION": "Probation",
+                    CLOSED: "Closed",
+                  };
+                  const active = filters.statuses.has(status);
+                  return (
+                    <button
+                      key={status}
+                      onClick={() => {
+                        const next = new Set(filters.statuses);
+                        if (next.has(status)) next.delete(status);
+                        else next.add(status);
+                        setFilters((f) => ({ ...f, statuses: next }));
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm ${
+                        active
+                          ? "bg-background/95 backdrop-blur-sm border-border/60 text-foreground"
+                          : "bg-background/60 backdrop-blur-sm border-transparent text-muted-foreground opacity-60"
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${colors[status]} ${!active ? "opacity-40" : ""}`} />
+                      {labels[status]}
+                    </button>
+                  );
+                })}
+
+                {/* Hiring quick filter */}
+                <button
+                  onClick={() => setFilters((f) => ({ ...f, hiringOnly: !f.hiringOnly }))}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm ${
+                    filters.hiringOnly
+                      ? "bg-blue-50 dark:bg-blue-950 backdrop-blur-sm border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
+                      : "bg-background/60 backdrop-blur-sm border-transparent text-muted-foreground opacity-60"
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full shrink-0 bg-blue-500 ${!filters.hiringOnly ? "opacity-40" : ""}`} />
+                  Hiring
+                </button>
+
+                {/* Count */}
+                <span className="text-xs text-muted-foreground ml-1 bg-background/80 backdrop-blur-sm px-2 py-1 rounded-full shadow-sm border border-border/40">
+                  {facilitiesLoading ? "…" : `${facilities.length.toLocaleString()} shown`}
+                </span>
+              </div>
             </div>
-            {/* Mobile-only: profile avatar or login button */}
+
+            {/* Mobile-only: account/login button */}
             <div className="pointer-events-auto ml-auto md:hidden">
               {jobSeeker ? (
                 <a href="/#/job-seeker">
-                  <div className="w-9 h-9 rounded-full bg-background/90 backdrop-blur-sm shadow-sm border border-border overflow-hidden flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-primary transition-all">
-                    {jobSeekerProfile?.profilePictureUrl ? (
-                      <img
-                        src={jobSeekerProfile.profilePictureUrl}
-                        alt="Profile"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-xs font-semibold text-foreground">
-                        {jobSeeker.email[0].toUpperCase()}
-                      </span>
-                    )}
-                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="bg-background/90 backdrop-blur-sm shadow-sm flex items-center gap-1.5"
+                  >
+                    <div className="w-5 h-5 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0">
+                      {jobSeekerProfile?.profilePictureUrl ? (
+                        <img src={jobSeekerProfile.profilePictureUrl} alt="Profile" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-[9px] font-semibold text-foreground">
+                          {jobSeeker.email[0].toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    Account
+                  </Button>
                 </a>
               ) : (
                 <Button
@@ -168,12 +164,12 @@ export default function MapPage() {
 
         {/* Map */}
         <MapView
-          facilities={filteredFacilities}
+          facilities={facilities}
           selectedFacility={selectedFacility}
           onSelectFacility={handleSelectFacility}
         />
 
-        {/* Facility detail bottom sheet — only when a facility is selected */}
+        {/* Facility detail bottom sheet */}
         <FacilityPanel
           facility={selectedFacility}
           open={panelOpen}
@@ -181,7 +177,7 @@ export default function MapPage() {
         />
       </div>
 
-      {/* ── Right sidebar: all open positions ── */}
+      {/* ── Right sidebar ── */}
       <aside className="hidden md:flex flex-col w-80 shrink-0 border-l bg-background z-10">
         {/* Sidebar header */}
         <div className="px-4 py-3 border-b shrink-0 flex items-center justify-between gap-2">
@@ -189,36 +185,40 @@ export default function MapPage() {
             <Building2 className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold">ARF Map</span>
           </div>
-          {jobSeeker ? (
-            <a href="/#/job-seeker" className="flex items-center gap-2 group">
-              <div className="w-7 h-7 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0 group-hover:ring-2 group-hover:ring-primary transition-all">
-                {jobSeekerProfile?.profilePictureUrl ? (
-                  <img
-                    src={jobSeekerProfile.profilePictureUrl}
-                    alt="Profile"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <span className="text-[10px] font-semibold text-foreground">
-                    {jobSeeker.email[0].toUpperCase()}
-                  </span>
-                )}
-              </div>
-              <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors max-w-[100px] truncate">
-                {jobSeekerProfile?.firstName ?? jobSeeker.email.split("@")[0]}
-              </span>
+          <div className="flex items-center gap-1">
+            <a href="/#/stats">
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+                <BarChart2 className="h-3 w-3" />
+                Stats
+              </Button>
             </a>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => setLoginDialogOpen(true)}
-            >
-              <LogIn className="h-3.5 w-3.5 mr-1" />
-              Login
-            </Button>
-          )}
+            {jobSeeker ? (
+              <a href="/#/job-seeker">
+                <Button variant="outline" size="sm" className="h-7 text-xs flex items-center gap-1.5">
+                  <div className="w-4 h-4 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0">
+                    {jobSeekerProfile?.profilePictureUrl ? (
+                      <img src={jobSeekerProfile.profilePictureUrl} alt="Profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-[8px] font-semibold text-foreground">
+                        {jobSeeker.email[0].toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  {jobSeekerProfile?.firstName ?? jobSeeker.email.split("@")[0]}
+                </Button>
+              </a>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setLoginDialogOpen(true)}
+              >
+                <LogIn className="h-3.5 w-3.5 mr-1" />
+                Login
+              </Button>
+            )}
+          </div>
         </div>
 
         <JobsPanel
@@ -240,7 +240,7 @@ export default function MapPage() {
                 <Briefcase className="h-8 w-8 text-muted-foreground group-hover:text-primary transition-colors" />
                 <div>
                   <p className="font-semibold text-sm">Job Seeker</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Browse & apply for positions</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Browse &amp; apply for positions</p>
                 </div>
               </button>
             </a>

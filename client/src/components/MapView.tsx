@@ -25,9 +25,9 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: "https://tiles.openfreemap.org/styles/positron",
-      center: [-117.1, 32.78],
-      zoom: 10,
-      minZoom: 8,
+      center: [-119.5, 37.5],
+      zoom: 6,
+      minZoom: 4,
       maxZoom: 18,
     });
 
@@ -80,7 +80,7 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
         paint: { "text-color": "#ffffff" },
       });
 
-      // Individual facility points — hiring facilities are blue, others by status
+      // Individual facility points — hiring = blue, others by facility group
       map.addLayer({
         id: "unclustered-point",
         type: "circle",
@@ -90,12 +90,18 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
           "circle-color": [
             "case",
             ["==", ["get", "isHiring"], true], "#3b82f6",
-            ["match", ["get", "status"],
-              "LICENSED", "#22c55e",
-              "CLOSED", "#ef4444",
-              "PENDING", "#f59e0b",
-              "ON PROBATION", "#a855f7",
-              "#6b7280"
+            ["match", ["get", "facilityGroup"],
+              "Adult & Senior Care", "#0ea5e9",
+              "Child Care", "#22c55e",
+              "Children's Residential", "#a855f7",
+              "Home Care", "#f97316",
+              ["match", ["get", "status"],
+                "LICENSED", "#22c55e",
+                "CLOSED", "#ef4444",
+                "PENDING", "#f59e0b",
+                "ON PROBATION", "#a855f7",
+                "#6b7280"
+              ],
             ],
           ],
           "circle-radius": [
@@ -180,10 +186,13 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
         const coords = (e.features[0].geometry as GeoJSON.Point).coordinates.slice() as [number, number];
         const p = e.features[0].properties;
         const hiringBadge = p?.isHiring ? `<div style="color:#3b82f6;font-weight:600;font-size:11px;margin-top:2px">🔵 Hiring · ${p?.jobCount || 0} position${(p?.jobCount || 0) !== 1 ? 's' : ''}</div>` : '';
+        const typeBadge = p?.facilityType && p.facilityType !== "Adult Residential Facility"
+          ? `<div style="color:#8b5cf6;font-size:10px;margin-top:1px">${p.facilityType}</div>` : '';
         popup.setLngLat(coords).setHTML(`
           <div style="font-family:Inter,sans-serif;font-size:13px;line-height:1.4">
             <div style="font-weight:600;margin-bottom:2px">${p?.name || ""}</div>
-            <div style="color:#6b7280">${p?.city || ""} · Cap: ${p?.capacity || "?"}</div>
+            <div style="color:#6b7280">${p?.city || ""}${p?.county ? ` · ${p.county} Co.` : ""} · Cap: ${p?.capacity || "?"}</div>
+            ${typeBadge}
             ${hiringBadge}
           </div>
         `).addTo(map);
@@ -206,7 +215,7 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
       source.setData(buildGeoJSON(facilities));
 
       // Fit bounds to filtered data
-      if (facilities.length > 0 && facilities.length < 800) {
+      if (facilities.length > 0 && facilities.length < 10000) {
         const bounds = new maplibregl.LngLatBounds();
         facilities.forEach((f) => bounds.extend([f.lng, f.lat]));
         map.fitBounds(bounds, { padding: 80, maxZoom: 15, duration: 600 });
@@ -265,6 +274,9 @@ function buildGeoJSON(facilities: Facility[]): GeoJSON.FeatureCollection {
         status: f.status,
         capacity: f.capacity,
         city: f.city,
+        county: f.county ?? "",
+        facilityType: f.facilityType ?? "Adult Residential Facility",
+        facilityGroup: f.facilityGroup ?? "Adult & Senior Care",
         isHiring: f.isHiring,
         jobCount: f.jobPostings?.length || 0,
       },
