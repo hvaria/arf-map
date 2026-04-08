@@ -61,6 +61,8 @@ export const ETL_CONFIG = {
   // ── Run-mode flags ─────────────────────────────────────────────────────────
   /** Skip facilities with no lat/lng in the GEO source */
   skipMissingGeo: true,
+  /** Include CCL-only facilities that have no matching GEO row (no coordinates) */
+  includeCclOnly: true,
   /** Parse + validate but do NOT write to DB */
   dryRun: false,
   /** Max records to process after filtering (0 = no limit; use 100 for smoke tests) */
@@ -124,6 +126,7 @@ export interface EtlConfig {
   filterByGroups: readonly string[];
   filterByCounties: readonly string[];
   skipMissingGeo: boolean;
+  includeCclOnly: boolean;
   dryRun: boolean;
   limit: number;
   enrichment: {

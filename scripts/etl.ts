@@ -20,7 +20,10 @@ import { bulkUpsertFacilities, type FacilityDbRow } from "../server/storage";
 import { typeToGroup, formatPhone } from "../server/services/facilitiesService";
 
 // ── 3. ETL-specific helpers (fetchAllPages is not exported from the service) ──
-import { fetchAllPages, GEO_STATUS, TYPE_TO_NAME, enrichFacilities } from "./etl-helpers";
+import {
+  fetchAllPages, GEO_STATUS, TYPE_TO_NAME, enrichFacilities,
+  dedupeByNumber, mergeFacilityRow,
+} from "./etl-helpers";
 
 // ── 4. Config ─────────────────────────────────────────────────────────────────
 import { ETL_CONFIG } from "./etl-config";
@@ -35,7 +38,7 @@ function log(msg: string) {
 async function main() {
   const startMs = Date.now();
   const { sources, fieldMap: fm, filterByGroups, filterByCounties,
-          skipMissingGeo, dryRun, limit } = ETL_CONFIG;
+          skipMissingGeo, includeCclOnly, dryRun, limit } = ETL_CONFIG;
 
   log("━━━ CCLD Facility ETL ━━━");
   log(`dry-run   : ${dryRun}`);
@@ -67,113 +70,69 @@ async function main() {
 
   console.log();
 
-  // Guard: without GEO rows there is nothing to join on
-  if (geoRows.length === 0) {
-    log("No GEO rows to process. Exiting.");
+  // Guard: need at least one source
+  if (geoRows.length === 0 && cclRows.length === 0) {
+    log("No rows from either source. Exiting.");
     return;
   }
 
-  // ── Step 3: Index CCL by facility number (O(1) lookup during merge) ────────
-  const cclByNumber = new Map<string, any>();
-  for (const row of cclRows) {
-    const num = String(row[fm.fromCcl.number] ?? "").trim();
-    if (num) cclByNumber.set(num, row);
-  }
+  // ── Step 3: Deduplicate each source by facility number ────────────────────
+  const cclByNumber = dedupeByNumber(
+    cclRows, (r) => String(r[fm.fromCcl.number] ?? ""), "CCL"
+  );
+  const geoByNumber = dedupeByNumber(
+    geoRows, (r) => String(r[fm.fromGeo.number] ?? ""), "GEO"
+  );
   log(`CCL index: ${cclByNumber.size.toLocaleString()} unique facility numbers`);
+  log(`GEO index: ${geoByNumber.size.toLocaleString()} unique facility numbers`);
 
-  // ── Step 4: Merge GEO + CCL and apply field map ────────────────────────────
+  // Build the union of all facility numbers (CCL ∪ GEO)
+  const allNumbers = new Set([...cclByNumber.keys(), ...geoByNumber.keys()]);
+  const cclOnly  = [...allNumbers].filter((n) =>  cclByNumber.has(n) && !geoByNumber.has(n)).length;
+  const geoOnly  = [...allNumbers].filter((n) => !cclByNumber.has(n) &&  geoByNumber.has(n)).length;
+  const matched  = [...allNumbers].filter((n) =>  cclByNumber.has(n) &&  geoByNumber.has(n)).length;
+  log(`Union:      ${allNumbers.size.toLocaleString()} unique facilities total`);
+  log(`  CCL-only: ${cclOnly.toLocaleString()}`);
+  log(`  GEO-only: ${geoOnly.toLocaleString()}`);
+  log(`  Matched:  ${matched.toLocaleString()}`);
+
+  // ── Step 4: Merge CCL ∪ GEO and apply field map ───────────────────────────
   log("Merging sources and mapping fields…");
 
   const mapped: Omit<FacilityDbRow, "updated_at">[] = [];
-  let skippedNoNumber = 0;
   let skippedNoGeo    = 0;
   let skippedGroup    = 0;
   let skippedCounty   = 0;
 
-  for (const geo of geoRows) {
-    // Extract facility number (primary key for the join)
-    const num = String(geo[fm.fromGeo.number] ?? "").trim();
-    if (!num) { skippedNoNumber++; continue; }
-
-    // Parse coordinates
-    const lat = parseFloat(geo[fm.fromGeo.lat] ?? "");
-    const lng = parseFloat(geo[fm.fromGeo.lng] ?? "");
-    const hasGeo = Number.isFinite(lat) && lat !== 0 &&
-                   Number.isFinite(lng) && lng !== 0;
-
-    if (skipMissingGeo && !hasGeo) { skippedNoGeo++; continue; }
-
-    // Look up matching CCL row
+  for (const num of allNumbers) {
     const ccl = cclByNumber.get(num);
+    const geo = geoByNumber.get(num);
 
-    // ── Facility type & group ──────────────────────────────────────────────
-    // Prefer CCL's human-readable string; fall back to GEO type-code lookup.
-    const rawType = (
-      ccl?.[fm.fromCcl.facilityType] ??
-      TYPE_TO_NAME[String(geo[fm.fromGeo.typeCode])] ??
-      "Adult Residential Facility"
-    ).trim();
-    const facilityType  = rawType || "Adult Residential Facility";
-    const facilityGroup = typeToGroup(facilityType);
+    const row = mergeFacilityRow(
+      num, ccl, geo, fm as any,
+      TYPE_TO_NAME, GEO_STATUS,
+      skipMissingGeo, includeCclOnly,
+      formatPhone, typeToGroup,
+    );
+
+    if (row === null) { skippedNoGeo++; continue; }
 
     // ── Group filter ───────────────────────────────────────────────────────
-    if (filterByGroups.length > 0 && !filterByGroups.includes(facilityGroup)) {
+    if (filterByGroups.length > 0 && !filterByGroups.includes(row.facility_group)) {
       skippedGroup++; continue;
     }
 
-    // ── County ────────────────────────────────────────────────────────────
-    const county = (ccl?.[fm.fromCcl.county] ?? geo.COUNTY ?? "").trim();
-
     // ── County filter ──────────────────────────────────────────────────────
-    if (filterByCounties.length > 0 && !filterByCounties.includes(county)) {
+    if (filterByCounties.length > 0 && !filterByCounties.includes(row.county)) {
       skippedCounty++; continue;
     }
 
-    // ── Status ────────────────────────────────────────────────────────────
-    // Prefer CCL text status; fall back to GEO numeric code decode.
-    const status = (
-      ccl?.[fm.fromCcl.status] ??
-      GEO_STATUS[String(geo[fm.fromGeo.status])] ??
-      "LICENSED"
-    ).toUpperCase();
-
-    // ── Capacity: GEO value preferred, CCL as fallback ────────────────────
-    const capacity =
-      parseInt(geo[fm.fromGeo.capacity] ?? "", 10) ||
-      parseInt(ccl?.[fm.fromCcl.capacity] ?? "0", 10) ||
-      0;
-
-    mapped.push({
-      number:              num,
-      name:                (ccl?.[fm.fromCcl.name] ?? geo[fm.fromGeo.name] ?? "").trim(),
-      facility_type:       facilityType,
-      facility_group:      facilityGroup,
-      status,
-      address:             (geo[fm.fromGeo.address]  ?? "").trim(),
-      city:                (geo[fm.fromGeo.city]     ?? "").trim().toUpperCase(),
-      county,
-      zip:                 (geo[fm.fromGeo.zip]      ?? "").trim(),
-      phone:               formatPhone(geo[fm.fromGeo.phone]),
-      licensee:            (ccl?.[fm.fromCcl.licensee]       ?? "").trim(),
-      administrator:       (ccl?.[fm.fromCcl.administrator]  ?? "").trim(),
-      capacity,
-      first_license_date:  ccl?.[fm.fromCcl.firstLicenseDate] ?? "",
-      closed_date:         ccl?.[fm.fromCcl.closedDate]       ?? "",
-      // Fields not in CHHS open data
-      last_inspection_date: "",
-      total_visits:         0,
-      total_type_b:         0,
-      citations:            0,
-      lat:                  hasGeo ? lat : null,
-      lng:                  hasGeo ? lng : null,
-      geocode_quality:      hasGeo ? "api" : "",
-    });
+    mapped.push(row);
   }
 
   console.log();
   log(`Merge results:`);
   log(`  mapped        : ${mapped.length.toLocaleString()}`);
-  log(`  skip (no num) : ${skippedNoNumber}`);
   log(`  skip (no geo) : ${skippedNoGeo}`);
   log(`  skip (group)  : ${skippedGroup}`);
   log(`  skip (county) : ${skippedCounty}`);

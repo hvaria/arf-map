@@ -12,6 +12,8 @@ import type { FacilitiesMeta } from "@shared/schema";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+export type QuickFilterId = "ARF" | "RCFE" | "DAYCARE" | "GROUP_HOME" | "";
+
 export interface FacilityFilters {
   search: string;
   county: string;
@@ -21,6 +23,7 @@ export interface FacilityFilters {
   hiringOnly: boolean;
   minCapacity: number | null;
   maxCapacity: number | null;
+  quickFilter: QuickFilterId;
 }
 
 export const DEFAULT_FILTERS: FacilityFilters = {
@@ -32,14 +35,21 @@ export const DEFAULT_FILTERS: FacilityFilters = {
   hiringOnly: false,
   minCapacity: null,
   maxCapacity: null,
+  quickFilter: "",
 };
 
 export function countActiveFilters(f: FacilityFilters): number {
   let n = 0;
   if (f.search) n++;
   if (f.county) n++;
-  if (f.facilityGroup) n++;
-  if (f.facilityType) n++;
+  // quickFilter is a single selection that syncs group + type — count it as 1.
+  // When it's cleared, count group/type independently.
+  if (f.quickFilter) {
+    n++;
+  } else {
+    if (f.facilityGroup) n++;
+    if (f.facilityType) n++;
+  }
   // Default statuses don't count — only non-default combos
   const defaultStatuses = new Set(["LICENSED", "PENDING", "ON PROBATION"]);
   if (
@@ -50,6 +60,56 @@ export function countActiveFilters(f: FacilityFilters): number {
   if (f.minCapacity != null || f.maxCapacity != null) n++;
   return n;
 }
+
+// ── Quick filters ─────────────────────────────────────────────────────────────
+
+// Colors are spelled out fully as string literals so Tailwind JIT detects them.
+const QUICK_FILTERS: Array<{
+  id: QuickFilterId;
+  label: string;
+  description: string;
+  group: string;
+  type: string; // exact facility_type value, or "" for group-only (Daycare)
+  colorActive: string;
+  colorBorder: string;
+}> = [
+  {
+    id: "ARF",
+    label: "ARF",
+    description: "Adult Residential",
+    group: "Adult & Senior Care",
+    type: "Adult Residential Facility",
+    colorActive: "bg-teal-600 text-white border-teal-600",
+    colorBorder: "border-teal-400 text-teal-700 dark:text-teal-400",
+  },
+  {
+    id: "RCFE",
+    label: "RCFE",
+    description: "Senior Care",
+    group: "Adult & Senior Care",
+    type: "Residential Care Facility for the Elderly",
+    colorActive: "bg-blue-600 text-white border-blue-600",
+    colorBorder: "border-blue-400 text-blue-700 dark:text-blue-400",
+  },
+  {
+    id: "DAYCARE",
+    label: "Daycare",
+    description: "Child Day Care",
+    group: "Child Care",
+    type: "", // group-only — no facilityType filter
+    colorActive: "bg-green-600 text-white border-green-600",
+    colorBorder: "border-green-400 text-green-700 dark:text-green-400",
+  },
+  {
+    id: "GROUP_HOME",
+    label: "Group Home",
+    description: "Children's Residential",
+    group: "Children's Residential",
+    type: "Group Home",
+    colorActive: "bg-purple-600 text-white border-purple-600",
+    colorBorder: "border-purple-400 text-purple-700 dark:text-purple-400",
+  },
+];
 
 // ── Status config ─────────────────────────────────────────────────────────────
 
@@ -97,15 +157,14 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
     return meta.counties.filter((c) => c.toLowerCase().includes(q));
   }, [meta?.counties, countySearch]);
 
-  // Group types by their group for the collapsible tree
+  // Group types by their group for the collapsible tree.
+  // Uses inferGroup() directly — avoids the find()+fallback bug where every type
+  // could match "Adult & Senior Care" before specific groups are checked.
   const typesByGroup = useMemo(() => {
     if (!meta) return {};
     const map: Record<string, string[]> = {};
     for (const t of meta.facilityTypes) {
-      const group = meta.facilityGroups.find((g) =>
-        // Infer group from the type name
-        typeMatchesGroup(t, g)
-      ) ?? "Adult & Senior Care";
+      const group = inferGroup(t);
       if (!map[group]) map[group] = [];
       map[group].push(t);
     }
@@ -122,6 +181,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
     update({ statuses: next });
   };
 
+  // Reset spreads DEFAULT_FILTERS (which includes quickFilter: "") so all fields clear.
   const reset = () => onChange({ ...DEFAULT_FILTERS, statuses: new Set(["LICENSED", "PENDING", "ON PROBATION"]) });
 
   return (
@@ -193,13 +253,18 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
               </div>
             </FilterSection>
 
+            {/* Quick Filters — rendered above the Facility Group & Type section */}
+            <div className="px-4 py-3 border-b">
+              <QuickFilterBar filters={filters} meta={meta} onChange={onChange} />
+            </div>
+
             {/* Facility Group & Type */}
             <FilterSection icon={Building2} title="Facility Type">
-              {/* Group pills */}
+              {/* Group pills — clearing quickFilter on manual selection */}
               <div className="flex flex-wrap gap-1 mb-2">
                 <Pill
                   active={!filters.facilityGroup}
-                  onClick={() => update({ facilityGroup: "", facilityType: "" })}
+                  onClick={() => update({ facilityGroup: "", facilityType: "", quickFilter: "" })}
                 >
                   All Groups
                 </Pill>
@@ -207,7 +272,11 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                   <Pill
                     key={g}
                     active={filters.facilityGroup === g}
-                    onClick={() => update({ facilityGroup: filters.facilityGroup === g ? "" : g, facilityType: "" })}
+                    onClick={() => update({
+                      facilityGroup: filters.facilityGroup === g ? "" : g,
+                      facilityType: "",
+                      quickFilter: "",
+                    })}
                     className={GROUP_COLORS[g]}
                   >
                     {g}
@@ -223,7 +292,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                 <div className="space-y-0.5 mt-1">
                   <Pill
                     active={!filters.facilityType}
-                    onClick={() => update({ facilityType: "" })}
+                    onClick={() => update({ facilityType: "", quickFilter: "" })}
                     className="mb-1"
                   >
                     All in {filters.facilityGroup}
@@ -231,7 +300,10 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                   {typesByGroup[filters.facilityGroup].map((t) => (
                     <button
                       key={t}
-                      onClick={() => update({ facilityType: filters.facilityType === t ? "" : t })}
+                      onClick={() => update({
+                        facilityType: filters.facilityType === t ? "" : t,
+                        quickFilter: "",
+                      })}
                       className={cn(
                         "w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all",
                         filters.facilityType === t
@@ -446,12 +518,87 @@ function Pill({
   );
 }
 
-// Helper to infer group from type name
-function typeMatchesGroup(type: string, group: string): boolean {
+// ── QuickFilterBar ────────────────────────────────────────────────────────────
+
+export function QuickFilterBar({
+  filters,
+  meta,
+  onChange,
+}: {
+  filters: FacilityFilters;
+  meta: FacilitiesMeta | undefined;
+  onChange: (f: FacilityFilters) => void;
+}) {
+  const handleQuickFilter = (id: QuickFilterId) => {
+    if (filters.quickFilter === id) {
+      // Deselect — clear everything this chip synced
+      onChange({ ...filters, quickFilter: "", facilityGroup: "", facilityType: "" });
+      return;
+    }
+    const qf = QUICK_FILTERS.find((q) => q.id === id)!;
+    onChange({
+      ...filters,
+      quickFilter: id,
+      facilityGroup: qf.group,
+      facilityType: qf.type, // "" for Daycare (group-only), specific string otherwise
+    });
+  };
+
+  return (
+    <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
+      {QUICK_FILTERS.map((qf) => {
+        const isActive = filters.quickFilter === qf.id;
+        // type="" means Daycare → use group count; otherwise use per-type count
+        const count = qf.type
+          ? meta?.countByType?.[qf.type]
+          : meta?.countByGroup?.[qf.group];
+
+        return (
+          <button
+            key={qf.id}
+            onClick={() => handleQuickFilter(qf.id)}
+            className={cn(
+              "flex-shrink-0 flex flex-col items-center px-3 py-1.5 rounded-full border text-xs font-semibold transition-all",
+              isActive ? qf.colorActive : qf.colorBorder + " bg-background"
+            )}
+          >
+            <span>{qf.label}</span>
+            <span className={cn("text-[10px] font-normal", isActive ? "opacity-80" : "opacity-60")}>
+              {qf.description}
+              {count ? ` · ${count.toLocaleString()}` : ""}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Infer the facility group from a type name string.
+ * Checks specific groups first; Adult & Senior Care is the catch-all last.
+ * Mirrors server-side typeToGroup() in facilitiesService.ts.
+ *
+ * Previous implementation used find()+typeMatchesGroup() which had a bug:
+ * if "Adult & Senior Care" appeared before "Child Care" in the groups array,
+ * its `return true` catch-all would claim every type before Child Care could match.
+ */
+function inferGroup(type: string): string {
   const t = type.toLowerCase();
-  if (group === "Child Care") return t.includes("child care") || t.includes("family child");
-  if (group === "Children's Residential")
-    return t.includes("group home") || t.includes("short-term") || t.includes("community treatment") || t.includes("foster family");
-  if (group === "Home Care") return t.includes("home care organization");
-  return true; // Adult & Senior Care = default
+  if (t.includes("child care") || t.includes("family child"))
+    return "Child Care";
+  if (
+    t.includes("group home") ||
+    t.includes("short-term") ||
+    t.includes("community treatment") ||
+    t.includes("foster family") ||
+    t.includes("strtp") ||
+    t.includes("enhanced behavioral")
+  )
+    return "Children's Residential";
+  if (t.includes("home care"))
+    return "Home Care";
+  return "Adult & Senior Care"; // catch-all last
 }

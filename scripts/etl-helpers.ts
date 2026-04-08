@@ -97,6 +97,152 @@ export async function fetchAllPages(
   return rows;
 }
 
+// ── Facility number helpers ───────────────────────────────────────────────────
+
+/**
+ * Normalise a raw facility number string: trim, remove spaces and dashes.
+ * Does NOT validate — call validateFacilityNumber after normalising.
+ */
+export function normalizeFacilityNumber(raw: string): string {
+  return String(raw ?? "").trim().replace(/[\s-]/g, "");
+}
+
+/**
+ * Returns true when a (normalised) facility number looks valid.
+ * California CCLD numbers are 6–12 digit numeric strings.
+ */
+export function validateFacilityNumber(num: string): boolean {
+  return /^\d{6,12}$/.test(num);
+}
+
+/**
+ * Deduplicate an iterable of raw rows by facility number (first-wins).
+ *
+ * @param rows      Raw API rows to deduplicate.
+ * @param getNum    Extract the raw facility number string from a row.
+ * @param sourceName  Label used in warning messages (e.g. "CCL", "GEO").
+ * @returns Map of normalised-and-validated facility number → first row seen.
+ */
+export function dedupeByNumber<T>(
+  rows: T[],
+  getNum: (row: T) => string,
+  sourceName: string,
+): Map<string, T> {
+  const map = new Map<string, T>();
+  let skippedInvalid = 0;
+  let skippedDupe = 0;
+
+  for (const row of rows) {
+    const num = normalizeFacilityNumber(getNum(row));
+    if (!validateFacilityNumber(num)) { skippedInvalid++; continue; }
+    if (map.has(num)) { skippedDupe++; continue; }
+    map.set(num, row);
+  }
+
+  if (skippedInvalid > 0)
+    console.warn(`[etl] ${sourceName}: ${skippedInvalid} rows skipped (invalid facility number)`);
+  if (skippedDupe > 0)
+    console.warn(`[etl] ${sourceName}: ${skippedDupe} duplicate facility numbers dropped (first-wins)`);
+
+  return map;
+}
+
+/**
+ * Normalise a raw facility-type string, falling back through the GEO type-code
+ * lookup table and finally to a hard-coded default.
+ */
+export function normalizeFacilityType(
+  rawCclType: string | undefined,
+  geoTypeCode: string | undefined,
+  typeToName: Record<string, string>,
+): string {
+  const fromCcl = (rawCclType ?? "").trim();
+  if (fromCcl) return fromCcl;
+  const fromGeo = typeToName[String(geoTypeCode ?? "")] ?? "";
+  return fromGeo || "Adult Residential Facility";
+}
+
+/**
+ * Pure merge function: combine one CCL row and one GEO row into a FacilityDbRow.
+ *
+ * Either `ccl` or `geo` may be undefined (but not both).
+ * Returns null when the record should be excluded (missing geo + skipMissingGeo,
+ * or no lat/lng when geo is absent).
+ */
+export function mergeFacilityRow(
+  num: string,
+  ccl: Record<string, any> | undefined,
+  geo: Record<string, any> | undefined,
+  fm: {
+    fromGeo: Record<string, string>;
+    fromCcl: Record<string, string>;
+  },
+  typeToName: Record<string, string>,
+  geoStatus: Record<string, string>,
+  skipMissingGeo: boolean,
+  includeCclOnly: boolean,
+  formatPhoneFn: (raw: string) => string,
+  typeToGroupFn: (type: string) => string,
+): Omit<import("../server/storage").FacilityDbRow, "updated_at"> | null {
+  // ── Coordinates ────────────────────────────────────────────────────────────
+  const lat = geo ? parseFloat(geo[fm.fromGeo.lat] ?? "") : NaN;
+  const lng = geo ? parseFloat(geo[fm.fromGeo.lng] ?? "") : NaN;
+  const hasGeo = Number.isFinite(lat) && lat !== 0 &&
+                 Number.isFinite(lng) && lng !== 0;
+
+  // Exclude: CCL-only and includeCclOnly is off
+  if (!geo && !includeCclOnly) return null;
+
+  // Exclude: GEO present but coordinates missing and skipMissingGeo is on
+  if (geo && skipMissingGeo && !hasGeo) return null;
+
+  // ── Facility type & group ──────────────────────────────────────────────────
+  const facilityType = normalizeFacilityType(
+    ccl?.[fm.fromCcl.facilityType],
+    geo?.[fm.fromGeo.typeCode],
+    typeToName,
+  );
+  const facilityGroup = typeToGroupFn(facilityType);
+
+  // ── Status ─────────────────────────────────────────────────────────────────
+  const status = (
+    ccl?.[fm.fromCcl.status] ??
+    geoStatus[String(geo?.[fm.fromGeo.status] ?? "")] ??
+    "LICENSED"
+  ).toUpperCase();
+
+  // ── Capacity ───────────────────────────────────────────────────────────────
+  const capacity =
+    parseInt(geo?.[fm.fromGeo.capacity] ?? "", 10) ||
+    parseInt(ccl?.[fm.fromCcl.capacity] ?? "0", 10) ||
+    0;
+
+  return {
+    number:              num,
+    name:                (ccl?.[fm.fromCcl.name] ?? geo?.[fm.fromGeo.name] ?? "").trim(),
+    facility_type:       facilityType,
+    facility_group:      facilityGroup,
+    status,
+    address:             (geo?.[fm.fromGeo.address]  ?? "").trim(),
+    city:                (geo?.[fm.fromGeo.city]     ?? "").trim().toUpperCase(),
+    county:              (ccl?.[fm.fromCcl.county]   ?? geo?.COUNTY ?? "").trim(),
+    zip:                 (geo?.[fm.fromGeo.zip]       ?? "").trim(),
+    phone:               formatPhoneFn(geo?.[fm.fromGeo.phone] ?? ""),
+    licensee:            (ccl?.[fm.fromCcl.licensee]      ?? "").trim(),
+    administrator:       (ccl?.[fm.fromCcl.administrator] ?? "").trim(),
+    capacity,
+    first_license_date:  ccl?.[fm.fromCcl.firstLicenseDate] ?? "",
+    closed_date:         ccl?.[fm.fromCcl.closedDate]       ?? "",
+    last_inspection_date: "",
+    total_visits:         0,
+    total_type_b:         0,
+    citations:            0,
+    lat:                  hasGeo ? lat : null,
+    lng:                  hasGeo ? lng : null,
+    geocode_quality:      hasGeo ? "api" : "",
+  };
+}
+
 // ── CCLD Transparency API — enrichment helpers ────────────────────────────────
 
 /**
