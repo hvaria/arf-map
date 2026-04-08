@@ -20,7 +20,7 @@ import { bulkUpsertFacilities, type FacilityDbRow } from "../server/storage";
 import { typeToGroup, formatPhone } from "../server/services/facilitiesService";
 
 // ── 3. ETL-specific helpers (fetchAllPages is not exported from the service) ──
-import { fetchAllPages, GEO_STATUS, TYPE_TO_NAME } from "./etl-helpers";
+import { fetchAllPages, GEO_STATUS, TYPE_TO_NAME, enrichFacilities } from "./etl-helpers";
 
 // ── 4. Config ─────────────────────────────────────────────────────────────────
 import { ETL_CONFIG } from "./etl-config";
@@ -185,6 +185,54 @@ async function main() {
   }
 
   console.log();
+
+  // ── Step 5.5: Enrich via CCLD Transparency API ────────────────────────────
+  if (ETL_CONFIG.enrichment.enabled) {
+    const enCfg = ETL_CONFIG.enrichment;
+
+    // Scope: apply optional county filter before hitting the API
+    let enrichInput: typeof toWrite = toWrite;
+    if (enCfg.enrichCounties.length > 0) {
+      enrichInput = toWrite.filter((r) =>
+        (enCfg.enrichCounties as readonly string[]).includes(r.county)
+      );
+      log(
+        `Enrichment county filter: ${enrichInput.length.toLocaleString()} / ` +
+        `${toWrite.length.toLocaleString()} facilities`
+      );
+    }
+
+    log(`Enriching ${enrichInput.length.toLocaleString()} facilities via CCLD Transparency API…`);
+    if (enCfg.enrichLimit > 0) {
+      log(`  (enrichLimit=${enCfg.enrichLimit} — only first ${enCfg.enrichLimit} will be enriched)`);
+    }
+
+    const enrichMap = await enrichFacilities(enrichInput, enCfg);
+
+    // Patch enriched values back onto the toWrite rows (objects are references)
+    let datesFound = 0;
+    let adminsFound = 0;
+    for (const row of toWrite) {
+      const patch = enrichMap.get(row.number);
+      if (!patch) continue;
+      if (patch.last_inspection_date) {
+        row.last_inspection_date = patch.last_inspection_date;
+        datesFound++;
+      }
+      if (patch.administrator) {
+        row.administrator = patch.administrator;
+        adminsFound++;
+      }
+      if (patch.licensee) {
+        row.licensee = patch.licensee;
+      }
+    }
+
+    log(`Enrichment complete:`);
+    log(`  last_inspection_dates found : ${datesFound.toLocaleString()}`);
+    log(`  administrators updated      : ${adminsFound.toLocaleString()}`);
+    console.log();
+  }
 
   // ── Step 6: Write to DB (or dry-run) ──────────────────────────────────────
   if (dryRun) {

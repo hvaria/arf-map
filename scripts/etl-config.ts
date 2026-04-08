@@ -65,6 +65,26 @@ export const ETL_CONFIG = {
   dryRun: false,
   /** Max records to process after filtering (0 = no limit; use 100 for smoke tests) */
   limit: 0,
+
+  // ── Enrichment (CCLD Transparency API) ────────────────────────────────────
+  enrichment: {
+    /** Set to false to skip enrichment entirely — existing ETL is 100% unchanged */
+    enabled: false,
+    /** Which fields to enrich (false = skip that field) */
+    fields: {
+      lastInspectionDate: true,
+      administrator: true,  // used as fallback when CCL source has empty value
+      licensee: true,       // used as fallback when CCL source has empty value
+    },
+    /** Max CCLD Transparency API requests per second (respect rate limits) */
+    requestsPerSecond: 5,
+    /** Skip enrichment for a field that already has a non-empty value */
+    skipIfPopulated: true,
+    /** Limit enrichment to N facilities (0 = all; use 10 for smoke tests) */
+    enrichLimit: 0,
+    /** Only enrich facilities in these counties (empty = all counties) */
+    enrichCounties: [] as string[],
+  },
 } as const satisfies EtlConfig;
 
 // ── Type definition (kept here so consumers get full IntelliSense) ─────────
@@ -106,4 +126,16 @@ export interface EtlConfig {
   skipMissingGeo: boolean;
   dryRun: boolean;
   limit: number;
+  enrichment: {
+    enabled: boolean;
+    fields: {
+      lastInspectionDate: boolean;
+      administrator: boolean;
+      licensee: boolean;
+    };
+    requestsPerSecond: number;
+    skipIfPopulated: boolean;
+    enrichLimit: number;
+    enrichCounties: readonly string[];
+  };
 }
