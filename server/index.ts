@@ -161,8 +161,10 @@ app.use((req, res, next) => {
     log(`[email] RESEND_API_KEY set: ${!!process.env.RESEND_API_KEY}`);
 
     // Pre-warm facility cache in the background so the first user request is instant
-    getCachedFacilities()
-      .then((f) => log(`[facilitiesService] pre-warmed ${f.length} facilities`))
-      .catch((err) => log(`[facilitiesService] pre-warm failed: ${err.message}`));
+    if (!process.env.SKIP_PREWARM) {
+      getCachedFacilities()
+        .then((f) => log(`[facilitiesService] pre-warmed ${f.length} facilities`))
+        .catch((err) => log(`[facilitiesService] pre-warm failed: ${err.message}`));
+    }
   });
 })();
