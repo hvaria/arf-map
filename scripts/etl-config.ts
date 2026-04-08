@@ -48,7 +48,7 @@ export const ETL_CONFIG = {
       capacity:         "facility_capacity",
       firstLicenseDate: "license_first_date",
       closedDate:       "closed_date",
-      county:           "county",
+      county:           "county_name",
     },
   },
 
