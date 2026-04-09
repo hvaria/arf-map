@@ -448,6 +448,24 @@ function ProfileEditor({
     jobTypes: profile?.jobTypes ?? [],
   });
 
+  useEffect(() => {
+    if (profile) {
+      setForm({
+        profilePictureUrl: profile.profilePictureUrl ?? "",
+        firstName: profile.firstName ?? "",
+        lastName: profile.lastName ?? "",
+        phone: profile.phone ?? "",
+        address: profile.address ?? "",
+        city: profile.city ?? "",
+        state: profile.state ?? "",
+        zipCode: profile.zipCode ?? "",
+        yearsExperience: String(profile.yearsExperience ?? ""),
+        bio: profile.bio ?? "",
+        jobTypes: profile.jobTypes ?? [],
+      });
+    }
+  }, [profile]);
+
   const saveMutation = useMutation({
     mutationFn: () =>
       apiRequest("PUT", "/api/jobseeker/profile", {
