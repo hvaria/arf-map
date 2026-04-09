@@ -22,6 +22,11 @@ declare global {
 const app = express();
 const httpServer = createServer(app);
 
+// fly.io (and most reverse proxies) terminate TLS at the edge and forward HTTP
+// internally. Without this, req.secure = false and express-session silently skips
+// setting the Set-Cookie header when cookie.secure = true, breaking all sessions.
+app.set('trust proxy', 1);
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
