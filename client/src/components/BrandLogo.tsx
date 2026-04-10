@@ -1,4 +1,4 @@
-export function BrandLogo({ size = 150 }: { size?: number }) {
+export function BrandLogo({ size = 52 }: { size?: number }) {
   return (
     <div className="flex items-center gap-2.5">
       <svg
@@ -7,6 +7,7 @@ export function BrandLogo({ size = 150 }: { size?: number }) {
         viewBox="0 4 120 76"
         xmlns="http://www.w3.org/2000/svg"
         className="flex-shrink-0"
+        style={{ height: "auto" }}
       >
         <line x1="60" y1="8" x2="60" y2="48" stroke="#E8864A" strokeWidth="1.5" opacity="0.35"/>
         <line x1="82.8" y1="17.2" x2="67" y2="43" stroke="#E8864A" strokeWidth="1.5" opacity="0.35"/>
