@@ -490,7 +490,7 @@ function ProfileEditor({
       // A 401 means the session expired while the dashboard was still showing
       // (stale React Query cache). Force-refresh the /me query so the app
       // redirects the user back to the login form immediately.
-      if (err.message?.startsWith("401:")) {
+      if (err.message?.includes("Authentication required")) {
         qc.invalidateQueries({ queryKey: ["/api/jobseeker/me"] });
       }
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
