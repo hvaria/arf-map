@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
 import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,13 +29,9 @@ const loginSchema = z.object({
 });
 
 const registerSchema = z.object({
-  facilityNumber: z.string().min(1, "Facility license number is required"),
-  username: z.string().min(3, "Username must be at least 3 characters"),
+  facilityNumber: z.string().min(1, "Facility is required"),
+  email: z.string().email("Invalid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  confirmPassword: z.string(),
-}).refine((d) => d.password === d.confirmPassword, {
-  message: "Passwords do not match",
-  path: ["confirmPassword"],
 });
 
 const detailsSchema = z.object({
@@ -53,9 +50,14 @@ const jobSchema = z.object({
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
-type RegisterForm = z.infer<typeof registerSchema>;
 type DetailsForm = z.infer<typeof detailsSchema>;
 type JobForm = z.infer<typeof jobSchema>;
+
+interface FacilitySearchResult {
+  number: string;
+  name: string;
+  city: string;
+}
 
 interface SessionUser {
   id: number;
@@ -133,16 +135,46 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
 
 function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
   const { toast } = useToast();
-  const form = useForm<RegisterForm>({ resolver: zodResolver(registerSchema) });
+  const qc = useQueryClient();
 
-  const mutation = useMutation({
-    mutationFn: (data: RegisterForm) =>
+  // Facility search state
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchResults, setSearchResults] = useState<FacilitySearchResult[]>([]);
+  const [selectedFacility, setSelectedFacility] = useState<FacilitySearchResult | null>(null);
+  const [showDropdown, setShowDropdown] = useState(false);
+
+  // Form fields
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  // Debounced facility search
+  useEffect(() => {
+    if (!searchTerm.trim() || selectedFacility) {
+      setSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/facilities/search?q=${encodeURIComponent(searchTerm)}`);
+        const data = await res.json();
+        setSearchResults(data);
+        setShowDropdown(true);
+      } catch {
+        // silently ignore search errors
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm, selectedFacility]);
+
+  const registerMutation = useMutation({
+    mutationFn: () =>
       apiRequest("POST", "/api/facility/register", {
-        facilityNumber: data.facilityNumber,
-        username: data.username,
-        password: data.password,
+        facilityNumber: selectedFacility!.number,
+        username,
+        password,
       }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
       onSuccess();
       toast({ title: "Account created successfully" });
     },
@@ -152,59 +184,95 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
   });
 
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit((d) => mutation.mutate(d))} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="facilityNumber"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Facility License Number</FormLabel>
-              <FormControl>
-                <Input placeholder="e.g. 198012345" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
+    <div className="space-y-4">
+      {/* Facility search */}
+      <div className="space-y-2">
+        <Label>Facility</Label>
+        {selectedFacility ? (
+          <div className="flex items-center gap-2 p-2.5 border rounded-md bg-muted/30">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{selectedFacility.name}</p>
+              <p className="text-xs text-muted-foreground">
+                {selectedFacility.city} · License #{selectedFacility.number}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedFacility(null);
+                setSearchTerm("");
+                setSearchResults([]);
+              }}
+            >
+              Change
+            </Button>
+          </div>
+        ) : (
+          <div className="relative">
+            <Input
+              placeholder="Search by facility name or city…"
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setShowDropdown(true);
+              }}
+              onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+            />
+            {showDropdown && searchResults.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-md max-h-52 overflow-y-auto">
+                {searchResults.map((r) => (
+                  <button
+                    key={r.number}
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-muted text-sm border-b last:border-b-0"
+                    onMouseDown={() => {
+                      setSelectedFacility(r);
+                      setSearchTerm("");
+                      setSearchResults([]);
+                      setShowDropdown(false);
+                    }}
+                  >
+                    <span className="font-medium">{r.name}</span>
+                    <span className="text-muted-foreground"> — {r.city} (License #{r.number})</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Username */}
+      <div className="space-y-2">
+        <Label>Username</Label>
+        <Input
+          placeholder="Choose a username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
         />
-        <FormField
-          control={form.control}
-          name="username"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Username</FormLabel>
-              <FormControl><Input placeholder="choose-a-username" {...field} /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
+      </div>
+
+      {/* Password */}
+      <div className="space-y-2">
+        <Label>Password</Label>
+        <Input
+          type="password"
+          placeholder="At least 8 characters"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
         />
-        <FormField
-          control={form.control}
-          name="password"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Password</FormLabel>
-              <FormControl><Input type="password" placeholder="Min. 8 characters" {...field} /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="confirmPassword"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Confirm Password</FormLabel>
-              <FormControl><Input type="password" placeholder="••••••••" {...field} /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <Button type="submit" className="w-full" disabled={mutation.isPending}>
-          {mutation.isPending ? "Creating account..." : "Create Account"}
-        </Button>
-      </form>
-    </Form>
+      </div>
+
+      <Button
+        className="w-full"
+        onClick={() => registerMutation.mutate()}
+        disabled={registerMutation.isPending || !selectedFacility || username.length < 3 || password.length < 8}
+      >
+        {registerMutation.isPending ? "Creating account…" : "Create Account"}
+      </Button>
+    </div>
   );
 }
 

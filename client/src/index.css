@@ -1,6 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Neighbourhood Care Finder brand variables ── */
+:root {
+  --brand-primary:      #D4693A;
+  --brand-primary-dark: #B8532A;
+  --brand-primary-deep: #C25A2E;
+  --brand-secondary:    #E8864A;
+  --brand-bg-warm:      #FFF8F0;
+  --brand-text-muted:   #8B6B5A;
+  --brand-border:       rgba(212, 105, 58, 0.15);
+}
 
 /* ── Mobile / PWA / Capacitor safe areas ── */
 :root {

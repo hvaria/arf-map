@@ -323,7 +323,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
     const existingByUsername = await storage.getFacilityAccountByUsername(username);
     if (existingByUsername) {
-      return res.status(409).json({ message: "Username is already taken" });
+      return res.status(409).json({ message: "Username already taken" });
     }
 
     const hashed = await hashPassword(password);
@@ -335,12 +335,8 @@ export async function registerRoutes(server: Server, app: Express) {
     });
 
     req.login(account, (err) => {
-      if (err) return res.status(500).json({ message: "Login after register failed" });
-      res.status(201).json({
-        id: account.id,
-        facilityNumber: account.facilityNumber,
-        username: account.username,
-      });
+      if (err) return res.status(500).json({ message: "Session error after registration" });
+      res.status(201).json({ id: account.id, facilityNumber: account.facilityNumber, username: account.username });
     });
   });
 
