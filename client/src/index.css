@@ -6,13 +6,17 @@
 
 /* ── Neighbourhood Care Finder brand variables ── */
 :root {
-  --brand-primary:      #D4693A;
-  --brand-primary-dark: #B8532A;
-  --brand-primary-deep: #C25A2E;
-  --brand-secondary:    #E8864A;
-  --brand-bg-warm:      #FFF8F0;
-  --brand-text-muted:   #8B6B5A;
-  --brand-border:       rgba(212, 105, 58, 0.15);
+  --brand-primary:       #D4693A;
+  --brand-primary-dark:  #B8532A;
+  --brand-primary-deep:  #C25A2E;
+  --brand-secondary:     #E8864A;
+  --brand-bg-warm:       #FFF8F0;
+  --brand-text-body:     #8B6B5A;
+  --brand-text-heading:  #B8532A;
+  --brand-border:        rgba(212, 105, 58, 0.15);
+  --brand-border-strong: rgba(212, 105, 58, 0.25);
+  --brand-chip-bg:       rgba(232, 134, 74, 0.08);
+  --brand-white:         #FFFFFF;
 }
 
 /* ── Mobile / PWA / Capacitor safe areas ── */
@@ -67,7 +71,7 @@ html, body {
   --popover: 0 0% 95%;
   --popover-foreground: 0 0% 9%;
   --popover-border: 0 0% 91%;
-  --primary: 199 89% 32%;
+  --primary: 20 72% 52%;
   --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 92%;
   --secondary-foreground: 0 0% 9%;
@@ -78,13 +82,13 @@ html, body {
   --destructive: 0 84% 42%;
   --destructive-foreground: 0 0% 98%;
   --input: 0 0% 75%;
-  --ring: 199 89% 32%;
+  --ring: 20 72% 52%;
   --chart-1: 199 89% 35%;
   --chart-2: 262 83% 48%;
   --chart-3: 173 58% 39%;
   --chart-4: 43 74% 49%;
   --chart-5: 27 87% 55%;
-  --font-sans: 'Inter', 'Helvetica Neue', sans-serif;
+  --font-sans: 'Nunito', 'Inter', 'Helvetica Neue', sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: Menlo, monospace;
   --radius: .5rem;
@@ -151,7 +155,7 @@ html, body {
   --popover: 0 0% 13%;
   --popover-foreground: 0 0% 98%;
   --popover-border: 0 0% 17%;
-  --primary: 199 70% 50%;
+  --primary: 20 72% 62%;
   --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 18%;
   --secondary-foreground: 0 0% 98%;
@@ -162,7 +166,7 @@ html, body {
   --destructive: 0 84% 42%;
   --destructive-foreground: 0 0% 98%;
   --input: 0 0% 30%;
-  --ring: 199 70% 50%;
+  --ring: 20 72% 62%;
   --chart-1: 199 70% 55%;
   --chart-2: 262 83% 68%;
   --chart-3: 173 58% 55%;
@@ -326,4 +330,37 @@ html, body {
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
   }
+}
+
+/* ── Brand: global typography ── */
+body {
+  font-family: 'Nunito', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Nunito', sans-serif;
+  color: var(--brand-text-heading);
+  font-weight: 800;
+}
+
+a {
+  color: var(--brand-primary);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--brand-primary-deep);
+}
+
+/* ── Brand: search input ── */
+[data-testid="search-bar"] input {
+  border: 1px solid var(--brand-border-strong);
+  border-radius: 20px;
+}
+[data-testid="search-bar"] input::placeholder {
+  color: #C9A68E;
+}
+
+/* ── Brand: map tooltip font ── */
+.facility-tooltip .maplibregl-popup-content {
+  font-family: 'Nunito', sans-serif;
 }

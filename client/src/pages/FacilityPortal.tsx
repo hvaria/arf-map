@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
 import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X } from "lucide-react";
+import { BrandLogo } from "@/components/BrandLogo";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -718,7 +719,9 @@ export default function FacilityPortal() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b px-4 py-3 flex items-center gap-3">
+      <header className="border-b px-4 py-3 flex items-center gap-3" style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}>
+        <BrandLogo />
+        <Separator orientation="vertical" className="h-8" />
         <Link href="/">
           <Button variant="ghost" size="sm" className="-ml-2">
             <ArrowLeft className="h-4 w-4 mr-1.5" />

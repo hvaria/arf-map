@@ -16,6 +16,7 @@ import {
   DollarSign, X, Edit3, LogOut, CheckCircle2, Building2,
   Camera, ChevronRight, MailCheck, RefreshCw, Eye, EyeOff,
 } from "lucide-react";
+import { BrandLogo } from "@/components/BrandLogo";
 import { useToast } from "@/hooks/use-toast";
 import type { Facility } from "@shared/schema";
 import { useFacilities } from "@/hooks/useFacilities";
@@ -906,8 +907,10 @@ export default function JobSeekerPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="border-b bg-background/95 backdrop-blur-sm sticky top-0 z-10">
+      <div className="border-b sticky top-0 z-10" style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}>
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+          <BrandLogo />
+          <Separator orientation="vertical" className="h-8" />
           <a href="/#/">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="h-4 w-4 mr-1.5" />
@@ -915,7 +918,7 @@ export default function JobSeekerPage() {
             </Button>
           </a>
           <div className="flex-1">
-            <h1 className="text-base font-semibold flex items-center gap-2">
+            <h1 className="text-base font-semibold flex items-center gap-2" style={{ color: "var(--brand-text-heading)" }}>
               <Briefcase className="h-4 w-4 text-primary" />
               Job Seeker Portal
             </h1>

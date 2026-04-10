@@ -53,9 +53,9 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
         paint: {
           "circle-color": [
             "step", ["get", "point_count"],
-            "#51bbd6", 10,
-            "#2196f3", 50,
-            "#1565c0",
+            "#E8864A", 10,
+            "#D4693A", 50,
+            "#B8532A",
           ],
           "circle-radius": [
             "step", ["get", "point_count"],
@@ -89,12 +89,12 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
         paint: {
           "circle-color": [
             "case",
-            ["==", ["get", "isHiring"], true], "#3b82f6",
+            ["==", ["get", "isHiring"], true], "#E8864A",
             ["match", ["get", "facilityGroup"],
-              "Adult & Senior Care", "#0ea5e9",
+              "Adult & Senior Care", "#D4693A",
               "Child Care", "#22c55e",
               "Children's Residential", "#a855f7",
-              "Home Care", "#f97316",
+              "Home Care", "#C25A2E",
               ["match", ["get", "status"],
                 "LICENSED", "#22c55e",
                 "CLOSED", "#ef4444",
@@ -124,7 +124,7 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
           "circle-color": "transparent",
           "circle-radius": 14,
           "circle-stroke-width": 2,
-          "circle-stroke-color": "#3b82f6",
+          "circle-stroke-color": "#E8864A",
           "circle-stroke-opacity": 0.4,
         },
       });
@@ -185,11 +185,11 @@ export function MapView({ facilities, selectedFacility, onSelectFacility }: MapV
         if (!e.features?.[0]) return;
         const coords = (e.features[0].geometry as GeoJSON.Point).coordinates.slice() as [number, number];
         const p = e.features[0].properties;
-        const hiringBadge = p?.isHiring ? `<div style="color:#3b82f6;font-weight:600;font-size:11px;margin-top:2px">🔵 Hiring · ${p?.jobCount || 0} position${(p?.jobCount || 0) !== 1 ? 's' : ''}</div>` : '';
+        const hiringBadge = p?.isHiring ? `<div style="color:#D4693A;font-weight:700;font-size:11px;margin-top:2px;font-family:'Nunito',sans-serif">★ Hiring · ${p?.jobCount || 0} position${(p?.jobCount || 0) !== 1 ? 's' : ''}</div>` : '';
         const typeBadge = p?.facilityType && p.facilityType !== "Adult Residential Facility"
           ? `<div style="color:#8b5cf6;font-size:10px;margin-top:1px">${p.facilityType}</div>` : '';
         popup.setLngLat(coords).setHTML(`
-          <div style="font-family:Inter,sans-serif;font-size:13px;line-height:1.4">
+          <div style="font-family:'Nunito',sans-serif;font-size:13px;line-height:1.4">
             <div style="font-weight:600;margin-bottom:2px">${p?.name || ""}</div>
             <div style="color:#6b7280">${p?.city || ""}${p?.county ? ` · ${p.county} Co.` : ""} · Cap: ${p?.capacity || "?"}</div>
             ${typeBadge}
