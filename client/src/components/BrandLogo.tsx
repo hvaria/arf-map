@@ -1,7 +1,13 @@
-export function BrandLogo() {
+export function BrandLogo({ size = 150 }: { size?: number }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <svg width="40" height="40" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+    <div className="flex items-center gap-2.5">
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 4 120 76"
+        xmlns="http://www.w3.org/2000/svg"
+        className="flex-shrink-0"
+      >
         <line x1="60" y1="8" x2="60" y2="48" stroke="#E8864A" strokeWidth="1.5" opacity="0.35"/>
         <line x1="82.8" y1="17.2" x2="67" y2="43" stroke="#E8864A" strokeWidth="1.5" opacity="0.35"/>
         <line x1="92" y1="40" x2="72" y2="48" stroke="#E8864A" strokeWidth="1.5" opacity="0.35"/>
@@ -30,10 +36,16 @@ export function BrandLogo() {
         <circle cx="37.2" cy="17.2" r="5" fill="#E8864A"/>
         <circle cx="37.2" cy="15.7" r="1.5" fill="white" opacity="0.5"/>
       </svg>
-      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
-        <span style={{ fontFamily: "'Nunito', sans-serif", fontSize: 8, fontWeight: 600, color: "#D4693A", letterSpacing: "2.5px", textTransform: "uppercase" }}>NEIGHBOURHOOD</span>
-        <span style={{ fontFamily: "'Nunito', sans-serif", fontSize: 22, fontWeight: 900, color: "#B8532A", lineHeight: 1.05 }}>Care</span>
-        <span style={{ fontFamily: "'Nunito', sans-serif", fontSize: 8, fontWeight: 600, color: "#D4693A", letterSpacing: "2.5px", textTransform: "uppercase" }}>FINDER</span>
+      <div className="flex flex-col leading-none">
+        <span className="text-[9px] font-bold tracking-[3px] uppercase text-brand-primary">
+          Neighbourhood
+        </span>
+        <span className="text-[50px] font-black text-brand-primary-dark leading-tight">
+          Care
+        </span>
+        <span className="text-[20px] font-semibold tracking-[3px] uppercase text-brand-primary">
+          Finder
+        </span>
       </div>
     </div>
   );

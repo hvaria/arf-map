@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import defaultTheme from "tailwindcss/defaultTheme";
 
 export default {
   darkMode: ["class"],
@@ -11,6 +12,15 @@ export default {
         sm: ".1875rem", /* 3px */
       },
       colors: {
+        brand: {
+          primary: '#D4693A',
+          'primary-dark': '#B8532A',
+          'primary-deep': '#C25A2E',
+          secondary: '#E8864A',
+          'bg-warm': '#FFF8F0',
+          'text-body': '#8B6B5A',
+          'text-heading': '#B8532A',
+        },
         // Flat / base colors (regular buttons)
         background: "hsl(var(--background) / <alpha-value>)",
         foreground: "hsl(var(--foreground) / <alpha-value>)",
@@ -83,7 +93,7 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["var(--font-sans)"],
+        sans: ['"Nunito"', ...defaultTheme.fontFamily.sans],
         serif: ["var(--font-serif)"],
         mono: ["var(--font-mono)"],
       },
