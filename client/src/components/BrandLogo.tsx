@@ -38,13 +38,13 @@ export function BrandLogo({ size = 52 }: { size?: number }) {
         <circle cx="37.2" cy="15.7" r="1.5" fill="white" opacity="0.5"/>
       </svg>
       <div className="flex flex-col leading-none">
-        <span className="text-[9px] font-bold tracking-[3px] uppercase text-brand-primary">
+        <span className="text-[10px] font-bold tracking-[2.5px] uppercase text-brand-primary">
           Neighbourhood
         </span>
-        <span className="text-[50px] font-black text-brand-primary-dark leading-tight">
+        <span className="text-[28px] font-black text-brand-primary-dark leading-tight">
           Care
         </span>
-        <span className="text-[20px] font-semibold tracking-[3px] uppercase text-brand-primary">
+        <span className="text-[10px] font-bold tracking-[2.5px] uppercase text-brand-primary">
           Finder
         </span>
       </div>

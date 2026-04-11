@@ -58,8 +58,8 @@ export default function MapPage() {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background" data-testid="map-page">
 
       {/* ── Top navbar ── */}
-      <header className="flex items-center justify-between px-4 h-14 border-b bg-background/95 backdrop-blur-sm z-50 flex-shrink-0">
-        <BrandLogo size={52} />
+      <header className="flex items-center justify-between px-4 h-18 border-b bg-[oklch(95.7%_0.038_77.164_/_0.8))] backdrop-blur-sm z-50 flex-shrink-0">
+        <BrandLogo size={80} />
         <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
           <a href="/#/" className="text-foreground hover:text-brand-primary transition-colors">Find care</a>
           <a href="/#/stats" className="text-foreground hover:text-brand-primary transition-colors">Resources</a>
