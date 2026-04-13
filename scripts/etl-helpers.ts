@@ -11,42 +11,14 @@
  * DO NOT import this file from server/ code. It is scripts-only.
  */
 
-// Type-only imports — do NOT cause runtime module side-effects
-import type { FacilityDbRow } from "../server/storage";
+// Type-only import — does NOT cause runtime module side-effects.
+// FacilityDbRow, GEO_STATUS, and TYPE_TO_NAME now live in shared/etl-types.ts
+// (callers import them from there directly).
+import type { FacilityDbRow } from "../shared/etl-types";
 import type { EtlConfig } from "./etl-config";
 
 const CHHS_BASE = "https://data.chhs.ca.gov/api/3/action/datastore_search";
 const CCLD_BASE = "https://www.ccld.dss.ca.gov/transparencyapi/api";
-
-/** GeoJSON STATUS numeric code → human-readable status text */
-export const GEO_STATUS: Record<string, string> = {
-  "1": "PENDING",
-  "2": "PENDING",
-  "3": "LICENSED",
-  "4": "ON PROBATION",
-  "5": "CLOSED",
-  "6": "REVOKED",
-};
-
-/** CCLD GeoJSON TYPE numeric code → human-readable facility type name */
-export const TYPE_TO_NAME: Record<string, string> = {
-  "140": "Foster Family Agency",
-  "180": "Group Home",
-  "192": "Enhanced Behavioral Supports Home",
-  "193": "Community Treatment Facility",
-  "194": "Short-Term Residential Therapeutic Program",
-  "250": "Family Child Care Home - Small",
-  "255": "Family Child Care Home - Large",
-  "310": "Child Care Center",
-  "385": "Residential Care Facility for the Elderly",
-  "400": "Adult Day Program",
-  "410": "Social Rehabilitation Facility",
-  "425": "Congregate Living Health Facility",
-  "500": "Residential Care Facility for the Chronically Ill",
-  "735": "Adult Residential Facility",
-  "740": "Adult Residential Facility for Persons with Special Health Care Needs",
-  "800": "Home Care Organization",
-};
 
 /**
  * Fetch every page from a CHHS CKAN datastore resource.
@@ -183,7 +155,7 @@ export function mergeFacilityRow(
   includeCclOnly: boolean,
   formatPhoneFn: (raw: string) => string,
   typeToGroupFn: (type: string) => string,
-): Omit<import("../server/storage").FacilityDbRow, "updated_at"> | null {
+): Omit<FacilityDbRow, "updated_at"> | null {
   // ── Coordinates ────────────────────────────────────────────────────────────
   const lat = geo ? parseFloat(geo[fm.fromGeo.lat] ?? "") : NaN;
   const lng = geo ? parseFloat(geo[fm.fromGeo.lng] ?? "") : NaN;

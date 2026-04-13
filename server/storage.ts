@@ -18,6 +18,10 @@ import {
 import { eq, and } from "drizzle-orm";
 import { sqlite, db } from "./db/index";
 
+// FacilityDbRow lives in shared so ETL scripts can import it without pulling
+// in any server-side code. Re-exported here for backward compatibility.
+export type { FacilityDbRow } from "@shared/etl-types";
+
 // ── Schema bootstrap ─────────────────────────────────────────────────────────
 // These CREATE TABLE IF NOT EXISTS statements are idempotent; they run on every
 // startup and are a lightweight alternative to running drizzle-kit migrations.
@@ -409,32 +413,9 @@ export class DatabaseStorage implements IStorage {
 export const storage = new DatabaseStorage();
 
 // ── Facility DB helpers (raw SQL for performance) ─────────────────────────────
-
-export interface FacilityDbRow {
-  number: string;
-  name: string;
-  facility_type: string;
-  facility_group: string;
-  status: string;
-  address: string;
-  city: string;
-  county: string;
-  zip: string;
-  phone: string;
-  licensee: string;
-  administrator: string;
-  capacity: number;
-  first_license_date: string;
-  closed_date: string;
-  last_inspection_date: string;
-  total_visits: number;
-  total_type_b: number;
-  citations: number;
-  lat: number | null;
-  lng: number | null;
-  geocode_quality: string;
-  updated_at: number;
-}
+// FacilityDbRow is defined in shared/etl-types.ts and re-exported at the top
+// of this file — no local definition needed here.
+import type { FacilityDbRow } from "@shared/etl-types";
 
 export interface FacilityQueryFilters {
   search?: string;

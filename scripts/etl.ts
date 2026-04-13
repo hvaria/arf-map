@@ -11,17 +11,18 @@
  * Edit scripts/etl-config.ts to change sources, fields, filters, or run mode.
  */
 
-// ── 1. Bootstrap DB (creates all tables if they don't exist) ─────────────────
-// Importing storage.ts is enough: its top-level sqlite.exec() calls are
-// idempotent CREATE TABLE IF NOT EXISTS statements.
-import { bulkUpsertFacilities, type FacilityDbRow } from "../server/storage";
+// ── 1. Bootstrap DB + write helpers (no server/ imports) ─────────────────────
+import { bulkUpsertFacilities } from "./db-writer";
 
-// ── 2. Shared service helpers (exported from facilitiesService) ──────────────
-import { typeToGroup, formatPhone } from "../server/services/facilitiesService";
-
-// ── 3. ETL-specific helpers (fetchAllPages is not exported from the service) ──
+// ── 2. Pure utilities and types from the shared layer ────────────────────────
 import {
-  fetchAllPages, GEO_STATUS, TYPE_TO_NAME, enrichFacilities,
+  typeToGroup, formatPhone, GEO_STATUS, TYPE_TO_NAME,
+  type FacilityDbRow,
+} from "../shared/etl-types";
+
+// ── 3. ETL-specific helpers ───────────────────────────────────────────────────
+import {
+  fetchAllPages, enrichFacilities,
   dedupeByNumber, mergeFacilityRow,
 } from "./etl-helpers";
 

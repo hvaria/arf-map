@@ -26,8 +26,7 @@
  *   npx tsx scripts/enrich-facilities.ts --force           # overwrite existing
  */
 
-import { sqlite } from "../server/db/index";
-import { logEnrichmentRun } from "../server/storage";
+import { sqlite, logEnrichmentRun } from "./db-writer";
 import { fetchFacilityEnrichment, rateLimiter } from "./etl-helpers";
 
 // ── CLI args ──────────────────────────────────────────────────────────────────

@@ -13,8 +13,8 @@
 import * as fs from "fs";
 import * as path from "path";
 
-// Bootstrap storage (creates tables if they don't exist)
-import { bulkUpsertFacilities } from "../server/storage";
+// Bootstrap DB and get write helper (no server/ imports)
+import { bulkUpsertFacilities } from "./db-writer";
 
 async function main() {
   const dataPath = path.resolve(process.cwd(), "data", "ccld_all_facilities.json");
