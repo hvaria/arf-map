@@ -169,27 +169,28 @@ async function main() {
     const enrichMap = await enrichFacilities(enrichInput, enCfg);
 
     // Patch enriched values back onto the toWrite rows (objects are references)
-    let datesFound = 0;
-    let adminsFound = 0;
+    let datesFound   = 0;
+    let adminsFound  = 0;
+    let licenseFound = 0;
+    let typeBFound   = 0;
+    let citFound     = 0;
+
     for (const row of toWrite) {
       const patch = enrichMap.get(row.number);
       if (!patch) continue;
-      if (patch.last_inspection_date) {
-        row.last_inspection_date = patch.last_inspection_date;
-        datesFound++;
-      }
-      if (patch.administrator) {
-        row.administrator = patch.administrator;
-        adminsFound++;
-      }
-      if (patch.licensee) {
-        row.licensee = patch.licensee;
-      }
+      if (patch.last_inspection_date) { row.last_inspection_date = patch.last_inspection_date; datesFound++; }
+      if (patch.administrator)        { row.administrator        = patch.administrator;        adminsFound++; }
+      if (patch.licensee)             { row.licensee             = patch.licensee;             licenseFound++; }
+      if (patch.total_type_b !== undefined) { row.total_type_b = patch.total_type_b; typeBFound++; }
+      if (patch.citations    !== undefined) { row.citations    = patch.citations;    citFound++; }
     }
 
     log(`Enrichment complete:`);
-    log(`  last_inspection_dates found : ${datesFound.toLocaleString()}`);
-    log(`  administrators updated      : ${adminsFound.toLocaleString()}`);
+    log(`  last_inspection_date : ${datesFound.toLocaleString()}`);
+    log(`  administrator        : ${adminsFound.toLocaleString()}`);
+    log(`  licensee             : ${licenseFound.toLocaleString()}`);
+    log(`  total_type_b         : ${typeBFound.toLocaleString()}`);
+    log(`  citations            : ${citFound.toLocaleString()}`);
     console.log();
   }
 

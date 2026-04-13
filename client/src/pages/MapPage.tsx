@@ -65,7 +65,7 @@ export default function MapPage() {
           <a href="/#/stats" className="text-foreground hover:text-brand-primary transition-colors">Resources</a>
           <a href="/#/facility-portal" className="text-foreground hover:text-brand-primary transition-colors">For providers</a>
         </nav>
-        <div className="flex items-center gap-1">
+        <div className="hidden md:flex items-center gap-1">
           {jobSeeker ? (
             <a href="/#/job-seeker">
               <Button variant="outline" size="sm" className="h-7 text-xs flex items-center gap-1.5">

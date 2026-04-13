@@ -44,18 +44,29 @@ async function buildAll() {
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
 
-  await esbuild({
-    entryPoints: ["server/index.ts"],
-    platform: "node",
+  const sharedEsbuildOptions = {
+    platform: "node" as const,
     bundle: true,
-    format: "cjs",
-    outfile: "dist/index.cjs",
-    define: {
-      "process.env.NODE_ENV": '"production"',
-    },
+    format: "cjs" as const,
+    define: { "process.env.NODE_ENV": '"production"' },
     minify: true,
     external: externals,
-    logLevel: "info",
+    logLevel: "info" as const,
+  };
+
+  await esbuild({
+    ...sharedEsbuildOptions,
+    entryPoints: ["server/index.ts"],
+    outfile: "dist/index.cjs",
+  });
+
+  // Compile the enrichment script so it can be run as `node dist/enrich.cjs`
+  // in production without needing tsx or the raw TypeScript source files.
+  console.log("building enrichment worker...");
+  await esbuild({
+    ...sharedEsbuildOptions,
+    entryPoints: ["scripts/enrich-facilities.ts"],
+    outfile: "dist/enrich.cjs",
   });
 }
 

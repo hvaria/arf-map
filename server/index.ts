@@ -11,6 +11,7 @@ import { comparePassword } from "./auth";
 import { sqlite } from "./db/index";
 import { SqliteSessionStore } from "./session/sqliteSessionStore";
 import { getCachedFacilities } from "./services/facilitiesService";
+import { startEtlScheduler } from "./etlScheduler";
 import type { FacilityAccount } from "@shared/schema";
 
 declare global {
@@ -170,6 +171,11 @@ app.use((req, res, next) => {
       getCachedFacilities()
         .then((f) => log(`[facilitiesService] pre-warmed ${f.length} facilities`))
         .catch((err) => log(`[facilitiesService] pre-warm failed: ${err.message}`));
+    }
+
+    // Start the nightly CCLD enrichment scheduler (production only)
+    if (process.env.NODE_ENV === "production") {
+      startEtlScheduler();
     }
   });
 })();

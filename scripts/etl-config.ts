@@ -70,19 +70,29 @@ export const ETL_CONFIG = {
 
   // ── Enrichment (CCLD Transparency API) ────────────────────────────────────
   enrichment: {
-    /** Set to false to skip enrichment entirely — existing ETL is 100% unchanged */
-    enabled: false,
-    /** Which fields to enrich (false = skip that field) */
+    /**
+     * Enrichment fetches each facility's most recent CCLD evaluation report and
+     * parses all available fields from the HTML.  Two API calls per facility:
+     *   1. FacilityInspections JSON  → last_inspection_date
+     *   2. FacilityReports HTML      → administrator, licensee, total_type_b, citations
+     *
+     * Set to false only to skip enrichment entirely (e.g. for a quick re-seed
+     * where inspection data does not need to be refreshed).
+     */
+    enabled: true,
+    /** Which fields to populate from the CCLD report (false = skip that field) */
     fields: {
       lastInspectionDate: true,
-      administrator: true,  // used as fallback when CCL source has empty value
-      licensee: true,       // used as fallback when CCL source has empty value
+      administrator: true,  // fallback when CCL source has empty value
+      licensee: true,       // fallback when CCL source has empty value
+      totalTypeB: true,     // not available from CHHS bulk data — report only
+      citations: true,      // not available from CHHS bulk data — report only
     },
-    /** Max CCLD Transparency API requests per second (respect rate limits) */
+    /** Max CCLD Transparency API requests per second (be polite to the server) */
     requestsPerSecond: 5,
-    /** Skip enrichment for a field that already has a non-empty value */
+    /** Skip a field that already has a non-empty value (makes re-runs faster) */
     skipIfPopulated: true,
-    /** Limit enrichment to N facilities (0 = all; use 10 for smoke tests) */
+    /** Limit enrichment to N facilities (0 = all; use 20 for smoke tests) */
     enrichLimit: 0,
     /** Only enrich facilities in these counties (empty = all counties) */
     enrichCounties: [] as string[],
@@ -135,6 +145,8 @@ export interface EtlConfig {
       lastInspectionDate: boolean;
       administrator: boolean;
       licensee: boolean;
+      totalTypeB: boolean;
+      citations: boolean;
     };
     requestsPerSecond: number;
     skipIfPopulated: boolean;

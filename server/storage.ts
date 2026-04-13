@@ -160,6 +160,23 @@ addColumnIfMissing("job_seeker_profiles", "state", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "zip_code", "TEXT");
 addColumnIfMissing("job_seeker_profiles", "profile_picture_url", "TEXT");
 
+// enriched_at: Unix timestamp (ms) of when CCLD enrichment last wrote data for this facility
+addColumnIfMissing("facilities", "enriched_at", "INTEGER");
+
+// Enrichment run audit log — one row per background enrichment pass
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS enrichment_runs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at       INTEGER NOT NULL,
+    finished_at      INTEGER,
+    trigger          TEXT NOT NULL DEFAULT 'scheduled',
+    total_processed  INTEGER NOT NULL DEFAULT 0,
+    total_enriched   INTEGER NOT NULL DEFAULT 0,
+    total_no_data    INTEGER NOT NULL DEFAULT 0,
+    total_failed     INTEGER NOT NULL DEFAULT 0
+  );
+`);
+
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -576,7 +593,7 @@ export function bulkUpsertFacilities(rows: Omit<FacilityDbRow, "updated_at">[]):
       zip=excluded.zip, phone=excluded.phone, licensee=excluded.licensee,
       administrator=excluded.administrator, capacity=excluded.capacity,
       first_license_date=excluded.first_license_date, closed_date=excluded.closed_date,
-      last_inspection_date=excluded.last_inspection_date,
+      last_inspection_date=CASE WHEN last_inspection_date != '' THEN last_inspection_date ELSE excluded.last_inspection_date END,
       total_visits=excluded.total_visits, total_type_b=excluded.total_type_b,
       citations=excluded.citations, lat=excluded.lat, lng=excluded.lng,
       geocode_quality=excluded.geocode_quality, updated_at=excluded.updated_at
@@ -598,4 +615,77 @@ export function bulkUpsertFacilities(rows: Omit<FacilityDbRow, "updated_at">[]):
   });
 
   insertMany(rows);
+}
+
+// ── Enrichment logging ────────────────────────────────────────────────────────
+
+export interface EnrichmentRunRecord {
+  id: number;
+  started_at: number;
+  finished_at: number | null;
+  trigger: string;
+  total_processed: number;
+  total_enriched: number;
+  total_no_data: number;
+  total_failed: number;
+}
+
+export interface EnrichmentCoverage {
+  total: number;
+  enriched: number;
+  withInspectionDate: number;
+  withAdministrator: number;
+  withLicensee: number;
+  withTypeBCount: number;
+  withCitations: number;
+}
+
+/** Write a completed enrichment run summary to the audit table. */
+export function logEnrichmentRun(data: {
+  startedAt: number;
+  finishedAt: number;
+  trigger: string;
+  totalProcessed: number;
+  totalEnriched: number;
+  totalNoData: number;
+  totalFailed: number;
+}): void {
+  sqlite
+    .prepare(
+      `INSERT INTO enrichment_runs
+         (started_at, finished_at, trigger, total_processed, total_enriched, total_no_data, total_failed)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      data.startedAt,
+      data.finishedAt,
+      data.trigger,
+      data.totalProcessed,
+      data.totalEnriched,
+      data.totalNoData,
+      data.totalFailed,
+    );
+}
+
+/** Return recent enrichment runs + per-field coverage counts. */
+export function getEnrichmentLog(): { recentRuns: EnrichmentRunRecord[]; coverage: EnrichmentCoverage } {
+  const recentRuns = sqlite
+    .prepare("SELECT * FROM enrichment_runs ORDER BY started_at DESC LIMIT 20")
+    .all() as EnrichmentRunRecord[];
+
+  const n = (sql: string) =>
+    (sqlite.prepare(sql).get() as { n: number }).n;
+
+  return {
+    recentRuns,
+    coverage: {
+      total:              n("SELECT COUNT(*) as n FROM facilities"),
+      enriched:           n("SELECT COUNT(*) as n FROM facilities WHERE enriched_at IS NOT NULL"),
+      withInspectionDate: n("SELECT COUNT(*) as n FROM facilities WHERE last_inspection_date != ''"),
+      withAdministrator:  n("SELECT COUNT(*) as n FROM facilities WHERE administrator != ''"),
+      withLicensee:       n("SELECT COUNT(*) as n FROM facilities WHERE licensee != ''"),
+      withTypeBCount:     n("SELECT COUNT(*) as n FROM facilities WHERE total_type_b > 0"),
+      withCitations:      n("SELECT COUNT(*) as n FROM facilities WHERE citations > 0"),
+    },
+  };
 }

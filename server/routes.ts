@@ -7,6 +7,7 @@ import { storage } from "./storage";
 import { hashPassword } from "./auth";
 import { sendVerificationEmail } from "./email";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
+import { adminEtlRouter } from "./routes/adminEtl";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 import {
   getCachedFacilities,
@@ -77,6 +78,7 @@ export async function registerRoutes(server: Server, app: Express) {
   // Handled by the clean-architecture router.  Registration, OTP verification,
   // and profile management remain below for now.
   app.use("/api/jobseeker", jobseekerAuthRouter);
+  app.use("/api/admin/etl", adminEtlRouter);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

@@ -246,9 +246,18 @@ export function mergeFacilityRow(
 // ── CCLD Transparency API — enrichment helpers ────────────────────────────────
 
 /**
- * Normalise a date string to YYYY-MM-DD.
- * Handles MM/DD/YYYY and ISO 8601 inputs.
+ * All fields that can be extracted from a CCLD evaluation report.
+ * Returned by parseEvaluationReport and fetchFacilityEnrichment.
  */
+export interface FacilityEnrichmentData {
+  last_inspection_date?: string;
+  administrator?:        string;
+  licensee?:             string;
+  total_type_b?:         number;
+  citations?:            number;
+}
+
+/** Normalise a date string to YYYY-MM-DD. Handles MM/DD/YYYY and ISO 8601. */
 function normalizeDate(raw: string): string {
   const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (mdy) {
@@ -258,7 +267,7 @@ function normalizeDate(raw: string): string {
   return raw;
 }
 
-/** Pick the most recent visitDate from a parsed JSON array. */
+/** Pick the most recent visitDate from a FacilityInspections JSON response. */
 function parseMostRecentVisitDate(data: unknown): string | null {
   const records: any[] = Array.isArray(data)
     ? data
@@ -281,81 +290,148 @@ function parseMostRecentVisitDate(data: unknown): string | null {
   return latestNorm || null;
 }
 
-/** Extract a visit date from an HTML report body via regex. */
-function extractVisitDateFromHtml(html: string): string | null {
-  const m = html.match(
-    /VISIT\s+DATE[:\s]+(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})/i
-  );
-  return m ? normalizeDate(m[1]) : null;
-}
+/**
+ * Parse all extractable fields from a CCLD evaluation report HTML page.
+ *
+ * CCLD evaluation reports are PDFs rendered as HTML. They contain a standard
+ * header block with facility metadata followed by deficiency and citation tables.
+ * All field labels are in ALL CAPS and separated from values by colon or whitespace.
+ *
+ * Extracted fields:
+ *  - last_inspection_date  (VISIT DATE label)
+ *  - administrator         (ADMINISTRATOR/DIRECTOR label)
+ *  - licensee              (LICENSEE/ENTITY label)
+ *  - total_type_b          (TYPE B DEFICIENCIES total)
+ *  - citations             (CITATIONS label)
+ */
+export function parseEvaluationReport(html: string): FacilityEnrichmentData {
+  // Strip HTML tags and decode common entities so regex can match plain text
+  const text = html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s{2,}/g, " ");
 
-/** Extract administrator name from an HTML report body via regex. */
-function extractAdminFromHtml(html: string): string | null {
-  // Matches "ADMINISTRATOR/DIRECTOR: John Smith" up to a line-break or HTML tag
-  const m = html.match(
-    /ADMINISTRATOR(?:\/DIRECTOR)?[:\s]+([A-Za-z][A-Za-z\s,.'"-]{2,60})(?:\r?\n|<|PHONE|FAX|LICENSE|CAPACITY)/i
+  const result: FacilityEnrichmentData = {};
+
+  // ── Visit / inspection date ───────────────────────────────────────────────
+  const dateM = text.match(
+    /VISIT\s+DATE\s*[:\s]+(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})/i,
   );
-  return m ? m[1].trim() : null;
+  if (dateM) result.last_inspection_date = normalizeDate(dateM[1]);
+
+  // ── Administrator / Director ──────────────────────────────────────────────
+  // Label appears as "ADMINISTRATOR/DIRECTOR:" or "ADMINISTRATOR:"
+  // Value is a name (letters, spaces, commas, dots, hyphens) terminated by
+  // two+ spaces, another field label, or end of string.
+  const adminM = text.match(
+    /ADMINISTRATOR(?:\s*\/\s*DIRECTOR)?\s*[:\s]+([A-Za-z][A-Za-z\s,.'"\-]{1,60}?)(?=\s{2,}|PHONE|FAX|LICENSE|CAPACITY|LICENSEE|VISIT|COUNTY|CITY|ADDRESS|$)/i,
+  );
+  if (adminM) result.administrator = adminM[1].trim();
+
+  // ── Licensee / Entity ─────────────────────────────────────────────────────
+  // Can be a person name or a corporate name (may include digits, &, commas)
+  const licenseeM = text.match(
+    /LICENSEE(?:\s*\/\s*ENTITY)?\s*[:\s]+([A-Za-z0-9][^\n]{2,80}?)(?=\s{2,}|ADMINISTRATOR|FACILITY|ADDRESS|PHONE|VISIT|$)/im,
+  );
+  if (licenseeM) result.licensee = licenseeM[1].trim();
+
+  // ── Total Type B deficiencies ─────────────────────────────────────────────
+  // Various label formats seen across report versions:
+  //   "TOTAL TYPE B DEFICIENCIES: 2"
+  //   "TYPE B DEFICIENCIES TOTAL: 2"
+  //   "TYPE-B TOTAL: 2"
+  const typeBM =
+    text.match(/TOTAL\s+TYPE\s*[-–]?\s*B\s+DEFICIENCIES?\s*[:\s]+(\d+)/i) ??
+    text.match(/TYPE\s*[-–]?\s*B\s+DEFICIENCIES?\s+TOTAL\s*[:\s]+(\d+)/i) ??
+    text.match(/TYPE\s*[-–]?\s*B\s+TOTAL\s*[:\s]+(\d+)/i);
+  if (typeBM) result.total_type_b = parseInt(typeBM[1], 10);
+
+  // ── Citations ─────────────────────────────────────────────────────────────
+  const citM =
+    text.match(/TOTAL\s+CITATIONS?\s*[:\s]+(\d+)/i) ??
+    text.match(/CITATIONS?\s+ISSUED\s*[:\s]+(\d+)/i) ??
+    text.match(/\bCITATIONS?\s*[:\s]+(\d+)/i);
+  if (citM) result.citations = parseInt(citM[1], 10);
+
+  return result;
 }
 
 /**
- * Fetch the most recent inspection date from the CCLD Transparency API.
+ * Fetch all enrichment data for one facility from the CCLD Transparency API.
  *
- * Primary:  FacilityInspections endpoint (JSON array of visits).
- * Fallback: FacilityReports HTML, regex on "VISIT DATE:" text.
+ * Strategy:
+ *  1. FacilityInspections JSON  → most reliable source for last_inspection_date
+ *  2. FacilityReports HTML (inx=1, then inx=4 fallback) → all other fields
+ *     parsed via parseEvaluationReport
  *
- * Returns null on any failure or when no date can be found.
+ * The throttle function must be provided by the caller (shared across all
+ * facilities in a batch so the rate limit is applied correctly).
+ *
+ * Never throws — returns an empty object on any failure.
  */
-export async function fetchLastInspectionDate(
+export async function fetchFacilityEnrichment(
   facNum: string,
-): Promise<string | null> {
+  throttle: () => Promise<void>,
+): Promise<FacilityEnrichmentData> {
+  const result: FacilityEnrichmentData = {};
+
+  // ── Step 1: FacilityInspections JSON → inspection date ───────────────────
   try {
+    await throttle();
     const res = await fetch(
       `${CCLD_BASE}/FacilityInspections?facNum=${encodeURIComponent(facNum)}`,
       { headers: { Accept: "application/json" } },
     );
-    if (!res.ok) return null;
-
-    const ct = res.headers.get("content-type") ?? "";
-    const body = await res.text();
-
-    if (ct.includes("json") || body.trimStart().startsWith("[") || body.trimStart().startsWith("{")) {
-      try {
-        return parseMostRecentVisitDate(JSON.parse(body));
-      } catch {
-        // fall through to HTML path
+    if (res.ok) {
+      const ct   = res.headers.get("content-type") ?? "";
+      const body = await res.text();
+      const looksJson =
+        ct.includes("json") ||
+        body.trimStart().startsWith("[") ||
+        body.trimStart().startsWith("{");
+      if (looksJson) {
+        try {
+          const date = parseMostRecentVisitDate(JSON.parse(body));
+          if (date) result.last_inspection_date = date;
+        } catch {}
       }
     }
+  } catch {}
 
-    // FacilityInspections returned HTML — try FacilityReports as fallback
-    const fallback = await fetch(
-      `${CCLD_BASE}/FacilityReports?facNum=${encodeURIComponent(facNum)}&inx=4`,
-    );
-    if (!fallback.ok) return null;
-    return extractVisitDateFromHtml(await fallback.text());
-  } catch {
-    return null;
-  }
-}
+  // ── Step 2: FacilityReports HTML → comprehensive field extraction ─────────
+  // Try inx=1 (most recent) then inx=4 (known working fallback index).
+  for (const inx of [1, 4]) {
+    try {
+      await throttle();
+      const res = await fetch(
+        `${CCLD_BASE}/FacilityReports?facNum=${encodeURIComponent(facNum)}&inx=${inx}`,
+      );
+      if (!res.ok) continue;
 
-/**
- * Fetch the administrator name from the most recent CCLD evaluation report.
- *
- * Fetches FacilityReports HTML and parses "ADMINISTRATOR/DIRECTOR:" line.
- * Returns null on any failure or when the line cannot be found.
- */
-export async function fetchAdminFromReport(
-  facNum: string,
-): Promise<string | null> {
-  try {
-    const res = await fetch(
-      `${CCLD_BASE}/FacilityReports?facNum=${encodeURIComponent(facNum)}&inx=4`,
-    );
-    if (!res.ok) return null;
-    return extractAdminFromHtml(await res.text());
-  } catch {
-    return null;
+      const html = await res.text();
+      // A valid report page is substantial; skip error/empty pages
+      if (html.trim().length < 200) continue;
+
+      const parsed = parseEvaluationReport(html);
+
+      // Inspection date: prefer FacilityInspections (Step 1); only use report
+      // date as fallback if Step 1 found nothing
+      if (!result.last_inspection_date && parsed.last_inspection_date)
+        result.last_inspection_date = parsed.last_inspection_date;
+
+      if (parsed.administrator) result.administrator = parsed.administrator;
+      if (parsed.licensee)      result.licensee      = parsed.licensee;
+      if (parsed.total_type_b !== undefined) result.total_type_b = parsed.total_type_b;
+      if (parsed.citations     !== undefined) result.citations    = parsed.citations;
+
+      break; // got a valid page — no need to try next index
+    } catch {}
   }
+
+  return result;
 }
 
 /**
@@ -383,17 +459,25 @@ function fmtEta(seconds: number): string {
 /**
  * Enrich a batch of facilities with data from the CCLD Transparency API.
  *
- * - Applies per-field `skipIfPopulated` logic.
- * - Respects `enrichLimit` and `requestsPerSecond` from config.
- * - Never throws on per-facility failures — logs a warning and continues.
+ * For each facility, calls fetchFacilityEnrichment which fetches:
+ *  - FacilityInspections JSON  (last_inspection_date)
+ *  - FacilityReports HTML      (administrator, licensee, total_type_b, citations)
  *
- * Returns a Map of facilityNumber → enriched fields to be merged by the caller.
+ * Applies skipIfPopulated per-field so re-runs only fill missing values.
+ * Never throws on per-facility failures — logs a warning and continues.
+ *
+ * Returns a Map of facilityNumber → all enriched fields found.
  */
 export async function enrichFacilities(
-  facilities: Array<{ number: string; administrator?: string; licensee?: string }>,
+  facilities: Array<{
+    number:               string;
+    administrator?:       string;
+    licensee?:            string;
+    last_inspection_date?: string;
+  }>,
   config: EtlConfig["enrichment"],
 ): Promise<Map<string, Partial<FacilityDbRow>>> {
-  const results = new Map<string, Partial<FacilityDbRow>>();
+  const results  = new Map<string, Partial<FacilityDbRow>>();
   const throttle = rateLimiter(config.requestsPerSecond);
 
   const candidates =
@@ -401,51 +485,57 @@ export async function enrichFacilities(
       ? facilities.slice(0, config.enrichLimit)
       : facilities;
 
-  const total = candidates.length;
-  let done = 0;
-  let datesFound = 0;
-  const startMs = Date.now();
+  const total    = candidates.length;
+  let done       = 0;
+  let enriched   = 0;
+  const startMs  = Date.now();
 
   for (const fac of candidates) {
-    const patch: Partial<FacilityDbRow> = {};
-
     try {
-      // ── Last inspection date ───────────────────────────────────────────
-      if (config.fields.lastInspectionDate) {
-        const existing = (fac as any).last_inspection_date as string | undefined;
-        const alreadyHas = config.skipIfPopulated && !!existing;
-        if (!alreadyHas) {
-          await throttle();
-          const date = await fetchLastInspectionDate(fac.number);
-          if (date) { patch.last_inspection_date = date; datesFound++; }
-        }
+      const data = await fetchFacilityEnrichment(fac.number, throttle);
+      const patch: Partial<FacilityDbRow> = {};
+
+      // last_inspection_date — only overwrite when empty (CHHS never provides this)
+      if (config.fields.lastInspectionDate && data.last_inspection_date) {
+        const alreadyHas = config.skipIfPopulated && !!fac.last_inspection_date;
+        if (!alreadyHas) patch.last_inspection_date = data.last_inspection_date;
       }
 
-      // ── Administrator (fallback from CCLD report) ──────────────────────
-      if (config.fields.administrator) {
+      // administrator — skip if already populated from CCL source
+      if (config.fields.administrator && data.administrator) {
         const alreadyHas = config.skipIfPopulated && !!fac.administrator;
-        if (!alreadyHas) {
-          await throttle();
-          const admin = await fetchAdminFromReport(fac.number);
-          if (admin) patch.administrator = admin;
-        }
+        if (!alreadyHas) patch.administrator = data.administrator;
+      }
+
+      // licensee — skip if already populated from CCL source
+      if (config.fields.licensee && data.licensee) {
+        const alreadyHas = config.skipIfPopulated && !!fac.licensee;
+        if (!alreadyHas) patch.licensee = data.licensee;
+      }
+
+      // total_type_b and citations — always take from report (CHHS never provides these)
+      if (data.total_type_b !== undefined) patch.total_type_b = data.total_type_b;
+      if (data.citations    !== undefined) patch.citations    = data.citations;
+
+      if (Object.keys(patch).length > 0) {
+        results.set(fac.number, patch);
+        enriched++;
       }
     } catch (err) {
       process.stdout.write("\n");
       console.warn(`[etl] Warning: enrichment failed for ${fac.number}: ${err}`);
     }
 
-    if (Object.keys(patch).length > 0) results.set(fac.number, patch);
-
     done++;
     if (done % 10 === 0 || done === total) {
       const elapsedS = (Date.now() - startMs) / 1000;
-      const rate = done / elapsedS;
-      const etaS = rate > 0 ? (total - done) / rate : 0;
+      const rate     = done / Math.max(elapsedS, 0.001);
+      const etaS     = rate > 0 ? (total - done) / rate : 0;
       process.stdout.write(
-        `\r    Enriched ${done.toLocaleString()} / ${total.toLocaleString()}` +
-        `  (eta: ~${fmtEta(etaS)},  dates found: ${datesFound.toLocaleString()})` +
-        " ".repeat(10),
+        `\r    ${done.toLocaleString()} / ${total.toLocaleString()}` +
+        `   enriched: ${enriched.toLocaleString()}` +
+        `   eta: ~${fmtEta(etaS)}` +
+        " ".repeat(8),
       );
     }
   }
