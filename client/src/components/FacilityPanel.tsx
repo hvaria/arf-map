@@ -12,10 +12,28 @@ import { getQueryFn } from "@/lib/queryClient";
 import type { Facility, JobPosting } from "@shared/schema";
 import { cn } from "@/lib/utils";
 
+function haversineDistanceMiles(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const R = 3958.8;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 interface FacilityPanelProps {
   facility: Facility | null;
   open: boolean;
   onClose: () => void;
+  userLocation?: { lat: number; lng: number } | null;
 }
 
 interface DbJobPosting {
@@ -59,7 +77,7 @@ const MAX_VH = 70;
 const DEFAULT_VH = 30;
 const CLOSE_THRESHOLD_VH = 14; // drag below this → close
 
-export function FacilityPanel({ facility, open, onClose }: FacilityPanelProps) {
+export function FacilityPanel({ facility, open, onClose, userLocation }: FacilityPanelProps) {
   const [panelVh, setPanelVh] = useState(DEFAULT_VH);
   const [dragging, setDragging] = useState(false);
   const dragData = useRef<{ startY: number; startVh: number } | null>(null);
@@ -130,6 +148,10 @@ export function FacilityPanel({ facility, open, onClose }: FacilityPanelProps) {
   const statusConfig = STATUS_CONFIG[facility.status] || STATUS_CONFIG.LICENSED;
   const ccldUrl = `https://www.ccld.dss.ca.gov/carefacilitysearch/FacDetail/${facility.number}`;
   const isOwner = me?.facilityNumber === facility.number;
+  const distanceMiles =
+    userLocation
+      ? haversineDistanceMiles(userLocation.lat, userLocation.lng, facility.lat, facility.lng)
+      : null;
 
   const overrides = publicData?.overrides;
   const displayPhone = overrides?.phone || facility.phone;
@@ -210,6 +232,12 @@ export function FacilityPanel({ facility, open, onClose }: FacilityPanelProps) {
             >
               <Briefcase className="h-3 w-3 mr-1" />
               Hiring · {displayJobs.length}
+            </Badge>
+          )}
+          {distanceMiles !== null && (
+            <Badge variant="outline" className="text-xs px-2 py-0.5 text-muted-foreground">
+              <MapPin className="h-2.5 w-2.5 mr-1" />
+              {distanceMiles.toFixed(1)} mi away
             </Badge>
           )}
         </div>

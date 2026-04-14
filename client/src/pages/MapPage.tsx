@@ -1,8 +1,9 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MapView } from "@/components/MapView";
 import { FacilityPanel } from "@/components/FacilityPanel";
 import { JobsPanel } from "@/components/JobsPanel";
+import { NearbySheet } from "@/components/NearbySheet";
 import { SearchBar } from "@/components/SearchBar";
 import { FilterPanel, DEFAULT_FILTERS, countActiveFilters, type FacilityFilters } from "@/components/FilterPanel";
 import { Button } from "@/components/ui/button";
@@ -25,9 +26,31 @@ export default function MapPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [filters, setFilters] = useState<FacilityFilters>(DEFAULT_FILTERS);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [circleCenter, setCircleCenter] = useState<{ lat: number; lng: number } | null>(null);
 
   // Facilities with server-side filters applied
   const { facilities, isLoading: facilitiesLoading } = useFacilities(filters);
+
+  // Geolocation on mount — fly to user if granted, fall back to California default
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        const loc = { lat: coords.latitude, lng: coords.longitude };
+        setUserLocation(loc);
+        setCircleCenter(loc);
+      },
+      () => {
+        // Permission denied or unavailable — stay at California default
+      },
+      { timeout: 10000, maximumAge: 60000 }
+    );
+  }, []);
+
+  const handleSearchArea = useCallback((lat: number, lng: number) => {
+    setCircleCenter({ lat, lng });
+  }, []);
 
   const { user: jobSeeker } = useAuth();
 
@@ -231,6 +254,9 @@ export default function MapPage() {
             facilities={facilities}
             selectedFacility={selectedFacility}
             onSelectFacility={handleSelectFacility}
+            userLocation={userLocation}
+            circleCenter={circleCenter}
+            onSearchArea={handleSearchArea}
           />
 
           {/* Facility detail bottom sheet */}
@@ -238,6 +264,13 @@ export default function MapPage() {
             facility={selectedFacility}
             open={panelOpen}
             onClose={handleClosePanel}
+            userLocation={userLocation}
+          />
+
+          {/* Mobile-only open positions sheet */}
+          <NearbySheet
+            onSelectFacility={handleSelectFacility}
+            hidden={panelOpen}
           />
         </div>
 
