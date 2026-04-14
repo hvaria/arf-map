@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -279,7 +279,7 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
 
 // ── Details editor ────────────────────────────────────────────────────────────
 
-function DetailsEditor({ facilityNumber, overrides }: { facilityNumber: string; overrides: FacilityOverride | null }) {
+function DetailsEditor({ facilityNumber, overrides, onSaved }: { facilityNumber: string; overrides: FacilityOverride | null; onSaved?: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -299,6 +299,7 @@ function DetailsEditor({ facilityNumber, overrides }: { facilityNumber: string; 
       qc.invalidateQueries({ queryKey: ["/api/facility/details"] });
       qc.invalidateQueries({ queryKey: [`/api/facilities/${facilityNumber}/public`] });
       toast({ title: "Details saved" });
+      onSaved?.();
     },
     onError: (err: Error) => {
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
@@ -629,6 +630,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const qc = useQueryClient();
   const { toast } = useToast();
   const { facilityByNumber } = useFacilities();
+  const [editingDetails, setEditingDetails] = useState(false);
 
   const facility = facilityByNumber.get(user.facilityNumber) ?? null;
 
@@ -646,24 +648,48 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
     },
   });
 
+  const isListingComplete = !!(
+    publicData?.overrides?.phone &&
+    publicData?.overrides?.email &&
+    publicData?.overrides?.description
+  );
+
   return (
     <div className="space-y-6">
-      {/* Facility header */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">{facility?.name ?? `Facility #${user.facilityNumber}`}</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">License #{user.facilityNumber}</p>
-          {facility && (
-            <p className="text-sm text-muted-foreground">{facility.address}, {facility.city}</p>
-          )}
-        </div>
-        <Button variant="outline" size="sm" onClick={() => logoutMutation.mutate()} disabled={logoutMutation.isPending}>
-          <LogOut className="h-4 w-4 mr-1.5" />
-          Log Out
-        </Button>
-      </div>
-
-      <Separator />
+      {/* Profile card */}
+      <Card>
+        <CardContent className="pt-5 pb-4">
+          <div className="flex items-start gap-4">
+            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <Building2 className="h-6 w-6 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base font-semibold leading-tight">
+                {facility?.name ?? `Facility #${user.facilityNumber}`}
+              </h2>
+              <p className="text-sm text-muted-foreground mt-0.5">License #{user.facilityNumber}</p>
+              {facility && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {facility.address}, {facility.city}
+                </p>
+              )}
+              <div className="mt-2">
+                {isListingComplete ? (
+                  <Badge variant="secondary" className="text-xs gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-green-500" />
+                    Listing complete
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="text-xs gap-1 text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400">
+                    <AlertCircle className="h-3 w-3" />
+                    Listing incomplete
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="details">
         <TabsList className="w-full">
@@ -678,13 +704,64 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </TabsList>
 
         <TabsContent value="details" className="mt-6">
-          <p className="text-sm text-muted-foreground mb-4">
-            Update your contact information and facility description. These details will appear on your listing in the map.
-          </p>
-          <DetailsEditor
-            facilityNumber={user.facilityNumber}
-            overrides={publicData?.overrides ?? null}
-          />
+          {editingDetails ? (
+            <>
+              <p className="text-sm text-muted-foreground mb-4">
+                Update your contact information and facility description. These details will appear on your listing in the map.
+              </p>
+              <DetailsEditor
+                facilityNumber={user.facilityNumber}
+                overrides={publicData?.overrides ?? null}
+                onSaved={() => setEditingDetails(false)}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-3"
+                onClick={() => setEditingDetails(false)}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Your public listing details on the map.
+                </p>
+                <Button variant="outline" size="sm" onClick={() => setEditingDetails(true)}>
+                  <Edit3 className="h-3.5 w-3.5 mr-1.5" />
+                  Edit
+                </Button>
+              </div>
+              <div className="rounded-lg border divide-y text-sm">
+                <div className="flex items-start gap-3 px-4 py-3">
+                  <span className="text-muted-foreground w-24 shrink-0">Phone</span>
+                  <span className={publicData?.overrides?.phone ? "font-medium" : "text-muted-foreground italic"}>
+                    {publicData?.overrides?.phone || "Not set"}
+                  </span>
+                </div>
+                <div className="flex items-start gap-3 px-4 py-3">
+                  <span className="text-muted-foreground w-24 shrink-0">Email</span>
+                  <span className={publicData?.overrides?.email ? "font-medium" : "text-muted-foreground italic"}>
+                    {publicData?.overrides?.email || "Not set"}
+                  </span>
+                </div>
+                <div className="flex items-start gap-3 px-4 py-3">
+                  <span className="text-muted-foreground w-24 shrink-0">Website</span>
+                  <span className={publicData?.overrides?.website ? "font-medium" : "text-muted-foreground italic"}>
+                    {publicData?.overrides?.website || "Not set"}
+                  </span>
+                </div>
+                <div className="flex items-start gap-3 px-4 py-3">
+                  <span className="text-muted-foreground w-24 shrink-0">Description</span>
+                  <span className={publicData?.overrides?.description ? "" : "text-muted-foreground italic"}>
+                    {publicData?.overrides?.description || "Not set"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="jobs" className="mt-6">
@@ -694,6 +771,21 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
           <JobsManager facilityNumber={user.facilityNumber} />
         </TabsContent>
       </Tabs>
+
+      <Separator />
+
+      <div className="flex justify-center pb-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground hover:text-foreground"
+          onClick={() => logoutMutation.mutate()}
+          disabled={logoutMutation.isPending}
+        >
+          <LogOut className="h-4 w-4 mr-1.5" />
+          {logoutMutation.isPending ? "Logging out…" : "Log Out"}
+        </Button>
+      </div>
     </div>
   );
 }
