@@ -71,6 +71,7 @@ passport.use(
       if (!account) return done(null, false, { message: "Invalid credentials" });
       const valid = await comparePassword(password, account.password);
       if (!valid) return done(null, false, { message: "Invalid credentials" });
+      if (!account.emailVerified) return done(null, false, { message: "EMAIL_NOT_VERIFIED" });
       return done(null, account);
     } catch (err) {
       return done(err);

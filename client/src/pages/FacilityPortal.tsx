@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -86,17 +86,36 @@ interface FacilityOverride {
 
 // ── Auth forms ────────────────────────────────────────────────────────────────
 
-function LoginForm({ onSuccess }: { onSuccess: () => void }) {
+function LoginForm({ onSuccess, onNeedsVerification }: { onSuccess: () => void; onNeedsVerification: (email: string) => void }) {
   const { toast } = useToast();
   const form = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
 
   const mutation = useMutation({
-    mutationFn: (data: LoginForm) => apiRequest("POST", "/api/facility/login", data),
+    mutationFn: async (data: LoginForm) => {
+      const res = await fetch("/api/facility/login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        const err = new Error(body.message || "Login failed") as any;
+        err.code = body.code;
+        err.email = body.email;
+        throw err;
+      }
+      return body;
+    },
     onSuccess: () => {
       onSuccess();
       toast({ title: "Logged in successfully" });
     },
-    onError: (err: Error) => {
+    onError: (err: any) => {
+      if (err.code === "EMAIL_NOT_VERIFIED") {
+        onNeedsVerification(err.email ?? "");
+        return;
+      }
       toast({ title: "Login failed", description: err.message, variant: "destructive" });
     },
   });
@@ -134,9 +153,8 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
-function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
+function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: string) => void }) {
   const { toast } = useToast();
-  const qc = useQueryClient();
 
   // Facility search state
   const [searchTerm, setSearchTerm] = useState("");
@@ -146,6 +164,7 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
 
   // Form fields
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   // Debounced facility search
@@ -172,17 +191,16 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
       apiRequest("POST", "/api/facility/register", {
         facilityNumber: selectedFacility!.number,
         username,
+        email,
         password,
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
-      onSuccess();
-      toast({ title: "Account created successfully" });
-    },
+    onSuccess: () => onNeedsVerification(email),
     onError: (err: Error) => {
       toast({ title: "Registration failed", description: err.message, variant: "destructive" });
     },
   });
+
+  const canSubmit = !!selectedFacility && username.length >= 3 && email.includes("@") && password.length >= 8;
 
   return (
     <div className="space-y-4">
@@ -255,6 +273,18 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
         />
       </div>
 
+      {/* Email */}
+      <div className="space-y-2">
+        <Label>Email address</Label>
+        <Input
+          type="email"
+          placeholder="contact@yourfacility.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">A verification code will be sent to this address.</p>
+      </div>
+
       {/* Password */}
       <div className="space-y-2">
         <Label>Password</Label>
@@ -269,10 +299,104 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
       <Button
         className="w-full"
         onClick={() => registerMutation.mutate()}
-        disabled={registerMutation.isPending || !selectedFacility || username.length < 3 || password.length < 8}
+        disabled={registerMutation.isPending || !canSubmit}
       >
         {registerMutation.isPending ? "Creating account…" : "Create Account"}
       </Button>
+    </div>
+  );
+}
+
+// ── OTP verification screen ───────────────────────────────────────────────────
+
+function VerifyEmailScreen({
+  email,
+  onVerified,
+  onBack,
+}: {
+  email: string;
+  onVerified: () => void;
+  onBack: () => void;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [otp, setOtp] = useState("");
+
+  const verifyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/facility/verify-email", { email, otp });
+      return res.json() as Promise<{ ok: boolean; id: number; facilityNumber: string; username: string }>;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
+      toast({ title: "Email verified! Welcome to the Facility Portal." });
+      onVerified();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Verification failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/facility/resend-otp", { email }),
+    onSuccess: () => toast({ title: "Code resent!", description: "Check your inbox (or server logs in dev)." }),
+    onError: (err: Error) => toast({ title: "Failed to resend", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="text-center">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-3">
+          <MailCheck className="h-6 w-6 text-primary" />
+        </div>
+        <h3 className="text-base font-semibold">Check your email</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          We sent a 6-digit code to{" "}
+          <span className="font-medium text-foreground">{email}</span>
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="space-y-2">
+          <Label>Verification code</Label>
+          <Input
+            type="text"
+            inputMode="numeric"
+            placeholder="123456"
+            maxLength={6}
+            className="text-center text-2xl font-bold tracking-widest"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            onKeyDown={(e) => e.key === "Enter" && otp.length === 6 && verifyMutation.mutate()}
+            autoFocus
+          />
+        </div>
+
+        <Button
+          className="w-full"
+          onClick={() => verifyMutation.mutate()}
+          disabled={verifyMutation.isPending || otp.length !== 6}
+        >
+          {verifyMutation.isPending ? "Verifying…" : "Verify Email"}
+        </Button>
+
+        <div className="flex items-center justify-between text-sm">
+          <button
+            onClick={onBack}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            ← Back
+          </button>
+          <button
+            onClick={() => resendMutation.mutate()}
+            disabled={resendMutation.isPending}
+            className="text-primary hover:underline inline-flex items-center gap-1 disabled:opacity-50"
+          >
+            <RefreshCw className="h-3 w-3" />
+            {resendMutation.isPending ? "Sending…" : "Resend code"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -794,6 +918,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
 
 export default function FacilityPortal() {
   const qc = useQueryClient();
+  const [pendingVerification, setPendingVerification] = useState<string | null>(null);
 
   const { data: me, isLoading } = useQuery<SessionUser | null>({
     queryKey: ["/api/facility/me"],
@@ -801,6 +926,7 @@ export default function FacilityPortal() {
   });
 
   const handleAuthSuccess = () => {
+    setPendingVerification(null);
     qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
   };
 
@@ -841,23 +967,34 @@ export default function FacilityPortal() {
 
             <Card>
               <CardContent className="pt-6">
-                <Tabs defaultValue="login">
-                  <TabsList className="w-full mb-6">
-                    <TabsTrigger value="login" className="flex-1">Log In</TabsTrigger>
-                    <TabsTrigger value="register" className="flex-1">Register</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="login">
-                    <LoginForm onSuccess={handleAuthSuccess} />
-                  </TabsContent>
-                  <TabsContent value="register">
-                    <div className="mb-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800">
-                      <p className="text-xs text-blue-700 dark:text-blue-300">
-                        One account per facility. You'll need your facility's CA CCLD license number to register.
-                      </p>
-                    </div>
-                    <RegisterForm onSuccess={handleAuthSuccess} />
-                  </TabsContent>
-                </Tabs>
+                {pendingVerification ? (
+                  <VerifyEmailScreen
+                    email={pendingVerification}
+                    onVerified={handleAuthSuccess}
+                    onBack={() => setPendingVerification(null)}
+                  />
+                ) : (
+                  <Tabs defaultValue="login">
+                    <TabsList className="w-full mb-6">
+                      <TabsTrigger value="login" className="flex-1">Log In</TabsTrigger>
+                      <TabsTrigger value="register" className="flex-1">Register</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="login">
+                      <LoginForm
+                        onSuccess={handleAuthSuccess}
+                        onNeedsVerification={(email) => setPendingVerification(email)}
+                      />
+                    </TabsContent>
+                    <TabsContent value="register">
+                      <div className="mb-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800">
+                        <p className="text-xs text-blue-700 dark:text-blue-300">
+                          One account per facility. You'll need your facility's CA CCLD license number to register.
+                        </p>
+                      </div>
+                      <RegisterForm onNeedsVerification={(email) => setPendingVerification(email)} />
+                    </TabsContent>
+                  </Tabs>
+                )}
               </CardContent>
             </Card>
           </div>

@@ -49,6 +49,10 @@ export const facilityAccounts = sqliteTable("facility_accounts", {
   facilityNumber: text("facility_number").notNull().unique(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  email: text("email"),
+  emailVerified: integer("email_verified").notNull().default(0),
+  verificationToken: text("verification_token"),
+  verificationExpiry: integer("verification_expiry"),
   createdAt: integer("created_at").notNull(),
 });
 

@@ -22,6 +22,8 @@ import {
   type FacilityDbRow,
 } from "./storage";
 
+const facilityOtpStore = new Map<string, { otp: string; expiry: number }>();
+
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ message: "Not authenticated" });
@@ -36,6 +38,7 @@ function generateOTP(): string {
 const registerSchema = z.object({
   facilityNumber: z.string().min(1, "Facility number is required"),
   username: z.string().min(3, "Username must be at least 3 characters").max(50),
+  email: z.string().email("A valid email address is required"),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
@@ -311,15 +314,37 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ── Facility Auth ────────────────────────────────────────────────────────────
 
+  app.post("/api/facility/send-otp", async (req, res) => {
+    const { email } = req.body as { email?: string };
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    const otp = generateOTP();
+    facilityOtpStore.set(email, { otp, expiry: Date.now() + 15 * 60 * 1000 });
+    await sendVerificationEmail(email, otp);
+    res.json({ emailSent: true });
+  });
+
   app.post("/api/facility/register", async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
-    const { facilityNumber, username, password } = parsed.data;
+    const { facilityNumber, username, email, password } = parsed.data;
 
+    // If this facility already has an account
     const existingByNumber = await storage.getFacilityAccountByNumber(facilityNumber);
     if (existingByNumber) {
+      // Unverified — resend OTP so they can complete registration
+      if (!existingByNumber.emailVerified) {
+        const otp = generateOTP();
+        const expiry = Date.now() + 15 * 60 * 1000;
+        await storage.updateFacilityAccount(existingByNumber.id, {
+          verificationToken: otp,
+          verificationExpiry: expiry,
+        });
+        await sendVerificationEmail(existingByNumber.email!, otp);
+        return res.status(200).json({ emailSent: true, needsVerification: true });
+      }
       return res.status(409).json({ message: "An account for this facility already exists" });
     }
 
@@ -329,30 +354,90 @@ export async function registerRoutes(server: Server, app: Express) {
     }
 
     const hashed = await hashPassword(password);
-    const account = await storage.createFacilityAccount({
+    const otp = generateOTP();
+    const expiry = Date.now() + 15 * 60 * 1000;
+
+    await storage.createFacilityAccount({
       facilityNumber,
       username,
+      email,
       password: hashed,
+      emailVerified: 0,
+      verificationToken: otp,
+      verificationExpiry: expiry,
       createdAt: Date.now(),
     });
 
+    await sendVerificationEmail(email, otp);
+    res.status(201).json({ emailSent: true, needsVerification: true });
+  });
+
+  // Verify facility OTP → log in
+  app.post("/api/facility/verify-email", async (req, res, next) => {
+    const { email, otp } = req.body as { email?: string; otp?: string };
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP are required" });
+    }
+
+    const account = await storage.getFacilityAccountByEmail(email);
+    if (!account) return res.status(404).json({ message: "Account not found" });
+    if (account.emailVerified) return res.status(400).json({ message: "Email already verified" });
+    if (!account.verificationToken || account.verificationToken !== otp) {
+      return res.status(400).json({ message: "Invalid verification code" });
+    }
+    if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {
+      return res.status(400).json({ message: "Verification code has expired. Please request a new one." });
+    }
+
+    await storage.updateFacilityAccount(account.id, {
+      emailVerified: 1,
+      verificationToken: null,
+      verificationExpiry: null,
+    });
+
     req.login(account, (err) => {
-      if (err) return res.status(500).json({ message: "Session error after registration" });
-      res.status(201).json({ id: account.id, facilityNumber: account.facilityNumber, username: account.username });
+      if (err) return next(err);
+      res.json({ ok: true, id: account.id, facilityNumber: account.facilityNumber, username: account.username });
     });
   });
 
-  app.post("/api/facility/login", (req, res, next) => {
-    passport.authenticate("local", (err: any, user: Express.User | false, info: any) => {
+  // Resend facility OTP
+  app.post("/api/facility/resend-otp", async (req, res) => {
+    const { email } = req.body as { email?: string };
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    const account = await storage.getFacilityAccountByEmail(email);
+    if (!account) return res.status(404).json({ message: "Account not found" });
+    if (account.emailVerified) return res.status(400).json({ message: "Email already verified" });
+
+    const otp = generateOTP();
+    const expiry = Date.now() + 15 * 60 * 1000;
+    await storage.updateFacilityAccount(account.id, {
+      verificationToken: otp,
+      verificationExpiry: expiry,
+    });
+    await sendVerificationEmail(email, otp);
+    res.json({ emailSent: true });
+  });
+
+  app.post("/api/facility/login", async (req, res, next) => {
+    passport.authenticate("local", async (err: any, user: Express.User | false, info: any) => {
       if (err) return next(err);
-      if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
+      if (!user) {
+        if (info?.message === "EMAIL_NOT_VERIFIED") {
+          // Look up the email so the client can show the OTP screen pre-filled
+          const account = await storage.getFacilityAccountByUsername(req.body.username ?? "");
+          return res.status(403).json({
+            message: "Please verify your email before logging in.",
+            code: "EMAIL_NOT_VERIFIED",
+            email: account?.email ?? "",
+          });
+        }
+        return res.status(401).json({ message: info?.message || "Invalid credentials" });
+      }
       req.login(user, (loginErr) => {
         if (loginErr) return next(loginErr);
-        res.json({
-          id: user.id,
-          facilityNumber: user.facilityNumber,
-          username: user.username,
-        });
+        res.json({ id: user.id, facilityNumber: user.facilityNumber, username: user.username });
       });
     })(req, res, next);
   });

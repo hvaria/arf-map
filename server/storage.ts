@@ -167,6 +167,12 @@ addColumnIfMissing("job_seeker_profiles", "profile_picture_url", "TEXT");
 // enriched_at: Unix timestamp (ms) of when CCLD enrichment last wrote data for this facility
 addColumnIfMissing("facilities", "enriched_at", "INTEGER");
 
+// Email verification for facility portal accounts
+addColumnIfMissing("facility_accounts", "email", "TEXT");
+addColumnIfMissing("facility_accounts", "email_verified", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("facility_accounts", "verification_token", "TEXT");
+addColumnIfMissing("facility_accounts", "verification_expiry", "INTEGER");
+
 // Enrichment run audit log — one row per background enrichment pass
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS enrichment_runs (
@@ -189,7 +195,9 @@ export interface IStorage {
   getFacilityAccount(id: number): Promise<FacilityAccount | undefined>;
   getFacilityAccountByUsername(username: string): Promise<FacilityAccount | undefined>;
   getFacilityAccountByNumber(facilityNumber: string): Promise<FacilityAccount | undefined>;
+  getFacilityAccountByEmail(email: string): Promise<FacilityAccount | undefined>;
   createFacilityAccount(account: InsertFacilityAccount): Promise<FacilityAccount>;
+  updateFacilityAccount(id: number, updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>): Promise<void>;
 
   getFacilityOverride(facilityNumber: string): Promise<FacilityOverride | undefined>;
   upsertFacilityOverride(
@@ -260,6 +268,17 @@ export class DatabaseStorage implements IStorage {
 
   async createFacilityAccount(account: InsertFacilityAccount): Promise<FacilityAccount> {
     return db.insert(facilityAccounts).values(account).returning().get();
+  }
+
+  async getFacilityAccountByEmail(email: string): Promise<FacilityAccount | undefined> {
+    return db.select().from(facilityAccounts).where(eq(facilityAccounts.email, email)).get();
+  }
+
+  async updateFacilityAccount(
+    id: number,
+    updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>
+  ): Promise<void> {
+    await db.update(facilityAccounts).set(updates).where(eq(facilityAccounts.id, id)).run();
   }
 
   async getFacilityOverride(facilityNumber: string): Promise<FacilityOverride | undefined> {

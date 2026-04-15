@@ -46,27 +46,24 @@ function logOtp(to: string, otp: string) {
 }
 
 export async function sendVerificationEmail(to: string, otp: string): Promise<void> {
-  // Prefer Resend HTTP API (works on Render free tier — no SMTP port needed)
+  // Try Resend if configured
   if (process.env.RESEND_API_KEY) {
     try {
       await sendViaResendApi(to, otp);
       return;
     } catch (err: any) {
-      if (process.env.NODE_ENV === "production") throw err;
-      console.error(`[email] Resend API failed: ${err?.message ?? err}`);
-      logOtp(to, otp);
-      return;
+      console.error(`[email] Resend API failed: ${err?.message ?? err} — trying SMTP fallback`);
     }
   }
 
-  // Fallback: SMTP (works locally or on paid Render plans)
+  // Fallback: SMTP
   if (process.env.SMTP_HOST) {
     try {
       await sendViaSmtp(to, otp);
       return;
     } catch (err: any) {
-      if (process.env.NODE_ENV === "production") throw err;
       console.error(`[email] SMTP delivery failed: ${err?.message ?? err}`);
+      if (process.env.NODE_ENV === "production") throw err;
     }
   }
 
