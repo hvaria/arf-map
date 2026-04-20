@@ -20,6 +20,7 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { useToast } from "@/hooks/use-toast";
 import type { Facility } from "@shared/schema";
 import { useFacilities } from "@/hooks/useFacilities";
+import { getPendingAction, clearPendingAction } from "@/lib/pendingAction"; // NEW: expression-of-interest
 
 // All job types relevant to Adult Residential Facilities
 const JOB_TYPE_OPTIONS = [
@@ -259,9 +260,29 @@ function LoginForm({ onNeedsVerification }: { onNeedsVerification: (email: strin
 
 function AuthSection({ onNeedsVerification }: { onNeedsVerification: (email: string) => void }) {
   const [tab, setTab] = useState<"login" | "register">("login");
+  // NEW: expression-of-interest — read once on mount for context banner
+  const pendingAction = getPendingAction();
 
   return (
     <div className="max-w-sm mx-auto mt-8">
+      {/* NEW: expression-of-interest — context banner when arriving from Express Interest click */}
+      {pendingAction?.type === "express_interest" && (
+        <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800/50 dark:bg-blue-950/30 px-4 py-3.5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/50">
+              <Building2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">One step away!</p>
+              <p className="mt-0.5 text-xs text-blue-700 dark:text-blue-400">
+                Create a free profile to express interest in{" "}
+                <span className="font-medium">{pendingAction.facilityName}</span>.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="text-center mb-6">
         <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-3">
           <Briefcase className="h-7 w-7 text-primary" />
@@ -890,12 +911,31 @@ type PageState =
 
 export default function JobSeekerPage() {
   const [pageState, setPageState] = useState<PageState>({ view: "auth" });
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const { data: account, isLoading } = useQuery<JobSeekerAccount | null>({
     queryKey: ["/api/jobseeker/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 60000,
   });
+
+  // NEW: expression-of-interest — fire pending action the moment the user is authenticated
+  useEffect(() => {
+    if (!account) return;
+    const action = getPendingAction();
+    if (action?.type !== "express_interest") return;
+    apiRequest("POST", "/api/jobseeker/interests", {
+      facilityNumber: action.facilityId,
+      roleInterest: "General Interest",
+    })
+      .then(() => toast({ title: `Your interest in ${action.facilityName} has been sent!` }))
+      .catch(() => {})
+      .finally(() => {
+        clearPendingAction();
+        navigate("/");
+      });
+  }, [account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When account loads, show dashboard
   const effectiveView = account

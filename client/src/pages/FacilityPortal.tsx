@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import type { Facility } from "@shared/schema";
 import { useFacilities } from "@/hooks/useFacilities";
+import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-of-interest
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -825,6 +826,11 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             <Briefcase className="h-4 w-4 mr-1.5" />
             Job Postings
           </TabsTrigger>
+          {/* NEW: expression-of-interest */}
+          <TabsTrigger value="applicants" className="flex-1">
+            <Users className="h-4 w-4 mr-1.5" />
+            Applicants
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="details" className="mt-6">
@@ -893,6 +899,14 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             Manage your job openings. Active postings will show your facility in the "Hiring" filter on the map.
           </p>
           <JobsManager facilityNumber={user.facilityNumber} />
+        </TabsContent>
+
+        {/* NEW: expression-of-interest */}
+        <TabsContent value="applicants" className="mt-6">
+          <p className="text-sm text-muted-foreground mb-4">
+            Job seekers who expressed interest in your facility. Update their status as you review profiles.
+          </p>
+          <ApplicantsTab />
         </TabsContent>
       </Tabs>
 

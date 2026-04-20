@@ -104,6 +104,18 @@ export const facilitiesTable = sqliteTable("facilities", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+// NEW: expression-of-interest — links a job seeker to a facility with status tracking
+export const applicantInterests = sqliteTable("applicant_interests", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  jobSeekerId: integer("job_seeker_id").notNull(),
+  facilityNumber: text("facility_number").notNull(),
+  roleInterest: text("role_interest"),
+  message: text("message"),
+  status: text("status").notNull().default("pending"), // pending | viewed | shortlisted
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 // ============ DRIZZLE TYPES ============
 
 export type User = typeof users.$inferSelect;
@@ -116,6 +128,12 @@ export type InsertDbJobPosting = typeof jobPostingsTable.$inferInsert;
 export type JobSeekerAccount = typeof jobSeekerAccounts.$inferSelect;
 export type InsertJobSeekerAccount = typeof jobSeekerAccounts.$inferInsert;
 export type JobSeekerProfile = typeof jobSeekerProfiles.$inferSelect;
+
+// NEW: expression-of-interest types
+export type ApplicantInterest = typeof applicantInterests.$inferSelect;
+export type InsertApplicantInterest = typeof applicantInterests.$inferInsert;
+export const interestStatusSchema = z.enum(["pending", "viewed", "shortlisted"]);
+export type InterestStatus = z.infer<typeof interestStatusSchema>;
 
 // ============ ZOD SCHEMAS ============
 

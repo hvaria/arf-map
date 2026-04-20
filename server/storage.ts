@@ -7,6 +7,7 @@ import {
   jobPostingsTable,
   jobSeekerAccounts,
   jobSeekerProfiles,
+  applicantInterests,
   type FacilityAccount,
   type InsertFacilityAccount,
   type FacilityOverride,
@@ -14,6 +15,7 @@ import {
   type JobSeekerAccount,
   type InsertJobSeekerAccount,
   type JobSeekerProfile,
+  type ApplicantInterest,
 } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { sqlite, db } from "./db/index";
@@ -99,6 +101,24 @@ addColumnIfMissing("job_seeker_accounts", "verification_expiry", "INTEGER");
 addColumnIfMissing("job_seeker_accounts", "last_login_at", "INTEGER");
 addColumnIfMissing("job_seeker_accounts", "failed_login_count", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("job_seeker_accounts", "updated_at", "INTEGER");
+
+// NEW: expression-of-interest — one row per seeker+facility pair, upsertable
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS applicant_interests (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_seeker_id   INTEGER NOT NULL,
+    facility_number TEXT NOT NULL,
+    role_interest   TEXT,
+    message         TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    UNIQUE(job_seeker_id, facility_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_facility ON applicant_interests(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ai_seeker   ON applicant_interests(job_seeker_id);
+  CREATE INDEX IF NOT EXISTS idx_ai_status   ON applicant_interests(status);
+`);
 
 // Sessions table used by SqliteSessionStore
 sqlite.exec(`
@@ -235,6 +255,15 @@ export interface IStorage {
       "state" | "zipCode" | "profilePictureUrl" | "yearsExperience" | "jobTypes" | "bio"
     >>
   ): Promise<JobSeekerProfile>;
+
+  // NEW: expression-of-interest
+  upsertApplicantInterest(
+    jobSeekerId: number,
+    facilityNumber: string,
+    data: { roleInterest?: string; message?: string }
+  ): Promise<ApplicantInterest>;
+  deleteApplicantInterest(id: number, jobSeekerId: number): Promise<boolean>;
+  updateApplicantInterestStatus(id: number, facilityNumber: string, status: string): Promise<ApplicantInterest | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -427,9 +456,141 @@ export class DatabaseStorage implements IStorage {
       .returning()
       .get();
   }
+
+  // NEW: expression-of-interest implementations
+  async upsertApplicantInterest(
+    jobSeekerId: number,
+    facilityNumber: string,
+    data: { roleInterest?: string; message?: string }
+  ): Promise<ApplicantInterest> {
+    const now = Date.now();
+    const existing = db
+      .select()
+      .from(applicantInterests)
+      .where(
+        and(
+          eq(applicantInterests.jobSeekerId, jobSeekerId),
+          eq(applicantInterests.facilityNumber, facilityNumber)
+        )
+      )
+      .get();
+
+    if (existing) {
+      return db
+        .update(applicantInterests)
+        .set({ ...data, updatedAt: now })
+        .where(eq(applicantInterests.id, existing.id))
+        .returning()
+        .get();
+    }
+    return db
+      .insert(applicantInterests)
+      .values({ jobSeekerId, facilityNumber, ...data, createdAt: now, updatedAt: now })
+      .returning()
+      .get();
+  }
+
+  async deleteApplicantInterest(id: number, jobSeekerId: number): Promise<boolean> {
+    const existing = db
+      .select()
+      .from(applicantInterests)
+      .where(and(eq(applicantInterests.id, id), eq(applicantInterests.jobSeekerId, jobSeekerId)))
+      .get();
+    if (!existing) return false;
+    db.delete(applicantInterests).where(eq(applicantInterests.id, id)).run();
+    return true;
+  }
+
+  async updateApplicantInterestStatus(
+    id: number,
+    facilityNumber: string,
+    status: string
+  ): Promise<ApplicantInterest | undefined> {
+    const existing = db
+      .select()
+      .from(applicantInterests)
+      .where(and(eq(applicantInterests.id, id), eq(applicantInterests.facilityNumber, facilityNumber)))
+      .get();
+    if (!existing) return undefined;
+    return db
+      .update(applicantInterests)
+      .set({ status, updatedAt: Date.now() })
+      .where(eq(applicantInterests.id, id))
+      .returning()
+      .get();
+  }
 }
 
 export const storage = new DatabaseStorage();
+
+// ── Applicant Interest JOIN queries (raw SQL for multi-table joins) ───────────
+
+export interface ApplicantInterestWithProfile {
+  id: number;
+  jobSeekerId: number;
+  facilityNumber: string;
+  roleInterest: string | null;
+  message: string | null;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  city: string | null;
+  state: string | null;
+  yearsExperience: number | null;
+  jobTypes: string | null;
+  bio: string | null;
+}
+
+export interface ApplicantInterestWithFacility {
+  id: number;
+  facilityNumber: string;
+  facilityName: string | null;
+  roleInterest: string | null;
+  message: string | null;
+  status: string;
+  createdAt: number;
+}
+
+/** All interests for a facility, joined with seeker account + profile. */
+export function getInterestsByFacility(facilityNumber: string): ApplicantInterestWithProfile[] {
+  return sqlite
+    .prepare(`
+      SELECT
+        ai.id, ai.job_seeker_id as jobSeekerId, ai.facility_number as facilityNumber,
+        ai.role_interest as roleInterest, ai.message, ai.status,
+        ai.created_at as createdAt, ai.updated_at as updatedAt,
+        a.email,
+        p.first_name as firstName, p.last_name as lastName,
+        p.city, p.state, p.years_experience as yearsExperience,
+        p.job_types as jobTypes, p.bio
+      FROM applicant_interests ai
+      JOIN job_seeker_accounts a ON a.id = ai.job_seeker_id
+      LEFT JOIN job_seeker_profiles p ON p.account_id = ai.job_seeker_id
+      WHERE ai.facility_number = ?
+      ORDER BY ai.created_at DESC
+    `)
+    .all(facilityNumber) as ApplicantInterestWithProfile[];
+}
+
+/** All interests submitted by a seeker, with facility name looked up. */
+export function getInterestsBySeeker(jobSeekerId: number): ApplicantInterestWithFacility[] {
+  return sqlite
+    .prepare(`
+      SELECT
+        ai.id, ai.facility_number as facilityNumber,
+        f.name as facilityName,
+        ai.role_interest as roleInterest, ai.message, ai.status,
+        ai.created_at as createdAt
+      FROM applicant_interests ai
+      LEFT JOIN facilities f ON f.number = ai.facility_number
+      WHERE ai.job_seeker_id = ?
+      ORDER BY ai.created_at DESC
+    `)
+    .all(jobSeekerId) as ApplicantInterestWithFacility[];
+}
 
 // ── Facility DB helpers (raw SQL for performance) ─────────────────────────────
 // FacilityDbRow is defined in shared/etl-types.ts and re-exported at the top

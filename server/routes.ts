@@ -8,6 +8,7 @@ import { hashPassword } from "./auth";
 import { sendVerificationEmail } from "./email";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { adminEtlRouter } from "./routes/adminEtl";
+import { interestsRouter } from "./routes/interests"; // NEW: expression-of-interest
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 import {
   getCachedFacilities,
@@ -82,6 +83,7 @@ export async function registerRoutes(server: Server, app: Express) {
   // and profile management remain below for now.
   app.use("/api/jobseeker", jobseekerAuthRouter);
   app.use("/api/admin/etl", adminEtlRouter);
+  app.use("/api", interestsRouter); // NEW: expression-of-interest
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

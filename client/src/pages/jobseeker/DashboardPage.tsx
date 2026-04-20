@@ -1,6 +1,9 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
+import { getQueryFn } from "@/lib/queryClient";
+import { MyInterestsTab, type SeekerInterest } from "@/components/MyInterestsTab"; // NEW: expression-of-interest
 
 /**
  * DashboardPage — protected route for authenticated job seekers.
@@ -14,6 +17,14 @@ import { useAuth } from "@/context/AuthContext";
 export default function DashboardPage() {
   const { user, isReady, logout } = useAuth();
   const [, setLocation] = useLocation();
+
+  // NEW: expression-of-interest — live Applications count
+  const { data: interests = [] } = useQuery<SeekerInterest[]>({
+    queryKey: ["/api/jobseeker/interests"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!user,
+    staleTime: 30000,
+  });
 
   // Guard: redirect unauthenticated visitors to the login page.
   useEffect(() => {
@@ -86,8 +97,9 @@ export default function DashboardPage() {
 
         {/* Stat cards */}
         <div className="grid gap-4 sm:grid-cols-3">
+          {/* NEW: expression-of-interest — Applications count is live */}
           {[
-            { label: "Applications", value: "—", icon: "📋" },
+            { label: "Applications", value: String(interests.length), icon: "📋" },
             { label: "Saved Jobs", value: "—", icon: "🔖" },
             { label: "Profile Views", value: "—", icon: "👀" },
           ].map(({ label, value, icon }) => (
@@ -106,6 +118,14 @@ export default function DashboardPage() {
               </p>
             </div>
           ))}
+        </div>
+
+        {/* NEW: expression-of-interest — submitted interests list */}
+        <div className="mt-8">
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-3">
+            My Facility Interests
+          </h2>
+          <MyInterestsTab />
         </div>
 
         {/* Quick links */}

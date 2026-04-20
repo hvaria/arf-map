@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import type { Facility, JobPosting } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { ExpressInterestButton } from "@/components/ExpressInterestButton"; // NEW: expression-of-interest
 
 function haversineDistanceMiles(
   lat1: number,
@@ -334,6 +335,14 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
               </div>
               <p className="text-xs text-muted-foreground mt-2 italic">Contact the facility directly to inquire.</p>
             </Section>
+          )}
+
+          {/* NEW: expression-of-interest — job seeker interest button */}
+          {!isOwner && (
+            <ExpressInterestButton
+              facilityNumber={facility.number}
+              facilityName={facility.name}
+            />
           )}
 
           {isOwner && (

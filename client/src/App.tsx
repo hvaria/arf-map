@@ -22,7 +22,7 @@ function AppRouter() {
         <Route path="/job-seeker" component={JobSeekerPage} />
         {/* Job seeker auth + dashboard routes */}
         <Route path="/jobseeker/login" component={LoginPage} />
-        <Route path="/jobseeker/dashboard" component={DashboardPage} />
+<Route path="/jobseeker/dashboard" component={DashboardPage} />
         <Route component={NotFound} />
       </Switch>
     </Router>
