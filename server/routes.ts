@@ -347,11 +347,13 @@ export async function registerRoutes(server: Server, app: Express) {
     // If this facility already has an account
     const existingByNumber = await storage.getFacilityAccountByNumber(facilityNumber);
     if (existingByNumber) {
-      // Unverified — resend OTP so they can complete registration
+      // Unverified — update password (user may have changed it) and resend OTP
       if (!existingByNumber.emailVerified) {
+        const hashed = await hashPassword(password);
         const otp = generateOTP();
         const expiry = Date.now() + 15 * 60 * 1000;
         await storage.updateFacilityAccount(existingByNumber.id, {
+          password: hashed,
           verificationToken: otp,
           verificationExpiry: expiry,
         });
@@ -647,11 +649,13 @@ export async function registerRoutes(server: Server, app: Express) {
 
     const existingByEmail = await storage.getJobSeekerAccountByEmail(email);
     if (existingByEmail) {
-      // If already registered but not verified, resend OTP
+      // If already registered but not verified, update password (user may have changed it) and resend OTP
       if (!existingByEmail.emailVerified) {
+        const hashed = await hashPassword(password);
         const otp = generateOTP();
         const expiry = Date.now() + 15 * 60 * 1000; // 15 minutes
         await storage.updateJobSeekerAccount(existingByEmail.id, {
+          password: hashed,
           verificationToken: otp,
           verificationExpiry: expiry,
         });
