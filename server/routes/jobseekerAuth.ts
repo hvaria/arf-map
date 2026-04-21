@@ -3,6 +3,8 @@ import { z } from "zod";
 import { AuthService } from "../services/authService";
 import { SqliteJobSeekerRepository } from "../repositories/sqlite/sqliteJobSeekerRepository";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
+import { sendPasswordResetEmail } from "../email";
+import { sqlite } from "../db/index";
 
 // ── Dependency wiring ────────────────────────────────────────────────────────
 // To replace SQLite with Postgres or an external IdP, swap the repository or
@@ -19,6 +21,16 @@ const loginSchema = z.object({
     .string({ required_error: "Password is required." })
     .min(1, "Password is required."),
   rememberMe: z.boolean().optional(),
+});
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email("Please enter a valid email address."),
+});
+
+const resetPasswordSchema = z.object({
+  email: z.string().email("Please enter a valid email address."),
+  token: z.string().length(6, "Code must be 6 digits."),
+  newPassword: z.string().min(8, "Password must be at least 8 characters."),
 });
 
 // ── Router ───────────────────────────────────────────────────────────────────
@@ -138,6 +150,63 @@ jobseekerAuthRouter.get("/dashboard", requireJobSeekerAuth, async (req, res, nex
       account: profile,
       // Future: applicationCount, recommendedJobs, profileCompleteness, etc.
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/jobseeker/forgot-password
+ *
+ * Initiates a password reset.  Always returns { emailSent: true } regardless
+ * of whether the email exists — prevents account enumeration.
+ */
+jobseekerAuthRouter.post("/forgot-password", async (req, res, next) => {
+  try {
+    const parsed = forgotPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0].message });
+    }
+
+    const result = await authService.initiatePasswordReset(parsed.data.email);
+    if (result) {
+      await sendPasswordResetEmail(result.email, result.token);
+    }
+
+    return res.json({ emailSent: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/jobseeker/reset-password
+ *
+ * Validates the reset OTP, updates the password, clears any account lockout,
+ * and invalidates all existing sessions for the account.
+ */
+jobseekerAuthRouter.post("/reset-password", async (req, res, next) => {
+  try {
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0].message });
+    }
+
+    const { email, token, newPassword } = parsed.data;
+    const result = await authService.completePasswordReset(email, token, newPassword);
+
+    if (!result.ok) {
+      return res.status(400).json({
+        message: "Code is invalid or has already been used. Please request a new one.",
+      });
+    }
+
+    // Invalidate all active sessions for this account.
+    sqlite
+      .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.jobSeekerId') = ?")
+      .run(result.accountId);
+
+    return res.json({ ok: true });
   } catch (err) {
     next(err);
   }

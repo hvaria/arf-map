@@ -80,6 +80,30 @@ export class SqliteJobSeekerRepository implements JobSeekerRepository {
       );
   }
 
+  async savePasswordResetToken(id: number, token: string, expiry: number): Promise<void> {
+    await db
+      .update(jobSeekerAccounts)
+      .set({ verificationToken: token, verificationExpiry: expiry, updatedAt: Date.now() })
+      .where(eq(jobSeekerAccounts.id, id))
+      .run();
+  }
+
+  async clearPasswordResetToken(id: number): Promise<void> {
+    await db
+      .update(jobSeekerAccounts)
+      .set({ verificationToken: null, verificationExpiry: null, updatedAt: Date.now() })
+      .where(eq(jobSeekerAccounts.id, id))
+      .run();
+  }
+
+  async updatePassword(id: number, hashedPassword: string): Promise<void> {
+    await db
+      .update(jobSeekerAccounts)
+      .set({ password: hashedPassword, updatedAt: Date.now() })
+      .where(eq(jobSeekerAccounts.id, id))
+      .run();
+  }
+
   /** Map the raw DB row (with `password` column) to the domain model. */
   private toModel(
     row: typeof jobSeekerAccounts.$inferSelect,
@@ -92,6 +116,8 @@ export class SqliteJobSeekerRepository implements JobSeekerRepository {
       failedLoginCount: row.failedLoginCount ?? 0,
       lastLoginAt: row.lastLoginAt ?? null,
       createdAt: row.createdAt,
+      verificationToken: row.verificationToken ?? null,
+      verificationExpiry: row.verificationExpiry ?? null,
     };
   }
 }

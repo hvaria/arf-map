@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -87,7 +87,15 @@ interface FacilityOverride {
 
 // ── Auth forms ────────────────────────────────────────────────────────────────
 
-function LoginForm({ onSuccess, onNeedsVerification }: { onSuccess: () => void; onNeedsVerification: (email: string) => void }) {
+function LoginForm({
+  onSuccess,
+  onNeedsVerification,
+  onForgotPassword,
+}: {
+  onSuccess: () => void;
+  onNeedsVerification: (email: string) => void;
+  onForgotPassword: () => void;
+}) {
   const { toast } = useToast();
   const form = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
 
@@ -140,7 +148,16 @@ function LoginForm({ onSuccess, onNeedsVerification }: { onSuccess: () => void; 
           name="password"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Password</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Password</FormLabel>
+                <button
+                  type="button"
+                  onClick={onForgotPassword}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <FormControl><Input type="password" placeholder="••••••••" {...field} /></FormControl>
               <FormMessage />
             </FormItem>
@@ -395,6 +412,195 @@ function VerifyEmailScreen({
           >
             <RefreshCw className="h-3 w-3" />
             {resendMutation.isPending ? "Sending…" : "Resend code"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Forgot password form ──────────────────────────────────────────────────────
+
+function ForgotPasswordForm({
+  onCodeSent,
+  onBack,
+}: {
+  onCodeSent: (email: string) => void;
+  onBack: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", "/api/facility/forgot-password", { email }),
+    onSuccess: () => onCodeSent(email),
+    onError: (err: any) => setError(err.message),
+  });
+
+  return (
+    <div className="space-y-5">
+      <div className="text-center">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-3">
+          <KeyRound className="h-6 w-6 text-primary" />
+        </div>
+        <h3 className="text-base font-semibold">Forgot password?</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Enter your account email and we'll send a reset code.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="space-y-2">
+          <Label>Email address</Label>
+          <Input
+            type="email"
+            placeholder="contact@yourfacility.com"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); setError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && email && mutation.mutate()}
+            autoFocus
+          />
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <Button
+          className="w-full"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending || !email}
+        >
+          {mutation.isPending ? "Sending code…" : "Send reset code"}
+        </Button>
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            ← Back to log in
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reset password form ───────────────────────────────────────────────────────
+
+function ResetPasswordForm({
+  email,
+  onReset,
+  onBack,
+}: {
+  email: string;
+  onReset: () => void;
+  onBack: () => void;
+}) {
+  const [form, setForm] = useState({ token: "", newPassword: "", confirm: "" });
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+
+  const passwordMismatch = form.confirm.length > 0 && form.newPassword !== form.confirm;
+  const passwordTooShort = form.newPassword.length > 0 && form.newPassword.length < 8;
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (form.newPassword !== form.confirm) throw new Error("Passwords do not match.");
+      return apiRequest("POST", "/api/facility/reset-password", {
+        email,
+        token: form.token,
+        newPassword: form.newPassword,
+      });
+    },
+    onSuccess: () => onReset(),
+    onError: (err: any) => setError(err.message),
+  });
+
+  const canSubmit =
+    form.token.length === 6 &&
+    form.newPassword.length >= 8 &&
+    form.newPassword === form.confirm &&
+    !mutation.isPending;
+
+  return (
+    <div className="space-y-5">
+      <div className="text-center">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-3">
+          <MailCheck className="h-6 w-6 text-primary" />
+        </div>
+        <h3 className="text-base font-semibold">Set new password</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          We sent a 6-digit code to{" "}
+          <span className="font-medium text-foreground">{email}</span>
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="space-y-2">
+          <Label>Reset code</Label>
+          <Input
+            type="text"
+            inputMode="numeric"
+            placeholder="123456"
+            maxLength={6}
+            className="text-center text-2xl font-bold tracking-widest"
+            value={form.token}
+            onChange={(e) => {
+              setForm((f) => ({ ...f, token: e.target.value.replace(/\D/g, "").slice(0, 6) }));
+              setError("");
+            }}
+            autoFocus
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>New password</Label>
+          <div className="relative">
+            <Input
+              type={showPassword ? "text" : "password"}
+              placeholder="At least 8 characters"
+              value={form.newPassword}
+              onChange={(e) => { setForm((f) => ({ ...f, newPassword: e.target.value })); setError(""); }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {passwordTooShort && (
+            <p className="text-xs text-destructive">Password must be at least 8 characters.</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label>Confirm new password</Label>
+          <Input
+            type="password"
+            placeholder="Repeat new password"
+            value={form.confirm}
+            onChange={(e) => { setForm((f) => ({ ...f, confirm: e.target.value })); setError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && canSubmit && mutation.mutate()}
+          />
+          {passwordMismatch && (
+            <p className="text-xs text-destructive">Passwords do not match.</p>
+          )}
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <Button className="w-full" onClick={() => mutation.mutate()} disabled={!canSubmit}>
+          {mutation.isPending ? "Updating password…" : "Set new password"}
+        </Button>
+
+        <div className="flex items-center justify-between text-sm">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            ← Request a new code
           </button>
         </div>
       </div>
@@ -930,9 +1136,16 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+type ForgotPasswordState =
+  | null
+  | { step: "request" }
+  | { step: "reset"; email: string };
+
 export default function FacilityPortal() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [pendingVerification, setPendingVerification] = useState<string | null>(null);
+  const [forgotPasswordState, setForgotPasswordState] = useState<ForgotPasswordState>(null);
 
   const { data: me, isLoading } = useQuery<SessionUser | null>({
     queryKey: ["/api/facility/me"],
@@ -941,6 +1154,7 @@ export default function FacilityPortal() {
 
   const handleAuthSuccess = () => {
     setPendingVerification(null);
+    setForgotPasswordState(null);
     qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
   };
 
@@ -987,6 +1201,20 @@ export default function FacilityPortal() {
                     onVerified={handleAuthSuccess}
                     onBack={() => setPendingVerification(null)}
                   />
+                ) : forgotPasswordState?.step === "reset" ? (
+                  <ResetPasswordForm
+                    email={forgotPasswordState.email}
+                    onReset={() => {
+                      setForgotPasswordState(null);
+                      toast({ title: "Password updated!", description: "You can now log in with your new password." });
+                    }}
+                    onBack={() => setForgotPasswordState({ step: "request" })}
+                  />
+                ) : forgotPasswordState?.step === "request" ? (
+                  <ForgotPasswordForm
+                    onCodeSent={(email) => setForgotPasswordState({ step: "reset", email })}
+                    onBack={() => setForgotPasswordState(null)}
+                  />
                 ) : (
                   <Tabs defaultValue="login">
                     <TabsList className="w-full mb-6">
@@ -997,6 +1225,7 @@ export default function FacilityPortal() {
                       <LoginForm
                         onSuccess={handleAuthSuccess}
                         onNeedsVerification={(email) => setPendingVerification(email)}
+                        onForgotPassword={() => setForgotPasswordState({ step: "request" })}
                       />
                     </TabsContent>
                     <TabsContent value="register">

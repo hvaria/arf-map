@@ -217,7 +217,7 @@ export interface IStorage {
   getFacilityAccountByNumber(facilityNumber: string): Promise<FacilityAccount | undefined>;
   getFacilityAccountByEmail(email: string): Promise<FacilityAccount | undefined>;
   createFacilityAccount(account: InsertFacilityAccount): Promise<FacilityAccount>;
-  updateFacilityAccount(id: number, updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>): Promise<void>;
+  updateFacilityAccount(id: number, updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "password">>): Promise<void>;
 
   getFacilityOverride(facilityNumber: string): Promise<FacilityOverride | undefined>;
   upsertFacilityOverride(
@@ -244,7 +244,7 @@ export interface IStorage {
   createJobSeekerAccount(data: InsertJobSeekerAccount): Promise<JobSeekerAccount>;
   updateJobSeekerAccount(
     id: number,
-    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "lastLoginAt" | "failedLoginCount" | "updatedAt">>
+    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "lastLoginAt" | "failedLoginCount" | "updatedAt" | "password">>
   ): Promise<void>;
 
   getJobSeekerProfile(accountId: number): Promise<JobSeekerProfile | undefined>;
@@ -305,7 +305,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateFacilityAccount(
     id: number,
-    updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry">>
+    updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "password">>
   ): Promise<void> {
     await db.update(facilityAccounts).set(updates).where(eq(facilityAccounts.id, id)).run();
   }
@@ -416,7 +416,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateJobSeekerAccount(
     id: number,
-    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "lastLoginAt" | "failedLoginCount" | "updatedAt">>
+    data: Partial<Pick<JobSeekerAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "lastLoginAt" | "failedLoginCount" | "updatedAt" | "password">>
   ): Promise<void> {
     await db
       .update(jobSeekerAccounts)

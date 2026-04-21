@@ -5,7 +5,8 @@ import { z } from "zod";
 import { randomInt } from "crypto";
 import { storage } from "./storage";
 import { hashPassword } from "./auth";
-import { sendVerificationEmail } from "./email";
+import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
+import { sqlite } from "./db/index";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { adminEtlRouter } from "./routes/adminEtl";
 import { interestsRouter } from "./routes/interests"; // NEW: expression-of-interest
@@ -41,6 +42,16 @@ const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(50),
   email: z.string().email("A valid email address is required"),
   password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+const facilityForgotPasswordSchema = z.object({
+  email: z.string().email("A valid email address is required"),
+});
+
+const facilityResetPasswordSchema = z.object({
+  email: z.string().email("A valid email address is required"),
+  token: z.string().length(6, "Code must be 6 digits"),
+  newPassword: z.string().min(8, "Password must be at least 8 characters"),
 });
 
 const detailsSchema = z.object({
@@ -449,6 +460,69 @@ export async function registerRoutes(server: Server, app: Express) {
       if (err) return next(err);
       res.json({ ok: true });
     });
+  });
+
+  // Initiate facility password reset — always returns { emailSent: true } to prevent enumeration
+  app.post("/api/facility/forgot-password", async (req, res, next) => {
+    try {
+      const parsed = facilityForgotPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0].message });
+      }
+
+      const account = await storage.getFacilityAccountByEmail(parsed.data.email);
+      if (account && account.emailVerified) {
+        const otp = generateOTP();
+        const expiry = Date.now() + 15 * 60 * 1000;
+        await storage.updateFacilityAccount(account.id, {
+          verificationToken: otp,
+          verificationExpiry: expiry,
+        });
+        await sendPasswordResetEmail(parsed.data.email, otp);
+      }
+
+      return res.json({ emailSent: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Complete facility password reset — validates OTP, updates password, invalidates sessions
+  app.post("/api/facility/reset-password", async (req, res, next) => {
+    try {
+      const parsed = facilityResetPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0].message });
+      }
+
+      const { email, token, newPassword } = parsed.data;
+      const account = await storage.getFacilityAccountByEmail(email);
+
+      const invalidMsg = "Code is invalid or has already been used. Please request a new one.";
+      if (!account) return res.status(400).json({ message: invalidMsg });
+      if (!account.verificationToken || account.verificationToken !== token) {
+        return res.status(400).json({ message: invalidMsg });
+      }
+      if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {
+        return res.status(400).json({ message: invalidMsg });
+      }
+
+      const hashed = await hashPassword(newPassword);
+      await storage.updateFacilityAccount(account.id, {
+        password: hashed,
+        verificationToken: null,
+        verificationExpiry: null,
+      });
+
+      // Invalidate all active sessions for this facility account.
+      sqlite
+        .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.passport.user') = ?")
+        .run(account.id);
+
+      return res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
   });
 
   app.get("/api/facility/me", (req, res) => {

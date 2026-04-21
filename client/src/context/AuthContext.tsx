@@ -73,6 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const profile = await loginJobSeeker(credentials);
       setState({ user: profile, isLoading: false });
       queryClient.setQueryData(["/api/jobseeker/me"], profile);
+      // Remove any stale profile cache so Dashboard always fetches fresh data
+      // for the newly authenticated user. Mirrors what logout() does in reverse.
+      queryClient.removeQueries({ queryKey: ["/api/jobseeker/profile"] });
     } catch (err) {
       setState((s) => ({ ...s, isLoading: false }));
       throw err as ApiError;

@@ -14,7 +14,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft, Briefcase, User, MapPin, Phone, Mail, Clock,
   DollarSign, X, Edit3, LogOut, CheckCircle2, Building2,
-  Camera, ChevronRight, MailCheck, RefreshCw, Eye, EyeOff,
+  Camera, ChevronRight, MailCheck, RefreshCw, Eye, EyeOff, KeyRound,
 } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { useToast } from "@/hooks/use-toast";
@@ -192,7 +192,13 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
 
 // ─── Login Form ───────────────────────────────────────────────────────────────
 
-function LoginForm({ onNeedsVerification }: { onNeedsVerification: (email: string) => void }) {
+function LoginForm({
+  onNeedsVerification,
+  onForgotPassword,
+}: {
+  onNeedsVerification: (email: string) => void;
+  onForgotPassword: () => void;
+}) {
   const { toast } = useToast();
   const { login } = useAuth();
   const [, navigate] = useLocation();
@@ -227,7 +233,16 @@ function LoginForm({ onNeedsVerification }: { onNeedsVerification: (email: strin
         />
       </div>
       <div className="space-y-2">
-        <Label>Password</Label>
+        <div className="flex items-center justify-between">
+          <Label>Password</Label>
+          <button
+            type="button"
+            onClick={onForgotPassword}
+            className="text-xs text-primary hover:underline"
+          >
+            Forgot password?
+          </button>
+        </div>
         <div className="relative">
           <Input
             type={showPassword ? "text" : "password"}
@@ -258,7 +273,15 @@ function LoginForm({ onNeedsVerification }: { onNeedsVerification: (email: strin
 
 // ─── Auth Section (login / register tabs) ────────────────────────────────────
 
-function AuthSection({ onNeedsVerification }: { onNeedsVerification: (email: string) => void }) {
+function AuthSection({
+  onNeedsVerification,
+  onForgotPassword,
+  successMessage,
+}: {
+  onNeedsVerification: (email: string) => void;
+  onForgotPassword: () => void;
+  successMessage?: string;
+}) {
   const [tab, setTab] = useState<"login" | "register">("login");
   // NEW: expression-of-interest — read once on mount for context banner
   const pendingAction = getPendingAction();
@@ -283,6 +306,15 @@ function AuthSection({ onNeedsVerification }: { onNeedsVerification: (email: str
         </div>
       )}
 
+      {successMessage && (
+        <div className="mb-5 rounded-xl border border-green-200 bg-green-50 dark:border-green-800/50 dark:bg-green-950/30 px-4 py-3.5">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
+            <p className="text-sm text-green-800 dark:text-green-200">{successMessage}</p>
+          </div>
+        </div>
+      )}
+
       <div className="text-center mb-6">
         <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-3">
           <Briefcase className="h-7 w-7 text-primary" />
@@ -297,12 +329,190 @@ function AuthSection({ onNeedsVerification }: { onNeedsVerification: (email: str
           <TabsTrigger value="register" className="flex-1">Create Account</TabsTrigger>
         </TabsList>
         <TabsContent value="login">
-          <LoginForm onNeedsVerification={onNeedsVerification} />
+          <LoginForm onNeedsVerification={onNeedsVerification} onForgotPassword={onForgotPassword} />
         </TabsContent>
         <TabsContent value="register">
           <RegisterForm onNeedsVerification={onNeedsVerification} />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ─── Forgot Password Form ─────────────────────────────────────────────────────
+
+function ForgotPasswordForm({
+  onCodeSent,
+  onBack,
+}: {
+  onCodeSent: (email: string) => void;
+  onBack: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/jobseeker/forgot-password", { email }),
+    onSuccess: () => onCodeSent(email),
+    onError: (err: any) => setError(err.message),
+  });
+
+  return (
+    <div className="max-w-sm mx-auto mt-8">
+      <div className="text-center mb-6">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-3">
+          <KeyRound className="h-7 w-7 text-primary" />
+        </div>
+        <h2 className="text-xl font-bold">Forgot password?</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Enter your email and we'll send a reset code.
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label>Email address</Label>
+          <Input
+            type="email"
+            placeholder="you@email.com"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); setError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && email && mutation.mutate()}
+          />
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <Button
+          className="w-full"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending || !email}
+        >
+          {mutation.isPending ? "Sending code…" : "Send reset code"}
+        </Button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="w-full text-sm text-muted-foreground hover:text-foreground text-center"
+        >
+          ← Back to sign in
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Reset Password Form ──────────────────────────────────────────────────────
+
+function ResetPasswordForm({
+  email,
+  onReset,
+  onBack,
+}: {
+  email: string;
+  onReset: () => void;
+  onBack: () => void;
+}) {
+  const [form, setForm] = useState({ token: "", newPassword: "", confirm: "" });
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+
+  const passwordMismatch = form.confirm.length > 0 && form.newPassword !== form.confirm;
+  const passwordTooShort = form.newPassword.length > 0 && form.newPassword.length < 8;
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (form.newPassword !== form.confirm) throw new Error("Passwords do not match.");
+      return apiRequest("POST", "/api/jobseeker/reset-password", {
+        email,
+        token: form.token,
+        newPassword: form.newPassword,
+      });
+    },
+    onSuccess: () => onReset(),
+    onError: (err: any) => setError(err.message),
+  });
+
+  const canSubmit =
+    form.token.length === 6 &&
+    form.newPassword.length >= 8 &&
+    form.newPassword === form.confirm &&
+    !mutation.isPending;
+
+  return (
+    <div className="max-w-sm mx-auto mt-8">
+      <div className="text-center mb-6">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-3">
+          <MailCheck className="h-7 w-7 text-primary" />
+        </div>
+        <h2 className="text-xl font-bold">Set new password</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          We sent a 6-digit code to <span className="font-medium text-foreground">{email}</span>
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label>Reset code</Label>
+          <Input
+            type="text"
+            inputMode="numeric"
+            placeholder="123456"
+            maxLength={6}
+            className="text-center text-2xl font-bold tracking-widest"
+            value={form.token}
+            onChange={(e) => { setForm((f) => ({ ...f, token: e.target.value.replace(/\D/g, "").slice(0, 6) })); setError(""); }}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>New password</Label>
+          <div className="relative">
+            <Input
+              type={showPassword ? "text" : "password"}
+              placeholder="At least 8 characters"
+              value={form.newPassword}
+              onChange={(e) => { setForm((f) => ({ ...f, newPassword: e.target.value })); setError(""); }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {passwordTooShort && (
+            <p className="text-xs text-destructive">Password must be at least 8 characters.</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label>Confirm new password</Label>
+          <Input
+            type="password"
+            placeholder="Repeat new password"
+            value={form.confirm}
+            onChange={(e) => { setForm((f) => ({ ...f, confirm: e.target.value })); setError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && canSubmit && mutation.mutate()}
+          />
+          {passwordMismatch && (
+            <p className="text-xs text-destructive">Passwords do not match.</p>
+          )}
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <Button className="w-full" onClick={() => mutation.mutate()} disabled={!canSubmit}>
+          {mutation.isPending ? "Updating password…" : "Set new password"}
+        </Button>
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="w-full text-sm text-muted-foreground hover:text-foreground text-center"
+        >
+          ← Request a new code
+        </button>
+      </div>
     </div>
   );
 }
@@ -905,8 +1115,10 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
 // ─── Page root ────────────────────────────────────────────────────────────────
 
 type PageState =
-  | { view: "auth" }
+  | { view: "auth"; successMessage?: string }
   | { view: "verify"; email: string }
+  | { view: "forgot-password" }
+  | { view: "reset-password"; email: string }
   | { view: "dashboard" };
 
 export default function JobSeekerPage() {
@@ -942,6 +1154,10 @@ export default function JobSeekerPage() {
     ? "dashboard"
     : pageState.view === "verify"
     ? "verify"
+    : pageState.view === "forgot-password"
+    ? "forgot-password"
+    : pageState.view === "reset-password"
+    ? "reset-password"
     : "auth";
 
   return (
@@ -987,9 +1203,27 @@ export default function JobSeekerPage() {
               // effectiveView → "dashboard" in the same render cycle.
             }}
           />
+        ) : effectiveView === "forgot-password" ? (
+          <ForgotPasswordForm
+            onCodeSent={(email) => setPageState({ view: "reset-password", email })}
+            onBack={() => setPageState({ view: "auth" })}
+          />
+        ) : effectiveView === "reset-password" && pageState.view === "reset-password" ? (
+          <ResetPasswordForm
+            email={pageState.email}
+            onReset={() =>
+              setPageState({
+                view: "auth",
+                successMessage: "Password updated! You can now sign in with your new password.",
+              })
+            }
+            onBack={() => setPageState({ view: "forgot-password" })}
+          />
         ) : (
           <AuthSection
             onNeedsVerification={(email) => setPageState({ view: "verify", email })}
+            onForgotPassword={() => setPageState({ view: "forgot-password" })}
+            successMessage={pageState.view === "auth" ? pageState.successMessage : undefined}
           />
         )}
       </div>

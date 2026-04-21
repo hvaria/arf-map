@@ -1,4 +1,5 @@
-import { comparePassword } from "../auth";
+import { comparePassword, hashPassword } from "../auth";
+import { randomInt } from "crypto";
 import type { JobSeekerRepository } from "../repositories/jobSeekerRepository";
 
 /** Maximum consecutive failures before we signal a locked account. */
@@ -12,6 +13,10 @@ export interface JobSeekerPublicProfile {
 export type LoginResult =
   | { ok: true; account: JobSeekerPublicProfile }
   | { ok: false; code: "INVALID_CREDENTIALS" | "EMAIL_NOT_VERIFIED" | "ACCOUNT_LOCKED" };
+
+export type PasswordResetResult =
+  | { ok: true; accountId: number }
+  | { ok: false; code: "INVALID_OR_EXPIRED" };
 
 /**
  * AuthService — pure business logic for job seeker authentication.
@@ -101,5 +106,52 @@ export class AuthService {
     const account = await this.repo.findById(id);
     if (!account) return null;
     return { id: account.id, email: account.email };
+  }
+
+  /**
+   * Begins a password reset flow for a job seeker.
+   * Returns the generated token and email so the caller can send the reset email,
+   * or null if the email is unknown / unverified (silent to prevent enumeration).
+   */
+  async initiatePasswordReset(
+    email: string,
+  ): Promise<{ token: string; email: string } | null> {
+    const account = await this.repo.findByEmail(email);
+    // Silent no-op for unknown or unverified accounts — prevents email enumeration.
+    if (!account || !account.emailVerified) return null;
+
+    const token = String(randomInt(100000, 999999));
+    const expiry = Date.now() + 15 * 60 * 1000;
+    await this.repo.savePasswordResetToken(account.id, token, expiry);
+    return { token, email: account.email };
+  }
+
+  /**
+   * Completes a password reset by validating the OTP, updating the password,
+   * clearing the token, and resetting any account lockout.
+   */
+  async completePasswordReset(
+    email: string,
+    token: string,
+    newPassword: string,
+  ): Promise<PasswordResetResult> {
+    const account = await this.repo.findByEmail(email);
+    if (!account) return { ok: false, code: "INVALID_OR_EXPIRED" };
+
+    if (!account.verificationToken || account.verificationToken !== token) {
+      return { ok: false, code: "INVALID_OR_EXPIRED" };
+    }
+    if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {
+      return { ok: false, code: "INVALID_OR_EXPIRED" };
+    }
+
+    const hashed = await hashPassword(newPassword);
+    await Promise.all([
+      this.repo.updatePassword(account.id, hashed),
+      this.repo.clearPasswordResetToken(account.id),
+      this.repo.resetFailedLoginCount(account.id),
+    ]);
+
+    return { ok: true, accountId: account.id };
   }
 }

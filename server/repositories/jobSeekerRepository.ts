@@ -21,6 +21,10 @@ export interface JobSeekerAccount {
   failedLoginCount: number;
   lastLoginAt: number | null;
   createdAt: number;
+  /** Reused for password-reset OTP token */
+  verificationToken: string | null;
+  /** Unix ms expiry for the token above */
+  verificationExpiry: number | null;
 }
 
 export interface LoginAttemptEntry {
@@ -48,4 +52,13 @@ export interface JobSeekerRepository {
 
   /** Write an audit entry for each login attempt (success or failure). */
   logLoginAttempt(entry: LoginAttemptEntry): Promise<void>;
+
+  /** Store a password-reset OTP and its expiry timestamp. */
+  savePasswordResetToken(id: number, token: string, expiry: number): Promise<void>;
+
+  /** Null out the reset token and expiry after use (or cancellation). */
+  clearPasswordResetToken(id: number): Promise<void>;
+
+  /** Overwrite the stored password hash. */
+  updatePassword(id: number, hashedPassword: string): Promise<void>;
 }
