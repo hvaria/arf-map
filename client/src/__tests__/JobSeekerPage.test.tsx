@@ -27,7 +27,7 @@ vi.mock("../lib/queryClient", async (importOriginal) => {
     apiRequest: vi.fn(),
     // Override getQueryFn to control what /api/jobseeker/me returns
     getQueryFn: vi.fn(({ on401 }: { on401: string }) =>
-      async ({ queryKey }: { queryKey: string[] }) => {
+      async ({ queryKey }: { queryKey: readonly unknown[] }) => {
         const url = queryKey.join("/");
         if (url === "/api/jobseeker/me") return null; // not logged in by default
         if (url === "/api/jobseeker/profile") return null; // no profile by default
@@ -109,7 +109,7 @@ describe("JobSeekerPage — auth flow", () => {
     // Override getQueryFn: /me returns null at first (pre-verification)
     // After setQueryData from onSuccess, the cache will have the account
     vi.mocked(getQueryFn).mockImplementation(({ on401 }: { on401: string }) =>
-      async ({ queryKey }: { queryKey: string[] }) => {
+      async ({ queryKey }: { queryKey: readonly unknown[] }) => {
         const url = queryKey.join("/");
         if (url === "/api/jobseeker/profile") return null;
         if (url === "/api/jobs") return [];
@@ -162,7 +162,7 @@ describe("Dashboard — profile behaviour", () => {
 
     // User is authenticated; profile is null (first-time user)
     vi.mocked(getQueryFn).mockImplementation(({ on401 }: { on401: string }) =>
-      async ({ queryKey }: { queryKey: string[] }) => {
+      async ({ queryKey }: { queryKey: readonly unknown[] }) => {
         const url = queryKey.join("/");
         if (url === "/api/jobseeker/me") return { id: 1, email: "user@test.com" };
         if (url === "/api/jobseeker/profile") return null; // no profile
@@ -186,7 +186,7 @@ describe("Dashboard — profile behaviour", () => {
     const { getQueryFn } = await import("../lib/queryClient");
 
     vi.mocked(getQueryFn).mockImplementation(() =>
-      async ({ queryKey }: { queryKey: string[] }) => {
+      async ({ queryKey }: { queryKey: readonly unknown[] }) => {
         const url = queryKey.join("/");
         if (url === "/api/jobseeker/me") return { id: 1, email: "user@test.com" };
         if (url === "/api/jobseeker/profile") return null;
@@ -207,7 +207,7 @@ describe("Dashboard — profile behaviour", () => {
     const { getQueryFn } = await import("../lib/queryClient");
 
     vi.mocked(getQueryFn).mockImplementation(() =>
-      async ({ queryKey }: { queryKey: string[] }) => {
+      async ({ queryKey }: { queryKey: readonly unknown[] }) => {
         const url = queryKey.join("/");
         if (url === "/api/jobseeker/me") return { id: 1, email: "user@test.com" };
         if (url === "/api/jobseeker/profile") return {
@@ -246,7 +246,7 @@ describe("Dashboard — profile behaviour", () => {
     const { getQueryFn, apiRequest } = await import("../lib/queryClient");
 
     vi.mocked(getQueryFn).mockImplementation(() =>
-      async ({ queryKey }: { queryKey: string[] }) => {
+      async ({ queryKey }: { queryKey: readonly unknown[] }) => {
         const url = queryKey.join("/");
         if (url === "/api/jobseeker/me") return { id: 1, email: "user@test.com" };
         if (url === "/api/jobseeker/profile") return null;
