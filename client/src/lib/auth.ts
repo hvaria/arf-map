@@ -46,7 +46,10 @@ export async function loginJobSeeker(
 ): Promise<JobSeekerProfile> {
   const res = await fetch("/api/jobseeker/login", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+    },
     credentials: "include",
     body: JSON.stringify(credentials),
   });
@@ -57,6 +60,7 @@ export async function loginJobSeeker(
 export async function logoutJobSeeker(): Promise<void> {
   const res = await fetch("/api/jobseeker/logout", {
     method: "POST",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
     credentials: "include",
   });
   await handleResponse<{ ok: boolean }>(res);
