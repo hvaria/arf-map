@@ -5,6 +5,7 @@ import { SqliteJobSeekerRepository } from "../repositories/sqlite/sqliteJobSeeke
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
 import { sendPasswordResetEmail } from "../email";
 import { sqlite } from "../db/index";
+import { authRateLimiter } from "../middleware/rateLimiter";
 
 // ── Dependency wiring ────────────────────────────────────────────────────────
 // To replace SQLite with Postgres or an external IdP, swap the repository or
@@ -81,15 +82,20 @@ jobseekerAuthRouter.post("/login", async (req, res, next) => {
       });
     }
 
-    // Extend session lifetime when "Remember me" is checked.
-    if (rememberMe) {
-      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
-    }
+    // S-04: regenerate session before assigning jobSeekerId to prevent session fixation
+    req.session.regenerate((regErr) => {
+      if (regErr) return next(regErr);
 
-    req.session.jobSeekerId = result.account.id;
-    req.session.save((saveErr) => {
-      if (saveErr) return next(saveErr);
-      return res.json(result.account);
+      // Extend session lifetime when "Remember me" is checked (applied after regenerate).
+      if (rememberMe) {
+        req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+      }
+
+      req.session.jobSeekerId = result.account.id;
+      req.session.save((saveErr) => {
+        if (saveErr) return next(saveErr);
+        return res.json(result.account);
+      });
     });
   } catch (err) {
     next(err);
@@ -160,8 +166,11 @@ jobseekerAuthRouter.get("/dashboard", requireJobSeekerAuth, async (req, res, nex
  *
  * Initiates a password reset.  Always returns { emailSent: true } regardless
  * of whether the email exists — prevents account enumeration.
+ *
+ * S-03: rate-limited to 5 requests per 15 minutes per IP.
  */
-jobseekerAuthRouter.post("/forgot-password", async (req, res, next) => {
+jobseekerAuthRouter.post("/forgot-password", authRateLimiter, async (req, res, next) => {
+  res.set("Cache-Control", "no-store"); // S-06
   try {
     const parsed = forgotPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -182,10 +191,14 @@ jobseekerAuthRouter.post("/forgot-password", async (req, res, next) => {
 /**
  * POST /api/jobseeker/reset-password
  *
- * Validates the reset OTP, updates the password, clears any account lockout,
- * and invalidates all existing sessions for the account.
+ * Validates the reset OTP, updates the password, and invalidates all existing
+ * sessions for the account.  NOTE: intentionally does NOT clear the lockout
+ * counter (failedLoginCount) so a locked account stays locked after reset.
+ *
+ * S-03: rate-limited to 5 requests per 15 minutes per IP.
  */
-jobseekerAuthRouter.post("/reset-password", async (req, res, next) => {
+jobseekerAuthRouter.post("/reset-password", authRateLimiter, async (req, res, next) => {
+  res.set("Cache-Control", "no-store"); // S-06
   try {
     const parsed = resetPasswordSchema.safeParse(req.body);
     if (!parsed.success) {

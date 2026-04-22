@@ -414,6 +414,8 @@ function ResetPasswordForm({
   const [form, setForm] = useState({ token: "", newPassword: "", confirm: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  // UI-02: clear auth state after reset so any stale session is evicted immediately
+  const { setUser } = useAuth();
 
   const passwordMismatch = form.confirm.length > 0 && form.newPassword !== form.confirm;
   const passwordTooShort = form.newPassword.length > 0 && form.newPassword.length < 8;
@@ -427,7 +429,12 @@ function ResetPasswordForm({
         newPassword: form.newPassword,
       });
     },
-    onSuccess: () => onReset(),
+    onSuccess: () => {
+      // UI-02: clear any stale auth state — server invalidated all sessions
+      // for this account, so the frontend must reflect that promptly.
+      setUser(undefined);
+      onReset();
+    },
     onError: (err: any) => setError(err.message),
   });
 

@@ -92,7 +92,7 @@ function LoginForm({
   onNeedsVerification,
   onForgotPassword,
 }: {
-  onSuccess: () => void;
+  onSuccess: (user: SessionUser) => void;
   onNeedsVerification: (email: string) => void;
   onForgotPassword: () => void;
 }) {
@@ -101,10 +101,14 @@ function LoginForm({
 
   const mutation = useMutation({
     mutationFn: async (data: LoginForm) => {
+      // S-01: include CSRF sentinel header (same as apiRequest in queryClient.ts)
       const res = await fetch("/api/facility/login", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
         body: JSON.stringify(data),
       });
       const body = await res.json();
@@ -114,15 +118,25 @@ function LoginForm({
         err.email = body.email;
         throw err;
       }
-      return body;
+      return body as SessionUser;
     },
-    onSuccess: () => {
-      onSuccess();
+    // UI-01: use setQueryData (sync) instead of invalidateQueries (async) to
+    // eliminate the flash of the login form after a successful login.
+    onSuccess: (data) => {
+      onSuccess(data);
       toast({ title: "Logged in successfully" });
     },
     onError: (err: any) => {
       if (err.code === "EMAIL_NOT_VERIFIED") {
         onNeedsVerification(err.email ?? "");
+        return;
+      }
+      if (err.code === "ACCOUNT_LOCKED") {
+        toast({
+          title: "Account locked",
+          description: err.message,
+          variant: "destructive",
+        });
         return;
       }
       toast({ title: "Login failed", description: err.message, variant: "destructive" });
@@ -345,8 +359,13 @@ function VerifyEmailScreen({
       const res = await apiRequest("POST", "/api/facility/verify-email", { email, otp });
       return res.json() as Promise<{ ok: boolean; id: number; facilityNumber: string; username: string }>;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
+    // UI-01: set auth state synchronously so the dashboard renders immediately
+    onSuccess: (data) => {
+      qc.setQueryData(["/api/facility/me"], {
+        id: data.id,
+        facilityNumber: data.facilityNumber,
+        username: data.username,
+      });
       toast({ title: "Email verified! Welcome to the Facility Portal." });
       onVerified();
     },
@@ -972,8 +991,10 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
 
   const logoutMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/facility/logout"),
+    // UI-05: clear auth cache synchronously so the UI transitions to the login
+    // form immediately — no async refetch race condition.
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
+      qc.setQueryData(["/api/facility/me"], null);
       onLogout();
       toast({ title: "Logged out" });
     },
@@ -1147,15 +1168,25 @@ export default function FacilityPortal() {
   const [pendingVerification, setPendingVerification] = useState<string | null>(null);
   const [forgotPasswordState, setForgotPasswordState] = useState<ForgotPasswordState>(null);
 
+  // CS-06 / UI-04: short staleTime + refetchOnWindowFocus so the auth state
+  // is re-validated when the user returns to this tab, catching background
+  // session invalidations (logout on another tab, server-side purge).
   const { data: me, isLoading } = useQuery<SessionUser | null>({
     queryKey: ["/api/facility/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000, // 5 minutes (not Infinity)
+    refetchOnWindowFocus: true,
   });
 
-  const handleAuthSuccess = () => {
+  // UI-01: accept user data from login/verify so we can set it synchronously.
+  const handleAuthSuccess = (user?: SessionUser) => {
     setPendingVerification(null);
     setForgotPasswordState(null);
-    qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
+    if (user) {
+      qc.setQueryData(["/api/facility/me"], user);
+    } else {
+      qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
+    }
   };
 
   const handleLogout = () => {
@@ -1198,7 +1229,7 @@ export default function FacilityPortal() {
                 {pendingVerification ? (
                   <VerifyEmailScreen
                     email={pendingVerification}
-                    onVerified={handleAuthSuccess}
+                    onVerified={() => handleAuthSuccess()}
                     onBack={() => setPendingVerification(null)}
                   />
                 ) : forgotPasswordState?.step === "reset" ? (
@@ -1206,6 +1237,9 @@ export default function FacilityPortal() {
                     email={forgotPasswordState.email}
                     onReset={() => {
                       setForgotPasswordState(null);
+                      // UI-02: clear any stale auth cache — server invalidated all
+                      // sessions for this account, so the frontend must reflect that.
+                      qc.setQueryData(["/api/facility/me"], null);
                       toast({ title: "Password updated!", description: "You can now log in with your new password." });
                     }}
                     onBack={() => setForgotPasswordState({ step: "request" })}
@@ -1223,7 +1257,7 @@ export default function FacilityPortal() {
                     </TabsList>
                     <TabsContent value="login">
                       <LoginForm
-                        onSuccess={handleAuthSuccess}
+                        onSuccess={(user) => handleAuthSuccess(user)}
                         onNeedsVerification={(email) => setPendingVerification(email)}
                         onForgotPassword={() => setForgotPasswordState({ step: "request" })}
                       />

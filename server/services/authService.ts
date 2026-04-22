@@ -1,6 +1,27 @@
 import { comparePassword, hashPassword } from "../auth";
-import { randomInt } from "crypto";
+import { randomInt, createHash, timingSafeEqual } from "crypto";
 import type { JobSeekerRepository } from "../repositories/jobSeekerRepository";
+
+// ── Token helpers ─────────────────────────────────────────────────────────────
+// S-02: OTP tokens are hashed with SHA-256 before being stored in the database.
+// The raw token is sent to the user via email; only the hash is persisted.
+// This means a database read cannot reveal a usable reset code.
+
+function hashToken(raw: string): string {
+  return createHash("sha256").update(raw).digest("hex");
+}
+
+/**
+ * Constant-time comparison of a raw user-supplied token against a stored SHA-256 hex hash.
+ * Returns false if the stored value is not a valid 64-char hex string (e.g. legacy plain-text).
+ */
+function safeCompareToken(storedHash: string, rawToken: string): boolean {
+  if (storedHash.length !== 64) return false; // not a SHA-256 hex hash — reject
+  const stored = Buffer.from(storedHash, "hex");
+  const provided = Buffer.from(hashToken(rawToken), "hex");
+  if (stored.length !== provided.length) return false;
+  return timingSafeEqual(stored, provided);
+}
 
 /** Maximum consecutive failures before we signal a locked account. */
 const MAX_FAILED_ATTEMPTS = 10;
@@ -122,7 +143,8 @@ export class AuthService {
 
     const token = String(randomInt(100000, 999999));
     const expiry = Date.now() + 15 * 60 * 1000;
-    await this.repo.savePasswordResetToken(account.id, token, expiry);
+    // S-02: store hash, send raw token via email
+    await this.repo.savePasswordResetToken(account.id, hashToken(token), expiry);
     return { token, email: account.email };
   }
 
@@ -138,7 +160,8 @@ export class AuthService {
     const account = await this.repo.findByEmail(email);
     if (!account) return { ok: false, code: "INVALID_OR_EXPIRED" };
 
-    if (!account.verificationToken || account.verificationToken !== token) {
+    // S-02: constant-time hash comparison (reject plain-text legacy tokens automatically)
+    if (!account.verificationToken || !safeCompareToken(account.verificationToken, token)) {
       return { ok: false, code: "INVALID_OR_EXPIRED" };
     }
     if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {

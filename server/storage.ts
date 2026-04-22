@@ -192,6 +192,8 @@ addColumnIfMissing("facility_accounts", "email", "TEXT");
 addColumnIfMissing("facility_accounts", "email_verified", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("facility_accounts", "verification_token", "TEXT");
 addColumnIfMissing("facility_accounts", "verification_expiry", "INTEGER");
+// F-01: account lockout parity with job-seeker portal
+addColumnIfMissing("facility_accounts", "failed_login_count", "INTEGER NOT NULL DEFAULT 0");
 
 // Enrichment run audit log — one row per background enrichment pass
 sqlite.exec(`
@@ -217,7 +219,7 @@ export interface IStorage {
   getFacilityAccountByNumber(facilityNumber: string): Promise<FacilityAccount | undefined>;
   getFacilityAccountByEmail(email: string): Promise<FacilityAccount | undefined>;
   createFacilityAccount(account: InsertFacilityAccount): Promise<FacilityAccount>;
-  updateFacilityAccount(id: number, updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "password">>): Promise<void>;
+  updateFacilityAccount(id: number, updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "password" | "failedLoginCount">>): Promise<void>;
 
   getFacilityOverride(facilityNumber: string): Promise<FacilityOverride | undefined>;
   upsertFacilityOverride(
@@ -305,7 +307,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateFacilityAccount(
     id: number,
-    updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "password">>
+    updates: Partial<Pick<FacilityAccount, "emailVerified" | "verificationToken" | "verificationExpiry" | "password" | "failedLoginCount">>
   ): Promise<void> {
     await db.update(facilityAccounts).set(updates).where(eq(facilityAccounts.id, id)).run();
   }

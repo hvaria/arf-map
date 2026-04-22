@@ -62,6 +62,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
   }, []);
 
+  // CS-06: re-validate session when the tab becomes visible again so a
+  // background session invalidation (logout on another tab, password reset,
+  // server-side session purge) is reflected promptly without a page reload.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        getCurrentJobSeeker()
+          .then((profile) => {
+            setState({ user: profile ?? undefined, isLoading: false });
+            queryClient.setQueryData(["/api/jobseeker/me"], profile ?? null);
+          })
+          .catch(() => {
+            setState({ user: undefined, isLoading: false });
+            queryClient.setQueryData(["/api/jobseeker/me"], null);
+          });
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
   const setUser = useCallback((profile: JobSeekerProfile | undefined) => {
     setState({ user: profile, isLoading: false });
     queryClient.setQueryData(["/api/jobseeker/me"], profile ?? null);

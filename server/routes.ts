@@ -2,8 +2,9 @@ import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import passport from "passport";
 import { z } from "zod";
-import { randomInt } from "crypto";
+import { randomInt, createHash, timingSafeEqual } from "crypto";
 import { storage } from "./storage";
+import { authRateLimiter } from "./middleware/rateLimiter";
 import { hashPassword } from "./auth";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
 import { sqlite } from "./db/index";
@@ -25,6 +26,19 @@ import {
 } from "./storage";
 
 const facilityOtpStore = new Map<string, { otp: string; expiry: number }>();
+
+// ── S-02: Token hashing helpers ───────────────────────────────────────────────
+// OTP tokens stored in the DB are SHA-256 hashes; raw tokens are sent via email.
+function hashOtp(raw: string): string {
+  return createHash("sha256").update(raw).digest("hex");
+}
+function safeCompareOtp(storedHash: string, rawToken: string): boolean {
+  if (storedHash.length !== 64) return false; // legacy plain-text token — reject
+  const stored = Buffer.from(storedHash, "hex");
+  const provided = Buffer.from(hashOtp(rawToken), "hex");
+  if (stored.length !== provided.length) return false;
+  return timingSafeEqual(stored, provided);
+}
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
@@ -354,7 +368,7 @@ export async function registerRoutes(server: Server, app: Express) {
         const expiry = Date.now() + 15 * 60 * 1000;
         await storage.updateFacilityAccount(existingByNumber.id, {
           password: hashed,
-          verificationToken: otp,
+          verificationToken: hashOtp(otp), // S-02: store hash, send raw
           verificationExpiry: expiry,
         });
         await sendVerificationEmail(existingByNumber.email!, otp);
@@ -378,7 +392,7 @@ export async function registerRoutes(server: Server, app: Express) {
       email,
       password: hashed,
       emailVerified: 0,
-      verificationToken: otp,
+      verificationToken: hashOtp(otp), // S-02: store hash, send raw
       verificationExpiry: expiry,
       createdAt: Date.now(),
     });
@@ -397,7 +411,8 @@ export async function registerRoutes(server: Server, app: Express) {
     const account = await storage.getFacilityAccountByEmail(email);
     if (!account) return res.status(404).json({ message: "Account not found" });
     if (account.emailVerified) return res.status(400).json({ message: "Email already verified" });
-    if (!account.verificationToken || account.verificationToken !== otp) {
+    // S-02: constant-time hash comparison
+    if (!account.verificationToken || !safeCompareOtp(account.verificationToken, otp)) {
       return res.status(400).json({ message: "Invalid verification code" });
     }
     if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {
@@ -410,9 +425,13 @@ export async function registerRoutes(server: Server, app: Express) {
       verificationExpiry: null,
     });
 
-    req.login(account, (err) => {
-      if (err) return next(err);
-      res.json({ ok: true, id: account.id, facilityNumber: account.facilityNumber, username: account.username });
+    // S-04: regenerate session before login to prevent session fixation
+    req.session.regenerate((regErr) => {
+      if (regErr) return next(regErr);
+      req.login(account, (err) => {
+        if (err) return next(err);
+        res.json({ ok: true, id: account.id, facilityNumber: account.facilityNumber, username: account.username });
+      });
     });
   });
 
@@ -428,7 +447,7 @@ export async function registerRoutes(server: Server, app: Express) {
     const otp = generateOTP();
     const expiry = Date.now() + 15 * 60 * 1000;
     await storage.updateFacilityAccount(account.id, {
-      verificationToken: otp,
+      verificationToken: hashOtp(otp), // S-02: store hash, send raw
       verificationExpiry: expiry,
     });
     await sendVerificationEmail(email, otp);
@@ -436,6 +455,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.post("/api/facility/login", async (req, res, next) => {
+    res.set("Cache-Control", "no-store"); // S-06
     passport.authenticate("local", async (err: any, user: Express.User | false, info: any) => {
       if (err) return next(err);
       if (!user) {
@@ -448,11 +468,21 @@ export async function registerRoutes(server: Server, app: Express) {
             email: account?.email ?? "",
           });
         }
+        if (info?.message === "ACCOUNT_LOCKED") {
+          return res.status(403).json({
+            message: "Your account has been temporarily locked due to too many failed login attempts. Please contact support.",
+            code: "ACCOUNT_LOCKED",
+          });
+        }
         return res.status(401).json({ message: info?.message || "Invalid credentials" });
       }
-      req.login(user, (loginErr) => {
-        if (loginErr) return next(loginErr);
-        res.json({ id: user.id, facilityNumber: user.facilityNumber, username: user.username });
+      // S-04: regenerate session before login to prevent session fixation
+      req.session.regenerate((regErr) => {
+        if (regErr) return next(regErr);
+        req.login(user, (loginErr) => {
+          if (loginErr) return next(loginErr);
+          res.json({ id: user.id, facilityNumber: user.facilityNumber, username: user.username });
+        });
       });
     })(req, res, next);
   });
@@ -460,12 +490,20 @@ export async function registerRoutes(server: Server, app: Express) {
   app.post("/api/facility/logout", (req, res, next) => {
     req.logout((err) => {
       if (err) return next(err);
-      res.json({ ok: true });
+      // S-09: destroy session and clear cookie (was missing clearCookie)
+      req.session.destroy((destroyErr) => {
+        if (destroyErr) console.error("[facility/logout] session destroy error:", destroyErr);
+        res.clearCookie("connect.sid");
+        res.set("Cache-Control", "no-store"); // S-06
+        res.json({ ok: true });
+      });
     });
   });
 
   // Initiate facility password reset — always returns { emailSent: true } to prevent enumeration
-  app.post("/api/facility/forgot-password", async (req, res, next) => {
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/facility/forgot-password", authRateLimiter, async (req, res, next) => {
+    res.set("Cache-Control", "no-store"); // S-06
     try {
       const parsed = facilityForgotPasswordSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -477,7 +515,7 @@ export async function registerRoutes(server: Server, app: Express) {
         const otp = generateOTP();
         const expiry = Date.now() + 15 * 60 * 1000;
         await storage.updateFacilityAccount(account.id, {
-          verificationToken: otp,
+          verificationToken: hashOtp(otp), // S-02: store hash, send raw
           verificationExpiry: expiry,
         });
         await sendPasswordResetEmail(parsed.data.email, otp);
@@ -490,7 +528,9 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Complete facility password reset — validates OTP, updates password, invalidates sessions
-  app.post("/api/facility/reset-password", async (req, res, next) => {
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/facility/reset-password", authRateLimiter, async (req, res, next) => {
+    res.set("Cache-Control", "no-store"); // S-06
     try {
       const parsed = facilityResetPasswordSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -502,7 +542,8 @@ export async function registerRoutes(server: Server, app: Express) {
 
       const invalidMsg = "Code is invalid or has already been used. Please request a new one.";
       if (!account) return res.status(400).json({ message: invalidMsg });
-      if (!account.verificationToken || account.verificationToken !== token) {
+      // S-02: constant-time hash comparison
+      if (!account.verificationToken || !safeCompareOtp(account.verificationToken, token)) {
         return res.status(400).json({ message: invalidMsg });
       }
       if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {
@@ -510,6 +551,7 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       const hashed = await hashPassword(newPassword);
+      // NOTE: intentionally do NOT reset failedLoginCount here so lockout persists after reset
       await storage.updateFacilityAccount(account.id, {
         password: hashed,
         verificationToken: null,
@@ -528,6 +570,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   app.get("/api/facility/me", (req, res) => {
+    res.set("Cache-Control", "no-store"); // S-06: don't cache auth state
     if (!req.isAuthenticated() || !req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -711,13 +754,20 @@ export async function registerRoutes(server: Server, app: Express) {
       verificationExpiry: null,
     });
 
-    req.session.jobSeekerId = account.id;
-    req.session.save((err) => {
-      if (err) {
-        console.error("Session save failed after OTP verification:", err);
+    // S-04: regenerate session before setting jobSeekerId to prevent session fixation
+    req.session.regenerate((regErr) => {
+      if (regErr) {
+        console.error("Session regeneration failed after OTP verification:", regErr);
         return res.status(500).json({ message: "Session creation failed. Please try logging in." });
       }
-      res.json({ ok: true, id: account.id, email: account.email });
+      req.session.jobSeekerId = account.id;
+      req.session.save((err) => {
+        if (err) {
+          console.error("Session save failed after OTP verification:", err);
+          return res.status(500).json({ message: "Session creation failed. Please try logging in." });
+        }
+        res.json({ ok: true, id: account.id, email: account.email });
+      });
     });
   });
 

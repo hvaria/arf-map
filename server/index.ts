@@ -14,6 +14,9 @@ import { getCachedFacilities } from "./services/facilitiesService";
 import { startEtlScheduler } from "./etlScheduler";
 import type { FacilityAccount } from "@shared/schema";
 
+/** Maximum consecutive failed logins before a facility account is locked. */
+const MAX_FACILITY_FAILED_ATTEMPTS = 10;
+
 declare global {
   namespace Express {
     interface User extends FacilityAccount {}
@@ -64,14 +67,50 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+// ── S-01: CSRF protection ─────────────────────────────────────────────────────
+// Require the custom X-Requested-With header on all state-changing API requests.
+// Browsers cannot send custom headers in cross-site form submissions, so this
+// stops CSRF attacks that rely on HTML forms or simple cross-origin fetches.
+// All frontend mutations flow through apiRequest() in queryClient.ts, which
+// sets this header automatically (including Capacitor native builds).
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const method = req.method.toUpperCase();
+  if (
+    ["POST", "PUT", "DELETE", "PATCH"].includes(method) &&
+    req.path.startsWith("/api/")
+  ) {
+    const xrw = req.headers["x-requested-with"];
+    if (!xrw || (xrw as string).toLowerCase() !== "xmlhttprequest") {
+      return res.status(403).json({ message: "CSRF validation failed." });
+    }
+  }
+  next();
+});
+
+// ── F-01: Facility account lockout — Passport LocalStrategy ───────────────────
 passport.use(
   new LocalStrategy(async (username, password, done) => {
     try {
       const account = await storage.getFacilityAccountByUsername(username);
       if (!account) return done(null, false, { message: "Invalid credentials" });
+
+      // Check lockout before password comparison (prevent timing oracle)
+      if ((account.failedLoginCount ?? 0) >= MAX_FACILITY_FAILED_ATTEMPTS) {
+        return done(null, false, { message: "ACCOUNT_LOCKED" });
+      }
+
       const valid = await comparePassword(password, account.password);
-      if (!valid) return done(null, false, { message: "Invalid credentials" });
+      if (!valid) {
+        await storage.updateFacilityAccount(account.id, {
+          failedLoginCount: (account.failedLoginCount ?? 0) + 1,
+        });
+        return done(null, false, { message: "Invalid credentials" });
+      }
+
       if (!account.emailVerified) return done(null, false, { message: "EMAIL_NOT_VERIFIED" });
+
+      // Successful login — reset failure counter
+      await storage.updateFacilityAccount(account.id, { failedLoginCount: 0 });
       return done(null, account);
     } catch (err) {
       return done(err);

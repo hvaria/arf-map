@@ -54,6 +54,8 @@ export const facilityAccounts = sqliteTable("facility_accounts", {
   verificationToken: text("verification_token"),
   verificationExpiry: integer("verification_expiry"),
   createdAt: integer("created_at").notNull(),
+  // F-01: account lockout parity with job-seeker portal
+  failedLoginCount: integer("failed_login_count").notNull().default(0),
 });
 
 export const facilityOverrides = sqliteTable("facility_overrides", {

@@ -18,10 +18,18 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  // S-01: include the CSRF sentinel header on all state-changing requests.
+  // The server middleware in index.ts rejects POST/PUT/DELETE/PATCH that
+  // lack this header, preventing cross-site form-submission attacks.
+  const headers: Record<string, string> = {
+    "X-Requested-With": "XMLHttpRequest",
+  };
+  if (data) headers["Content-Type"] = "application/json";
+
   const res = await fetch(`${API_BASE}${url}`, {
     method,
     credentials: "include",
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
   });
 
