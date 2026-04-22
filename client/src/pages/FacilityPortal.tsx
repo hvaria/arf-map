@@ -97,6 +97,7 @@ function LoginForm({
   onForgotPassword: () => void;
 }) {
   const { toast } = useToast();
+  const [showPassword, setShowPassword] = useState(false);
   const form = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
 
   const mutation = useMutation({
@@ -172,7 +173,18 @@ function LoginForm({
                   Forgot password?
                 </button>
               </div>
-              <FormControl><Input type="password" placeholder="••••••••" {...field} /></FormControl>
+              <FormControl>
+                <div className="relative">
+                  <Input type={showPassword ? "text" : "password"} placeholder="••••••••" {...field} />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}
@@ -198,6 +210,7 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   // Debounced facility search
   useEffect(() => {
@@ -320,12 +333,21 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
       {/* Password */}
       <div className="space-y-2">
         <Label>Password</Label>
-        <Input
-          type="password"
-          placeholder="At least 8 characters"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+        <div className="relative">
+          <Input
+            type={showPassword ? "text" : "password"}
+            placeholder="At least 8 characters"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
 
       <Button
