@@ -4,8 +4,9 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff, LayoutDashboard } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
+import OperationsTab from "@/components/OperationsTab";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1080,6 +1081,10 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             <Users className="h-4 w-4 mr-1.5" />
             Applicants
           </TabsTrigger>
+          <TabsTrigger value="operations" className="flex-1">
+            <LayoutDashboard className="h-4 w-4 mr-1.5" />
+            Operations
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="details" className="mt-6">
@@ -1156,6 +1161,10 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             Job seekers who expressed interest in your facility. Update their status as you review profiles.
           </p>
           <ApplicantsTab />
+        </TabsContent>
+
+        <TabsContent value="operations" className="mt-6">
+          <OperationsTab facilityNumber={user.facilityNumber} />
         </TabsContent>
       </Tabs>
 
