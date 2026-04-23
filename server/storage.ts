@@ -17,6 +17,7 @@ import {
   type JobSeekerProfile,
   type ApplicantInterest,
 } from "@shared/schema";
+import { OPS_SCHEMA_SQL } from "./ops/opsSchema";
 import { eq, and } from "drizzle-orm";
 import { sqlite, db } from "./db/index";
 
@@ -208,6 +209,9 @@ sqlite.exec(`
     total_failed     INTEGER NOT NULL DEFAULT 0
   );
 `);
+
+// Facility Operations Module — all ops_ tables (idempotent, runs on every startup)
+sqlite.exec(OPS_SCHEMA_SQL);
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;

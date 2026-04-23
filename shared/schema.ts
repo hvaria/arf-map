@@ -201,3 +201,71 @@ export const facilitiesMetaSchema = z.object({
   lastUpdated: z.number().nullable(),
 });
 export type FacilitiesMeta = z.infer<typeof facilitiesMetaSchema>;
+
+// ============ OPS MODULE TABLES (re-exported from server/ops/opsSchema) ============
+// Drizzle table definitions and inferred types for all ops_ tables.
+// The SQL bootstrap lives in server/ops/opsSchema.ts (OPS_SCHEMA_SQL) and is
+// executed from server/storage.ts on startup.
+
+export {
+  // Table objects
+  opsResidents,
+  opsResidentAssessments,
+  opsCarePlans,
+  opsDailyTasks,
+  opsMedications,
+  opsMedPasses,
+  opsControlledSubCounts,
+  opsMedDestruction,
+  opsIncidents,
+  opsLeads,
+  opsTours,
+  opsAdmissions,
+  opsBillingCharges,
+  opsInvoices,
+  opsPayments,
+  opsStaff,
+  opsShifts,
+  opsFacilitySettings,
+  opsComplianceCalendar,
+  // Select types
+  type OpsResident,
+  type OpsResidentAssessment,
+  type OpsCarePlan,
+  type OpsDailyTask,
+  type OpsMedication,
+  type OpsMedPass,
+  type OpsControlledSubCount,
+  type OpsMedDestruction,
+  type OpsIncident,
+  type OpsLead,
+  type OpsTour,
+  type OpsAdmission,
+  type OpsBillingCharge,
+  type OpsInvoice,
+  type OpsPayment,
+  type OpsStaffMember,
+  type OpsShift,
+  type OpsFacilitySetting,
+  type OpsComplianceItem,
+  // Insert types
+  type InsertOpsResident,
+  type InsertOpsResidentAssessment,
+  type InsertOpsCarePlan,
+  type InsertOpsDailyTask,
+  type InsertOpsMedication,
+  type InsertOpsMedPass,
+  type InsertOpsControlledSubCount,
+  type InsertOpsMedDestruction,
+  type InsertOpsIncident,
+  type InsertOpsLead,
+  type InsertOpsTour,
+  type InsertOpsAdmission,
+  type InsertOpsBillingCharge,
+  type InsertOpsInvoice,
+  type InsertOpsPayment,
+  type InsertOpsStaffMember,
+  type InsertOpsShift,
+  type InsertOpsFacilitySetting,
+  type InsertOpsComplianceItem,
+} from "../server/ops/opsSchema";

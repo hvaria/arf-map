@@ -12,6 +12,7 @@ import { sqlite } from "./db/index";
 import { SqliteSessionStore } from "./session/sqliteSessionStore";
 import { getCachedFacilities } from "./services/facilitiesService";
 import { startEtlScheduler } from "./etlScheduler";
+import { opsRouter } from "./ops/opsRouter";
 import type { FacilityAccount } from "@shared/schema";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
@@ -172,6 +173,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Mount the Facility Operations Module router before existing routes
+  app.use("/api/ops", opsRouter);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
