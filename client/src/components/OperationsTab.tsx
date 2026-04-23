@@ -90,12 +90,16 @@ const MODULE_LINKS = [
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function OperationsTab({ facilityNumber }: { facilityNumber: string }) {
-  const { data, isLoading, error } = useQuery<DashboardData | null>({
+  // The ops API wraps responses as { success, data }. We unwrap here so the
+  // rest of the component works with the flat DashboardData object.
+  const { data: envelope, isLoading, error } = useQuery<{ success: boolean; data: DashboardData } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/dashboard`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
     staleTime: 60_000, // 1 minute
   });
+
+  const data: DashboardData | null = envelope?.data ?? null;
 
   const kpiCards: KpiCardProps[] = data
     ? [
@@ -173,7 +177,15 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       <div className="grid grid-cols-2 gap-3">
         {isLoading
           ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
-          : kpiCards.map((card) => <KpiCard key={card.label} {...card} />)}
+          : kpiCards.length > 0
+            ? kpiCards.map((card) => <KpiCard key={card.label} {...card} />)
+            : (
+              <div className="col-span-2 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                {!facilityNumber
+                  ? "Facility not found. Please log out and back in."
+                  : "Could not load operations data. Try refreshing the page."}
+              </div>
+            )}
       </div>
 
       {/* Module navigation */}
