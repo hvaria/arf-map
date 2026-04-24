@@ -320,6 +320,167 @@ function AddMedDialog({
   );
 }
 
+function CreateCarePlanDialog({
+  open,
+  onOpenChange,
+  residentId,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  residentId: string;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [form, setForm] = useState({ goal: "", intervention: "", frequency: "Daily", createdBy: "Staff" });
+  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const now = Date.now();
+      const res = await apiRequest("POST", `/api/ops/residents/${residentId}/care-plan`, {
+        ...form,
+        effectiveDate: now,
+        reviewDate: now + 90 * 86400000,
+        status: "draft",
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/care-plan`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/daily-tasks`] });
+      toast({ title: "Care plan created" });
+      onOpenChange(false);
+      setForm({ goal: "", intervention: "", frequency: "Daily", createdBy: "Staff" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Create Care Plan</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Goal</Label>
+            <Textarea value={form.goal} onChange={(e) => set("goal", e.target.value)} placeholder="e.g. Maintain ADL independence" rows={2} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Intervention</Label>
+            <Textarea value={form.intervention} onChange={(e) => set("intervention", e.target.value)} placeholder="e.g. Staff assist with morning care routine" rows={2} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Frequency</Label>
+            <Input value={form.frequency} onChange={(e) => set("frequency", e.target.value)} placeholder="e.g. Daily" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Created By</Label>
+            <Input value={form.createdBy} onChange={(e) => set("createdBy", e.target.value)} placeholder="Staff name" />
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.goal || !form.intervention}>
+              {mutation.isPending ? "Creating..." : "Create Care Plan"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReportIncidentInlineDialog({
+  open,
+  onOpenChange,
+  residentId,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  residentId: string;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const today = new Date().toISOString().split("T")[0];
+  const [form, setForm] = useState({ incidentType: "", incidentDate: today, description: "", immediateActionTaken: "", reportedBy: "Staff" });
+  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/ops/incidents`, {
+        ...form,
+        residentId: Number(residentId),
+        incidentDate: new Date(form.incidentDate).getTime(),
+        injuryInvolved: 0,
+        supervisorNotified: 0,
+        familyNotified: 0,
+        physicianNotified: 0,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/incidents`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`] });
+      toast({ title: "Incident reported" });
+      onOpenChange(false);
+      setForm({ incidentType: "", incidentDate: today, description: "", immediateActionTaken: "", reportedBy: "Staff" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Report Incident</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Incident Type</Label>
+            <Select value={form.incidentType} onValueChange={(v) => set("incidentType", v)}>
+              <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="fall">Fall</SelectItem>
+                <SelectItem value="medication_error">Medication Error</SelectItem>
+                <SelectItem value="injury">Injury</SelectItem>
+                <SelectItem value="behavioral">Behavioral</SelectItem>
+                <SelectItem value="elopement">Elopement</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Date</Label>
+            <Input type="date" value={form.incidentDate} onChange={(e) => set("incidentDate", e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Description</Label>
+            <Textarea value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Describe what happened" rows={3} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Immediate Action Taken</Label>
+            <Textarea value={form.immediateActionTaken} onChange={(e) => set("immediateActionTaken", e.target.value)} placeholder="Actions taken immediately after incident" rows={2} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Reported By</Label>
+            <Input value={form.reportedBy} onChange={(e) => set("reportedBy", e.target.value)} placeholder="Staff name" />
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.incidentType || !form.description}>
+              {mutation.isPending ? "Reporting..." : "Report Incident"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function ResidentProfileContent({
   facilityNumber,
   residentId,
@@ -333,6 +494,8 @@ export function ResidentProfileContent({
   const qc = useQueryClient();
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [addMedOpen, setAddMedOpen] = useState(false);
+  const [createCarePlanOpen, setCreateCarePlanOpen] = useState(false);
+  const [reportIncidentOpen, setReportIncidentOpen] = useState(false);
   const residentIdStr = String(residentId);
 
   const { data: residentEnvelope, isLoading } = useQuery<{ success: boolean; data: Resident } | null>({
@@ -548,8 +711,12 @@ export function ResidentProfileContent({
         {/* Care Plan Tab */}
         <TabsContent value="careplan" className="mt-4 space-y-4">
           {!carePlan ? (
-            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              No active care plan found.
+            <div className="rounded-lg border border-dashed p-8 text-center space-y-3">
+              <p className="text-sm text-muted-foreground">No active care plan found.</p>
+              <Button size="sm" onClick={() => setCreateCarePlanOpen(true)}>
+                <Plus className="h-4 w-4 mr-1.5" />
+                Create Care Plan
+              </Button>
             </div>
           ) : (
             <>
@@ -588,6 +755,13 @@ export function ResidentProfileContent({
               </div>
             </>
           )}
+
+          <CreateCarePlanDialog
+            open={createCarePlanOpen}
+            onOpenChange={setCreateCarePlanOpen}
+            residentId={residentIdStr}
+            facilityNumber={facilityNumber}
+          />
 
           <div>
             <h2 className="text-sm font-medium mb-3">Today's Tasks</h2>
@@ -685,7 +859,17 @@ export function ResidentProfileContent({
         <TabsContent value="incidents" className="mt-4 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium">Incident Reports</h2>
+            <Button size="sm" variant="outline" onClick={() => setReportIncidentOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Report Incident
+            </Button>
           </div>
+          <ReportIncidentInlineDialog
+            open={reportIncidentOpen}
+            onOpenChange={setReportIncidentOpen}
+            residentId={residentIdStr}
+            facilityNumber={facilityNumber}
+          />
           {incidents.length === 0 ? (
             <p className="text-sm text-muted-foreground">No incidents recorded.</p>
           ) : (

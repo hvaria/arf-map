@@ -407,6 +407,38 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/assessments", (req, res
   }
 });
 
+// POST /facilities/:facilityNumber/residents/:id/assessments
+opsRouter.post("/facilities/:facilityNumber/residents/:id/assessments", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const residentId = parseInt(req.params.id, 10);
+    if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const parsed = assessmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    }
+    const now = Date.now();
+    const assessment = ops.createAssessment({ ...parsed.data, residentId, facilityNumber, createdAt: now });
+    const user = req.user as { username?: string } | undefined;
+    const carePlan = ops.createCarePlan({
+      residentId, facilityNumber,
+      createdBy: user?.username ?? "system",
+      effectiveDate: now,
+      reviewDate: now + 90 * 86400000,
+      goal: `Maintain or improve ADL independence based on ${parsed.data.assessmentType} assessment`,
+      intervention: `Provide assistance per assessed needs. Fall risk: ${parsed.data.fallRiskLevel ?? "unspecified"}. Cognition score: ${parsed.data.cognitionScore ?? "N/A"}.`,
+      frequency: "Daily",
+      status: "draft",
+      createdAt: now,
+      updatedAt: now,
+    });
+    ops.createDailyTasksFromCarePlan(carePlan.id, residentId, facilityNumber);
+    res.status(201).json({ success: true, data: { assessment, carePlan } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
 // GET /facilities/:facilityNumber/residents/:id/care-plan
 opsRouter.get("/facilities/:facilityNumber/residents/:id/care-plan", (req, res) => {
   try {
@@ -445,6 +477,24 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", (req, res
     const status = req.query.status ? String(req.query.status) : undefined;
     const meds = ops.listMedications(residentId, facilityNumber, status);
     res.json({ success: true, data: meds });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// POST /facilities/:facilityNumber/residents/:id/medications
+opsRouter.post("/facilities/:facilityNumber/residents/:id/medications", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const residentId = parseInt(req.params.id, 10);
+    if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const parsed = medicationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    }
+    const now = Date.now();
+    const med = ops.createMedication({ ...parsed.data, residentId, facilityNumber, createdAt: now, updatedAt: now });
+    res.status(201).json({ success: true, data: med });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }

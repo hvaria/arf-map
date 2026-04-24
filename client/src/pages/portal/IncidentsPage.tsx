@@ -130,8 +130,12 @@ function ReportIncidentDialog({
         ...form,
         residentId: form.residentId && form.residentId !== "none" ? Number(form.residentId) : null,
         incidentDate: form.incidentDate ? new Date(form.incidentDate).getTime() : Date.now(),
+        injuryInvolved: form.injuryInvolved ? 1 : 0,
+        supervisorNotified: form.supervisorNotified ? 1 : 0,
         supervisorNotifiedAt: form.supervisorNotifiedAt ? new Date(form.supervisorNotifiedAt).getTime() : null,
+        familyNotified: form.familyNotified ? 1 : 0,
         familyNotifiedAt: form.familyNotifiedAt ? new Date(form.familyNotifiedAt).getTime() : null,
+        physicianNotified: form.physicianNotified ? 1 : 0,
         physicianNotifiedAt: form.physicianNotifiedAt ? new Date(form.physicianNotifiedAt).getTime() : null,
       };
       const res = await apiRequest("POST", `/api/ops/incidents`, body);
