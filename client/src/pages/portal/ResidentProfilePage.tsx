@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useParams } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
@@ -12,10 +12,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Pencil, Plus, Check, X } from "lucide-react";
-import { Link } from "wouter";
 
 interface SessionUser {
   id: number;
@@ -322,75 +320,75 @@ function AddMedDialog({
   );
 }
 
-export default function ResidentProfilePage() {
-  const params = useParams<{ id: string }>();
-  const residentId = params.id;
-  const [, navigate] = useLocation();
+export function ResidentProfileContent({
+  facilityNumber,
+  residentId,
+  onBack,
+}: {
+  facilityNumber: string;
+  residentId: number;
+  onBack?: () => void;
+}) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [addMedOpen, setAddMedOpen] = useState(false);
+  const residentIdStr = String(residentId);
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
+  const { data: residentEnvelope, isLoading } = useQuery<{ success: boolean; data: Resident } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}`],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
+    enabled: !!facilityNumber && !!residentIdStr,
   });
 
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
-  const facilityNumber = me?.facilityNumber ?? "";
-
-  const { data: resident, isLoading } = useQuery<Resident>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}`],
+  const { data: assessmentsEnvelope } = useQuery<{ success: boolean; data: Assessment[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/assessments`],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && !!residentId,
+    enabled: !!facilityNumber && !!residentIdStr,
   });
 
-  const { data: assessments = [] } = useQuery<Assessment[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/assessments`],
+  const { data: carePlanEnvelope } = useQuery<{ success: boolean; data: CarePlan } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/care-plan`],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && !!residentId,
+    enabled: !!facilityNumber && !!residentIdStr,
   });
 
-  const { data: carePlan } = useQuery<CarePlan>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/care-plan`],
+  const { data: dailyTasksEnvelope } = useQuery<{ success: boolean; data: DailyTask[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/daily-tasks`],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && !!residentId,
+    enabled: !!facilityNumber && !!residentIdStr,
   });
 
-  const { data: dailyTasks = [] } = useQuery<DailyTask[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/daily-tasks`],
+  const { data: medicationsEnvelope } = useQuery<{ success: boolean; data: Medication[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/medications`],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && !!residentId,
+    enabled: !!facilityNumber && !!residentIdStr,
   });
 
-  const { data: medications = [] } = useQuery<Medication[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/medications`],
+  const { data: incidentsEnvelope } = useQuery<{ success: boolean; data: Incident[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/incidents`],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && !!residentId,
+    enabled: !!facilityNumber && !!residentIdStr,
   });
 
-  const { data: incidents = [] } = useQuery<Incident[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/incidents`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && !!residentId,
-  });
+  const resident = residentEnvelope?.data ?? undefined;
+  const assessments = assessmentsEnvelope?.data ?? [];
+  const carePlan = carePlanEnvelope?.data ?? undefined;
+  const dailyTasks = dailyTasksEnvelope?.data ?? [];
+  const medications = medicationsEnvelope?.data ?? [];
+  const incidents = incidentsEnvelope?.data ?? [];
 
   const completeTaskMutation = useMutation({
     mutationFn: async ({ taskId, status }: { taskId: number; status: string }) => {
       const res = await apiRequest(
         "PATCH",
-        `/api/ops/facilities/${facilityNumber}/residents/${residentId}/daily-tasks/${taskId}`,
+        `/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/daily-tasks/${taskId}`,
         { status }
       );
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/daily-tasks`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/daily-tasks`] });
     },
   });
 
@@ -398,13 +396,13 @@ export default function ResidentProfilePage() {
     mutationFn: async (medId: number) => {
       const res = await apiRequest(
         "PATCH",
-        `/api/ops/facilities/${facilityNumber}/residents/${residentId}/medications/${medId}`,
+        `/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/medications/${medId}`,
         { status: "discontinued" }
       );
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/medications`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/medications`] });
       toast({ title: "Medication discontinued" });
     },
   });
@@ -413,13 +411,13 @@ export default function ResidentProfilePage() {
     mutationFn: async (signType: "resident" | "family") => {
       const res = await apiRequest(
         "PATCH",
-        `/api/ops/facilities/${facilityNumber}/residents/${residentId}/care-plan/sign`,
+        `/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/care-plan/sign`,
         { signType }
       );
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/care-plan`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/care-plan`] });
       toast({ title: "Signed successfully" });
     },
   });
@@ -434,268 +432,318 @@ export default function ResidentProfilePage() {
 
   if (isLoading) {
     return (
-      <PortalLayout>
-        <div className="space-y-4">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      </PortalLayout>
+      <div className="space-y-4">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Overview
+          </button>
+        )}
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
     );
   }
 
   if (!resident) {
     return (
-      <PortalLayout>
+      <div className="space-y-4">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Overview
+          </button>
+        )}
         <div className="text-center py-12 text-muted-foreground">Resident not found.</div>
-      </PortalLayout>
+      </div>
     );
   }
+
+  return (
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
+
+      <div className="flex items-center gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">
+            {resident.firstName} {resident.lastName}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Room {resident.roomNumber} &middot; Admitted {new Date(resident.admissionDate).toLocaleDateString()}
+          </p>
+        </div>
+        <Badge variant={resident.status === "active" ? "default" : "secondary"} className="ml-auto">
+          {resident.status}
+        </Badge>
+      </div>
+
+      <Tabs defaultValue="profile">
+        <TabsList className="w-full overflow-x-auto">
+          <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="careplan">Care Plan</TabsTrigger>
+          <TabsTrigger value="medications">Medications</TabsTrigger>
+          <TabsTrigger value="incidents">Incidents</TabsTrigger>
+        </TabsList>
+
+        {/* Profile Tab */}
+        <TabsContent value="profile" className="mt-4 space-y-4">
+          <div className="rounded-lg border overflow-hidden">
+            <FieldRow label="Date of Birth" value={new Date(resident.dob).toLocaleDateString()} />
+            <FieldRow label="Gender" value={resident.gender} />
+            <FieldRow label="Primary Diagnosis" value={resident.primaryDx} />
+            <FieldRow label="Level of Care" value={resident.levelOfCare?.replace(/_/g, " ")} />
+            <FieldRow label="Funding Source" value={resident.fundingSource?.replace(/_/g, " ")} />
+            <FieldRow label="Emergency Contact" value={`${resident.emergencyContactName} — ${resident.emergencyContactPhone}`} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium">Assessment History</h2>
+              <Button size="sm" variant="outline" onClick={() => setAssessmentOpen(true)}>
+                <Plus className="h-4 w-4 mr-1.5" />
+                New Assessment
+              </Button>
+            </div>
+            {assessments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No assessments recorded.</p>
+            ) : (
+              <div className="space-y-2">
+                {assessments.map((a) => (
+                  <div key={a.id} className="rounded-lg border p-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{new Date(a.assessedAt).toLocaleDateString()}</span>
+                      <Badge variant="outline" className="capitalize">{a.fallRiskLevel} fall risk</Badge>
+                    </div>
+                    <div className="mt-1 text-muted-foreground text-xs">
+                      Cognition: {a.cognitionScore}/30 &middot; By {a.assessedBy}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <AssessmentDialog
+            open={assessmentOpen}
+            onOpenChange={setAssessmentOpen}
+            residentId={residentIdStr}
+            facilityNumber={facilityNumber}
+          />
+        </TabsContent>
+
+        {/* Care Plan Tab */}
+        <TabsContent value="careplan" className="mt-4 space-y-4">
+          {!carePlan ? (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+              No active care plan found.
+            </div>
+          ) : (
+            <>
+              <div className="rounded-lg border overflow-hidden">
+                <div className="px-4 py-3 border-b flex items-center justify-between">
+                  <span className="text-sm font-medium">Active Care Plan</span>
+                  <Badge variant={carePlan.status === "active" ? "default" : "secondary"}>
+                    {carePlan.status}
+                  </Badge>
+                </div>
+                <FieldRow label="Goal" value={carePlan.goal} />
+                <FieldRow label="Intervention" value={carePlan.intervention} />
+                <FieldRow label="Frequency" value={carePlan.frequency} />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={carePlan.residentSignedAt ? "secondary" : "outline"}
+                  onClick={() => signCarePlanMutation.mutate("resident")}
+                  disabled={!!carePlan.residentSignedAt || signCarePlanMutation.isPending}
+                >
+                  {carePlan.residentSignedAt
+                    ? `Resident Signed ${new Date(carePlan.residentSignedAt).toLocaleDateString()}`
+                    : "Resident Sign"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant={carePlan.familySignedAt ? "secondary" : "outline"}
+                  onClick={() => signCarePlanMutation.mutate("family")}
+                  disabled={!!carePlan.familySignedAt || signCarePlanMutation.isPending}
+                >
+                  {carePlan.familySignedAt
+                    ? `Family Signed ${new Date(carePlan.familySignedAt).toLocaleDateString()}`
+                    : "Family Sign"}
+                </Button>
+              </div>
+            </>
+          )}
+
+          <div>
+            <h2 className="text-sm font-medium mb-3">Today's Tasks</h2>
+            {todayTasks.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No tasks scheduled for today.</p>
+            ) : (
+              <div className="space-y-2">
+                {todayTasks.map((t) => (
+                  <div key={t.id} className="rounded-lg border p-3 flex items-center gap-3">
+                    <span className="flex-1 text-sm">{t.description}</span>
+                    {t.status === "pending" ? (
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => completeTaskMutation.mutate({ taskId: t.id, status: "completed" })}
+                          aria-label="Mark complete"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => completeTaskMutation.mutate({ taskId: t.id, status: "refused" })}
+                          aria-label="Mark refused"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Badge variant={t.status === "completed" ? "default" : "secondary"}>
+                        {t.status}
+                      </Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* Medications Tab */}
+        <TabsContent value="medications" className="mt-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium">Active Medications</h2>
+            <Button size="sm" variant="outline" onClick={() => setAddMedOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Add Medication
+            </Button>
+          </div>
+          {medications.filter((m) => m.status !== "discontinued").length === 0 ? (
+            <p className="text-sm text-muted-foreground">No active medications.</p>
+          ) : (
+            <div className="space-y-2">
+              {medications
+                .filter((m) => m.status !== "discontinued")
+                .map((m) => (
+                  <div key={m.id} className="rounded-lg border p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm">{m.drugName}</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive text-xs"
+                        onClick={() => discontinueMedMutation.mutate(m.id)}
+                        disabled={discontinueMedMutation.isPending}
+                      >
+                        Discontinue
+                      </Button>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
+                      <span>{m.dosage}</span>
+                      <span>via {m.route}</span>
+                      <span>{m.frequency}</span>
+                      {m.scheduledTimes?.length > 0 && (
+                        <span>at {m.scheduledTimes.join(", ")}</span>
+                      )}
+                    </div>
+                    {m.prescriber && (
+                      <p className="text-xs text-muted-foreground mt-0.5">Prescriber: {m.prescriber}</p>
+                    )}
+                  </div>
+                ))}
+            </div>
+          )}
+          <AddMedDialog
+            open={addMedOpen}
+            onOpenChange={setAddMedOpen}
+            residentId={residentIdStr}
+            facilityNumber={facilityNumber}
+          />
+        </TabsContent>
+
+        {/* Incidents Tab */}
+        <TabsContent value="incidents" className="mt-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium">Incident Reports</h2>
+          </div>
+          {incidents.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No incidents recorded.</p>
+          ) : (
+            <div className="space-y-2">
+              {incidents.map((i) => (
+                <div key={i.id} className="rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm capitalize">{i.incidentType?.replace(/_/g, " ")}</span>
+                    <Badge variant="outline">{i.status}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {new Date(i.incidentDate).toLocaleDateString()} &middot; {i.reportedBy}
+                  </p>
+                  <p className="text-sm mt-1 line-clamp-2">{i.description}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+export default function ResidentProfilePage() {
+  const params = useParams<{ id: string }>();
+  const [, navigate] = useLocation();
+
+  const { data: me } = useQuery<SessionUser | null>({
+    queryKey: ["/api/facility/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const facilityNumber = me?.facilityNumber ?? "";
+
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
+
+  if (me === null) return null;
 
   return (
     <PortalLayout>
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <Link href="/portal/residents">
-            <a className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="h-4 w-4" />
-              Residents
-            </a>
-          </Link>
+          <a
+            href="/#/portal/residents"
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Residents
+          </a>
         </div>
-
-        <div className="flex items-center gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">
-              {resident.firstName} {resident.lastName}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Room {resident.roomNumber} &middot; Admitted {new Date(resident.admissionDate).toLocaleDateString()}
-            </p>
-          </div>
-          <Badge variant={resident.status === "active" ? "default" : "secondary"} className="ml-auto">
-            {resident.status}
-          </Badge>
-        </div>
-
-        <Tabs defaultValue="profile">
-          <TabsList className="w-full overflow-x-auto">
-            <TabsTrigger value="profile">Profile</TabsTrigger>
-            <TabsTrigger value="careplan">Care Plan</TabsTrigger>
-            <TabsTrigger value="medications">Medications</TabsTrigger>
-            <TabsTrigger value="incidents">Incidents</TabsTrigger>
-          </TabsList>
-
-          {/* Profile Tab */}
-          <TabsContent value="profile" className="mt-4 space-y-4">
-            <div className="rounded-lg border overflow-hidden">
-              <FieldRow label="Date of Birth" value={new Date(resident.dob).toLocaleDateString()} />
-              <FieldRow label="Gender" value={resident.gender} />
-              <FieldRow label="Primary Diagnosis" value={resident.primaryDx} />
-              <FieldRow label="Level of Care" value={resident.levelOfCare?.replace(/_/g, " ")} />
-              <FieldRow label="Funding Source" value={resident.fundingSource?.replace(/_/g, " ")} />
-              <FieldRow label="Emergency Contact" value={`${resident.emergencyContactName} — ${resident.emergencyContactPhone}`} />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-medium">Assessment History</h2>
-                <Button size="sm" variant="outline" onClick={() => setAssessmentOpen(true)}>
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  New Assessment
-                </Button>
-              </div>
-              {assessments.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No assessments recorded.</p>
-              ) : (
-                <div className="space-y-2">
-                  {assessments.map((a) => (
-                    <div key={a.id} className="rounded-lg border p-3 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{new Date(a.assessedAt).toLocaleDateString()}</span>
-                        <Badge variant="outline" className="capitalize">{a.fallRiskLevel} fall risk</Badge>
-                      </div>
-                      <div className="mt-1 text-muted-foreground text-xs">
-                        Cognition: {a.cognitionScore}/30 &middot; By {a.assessedBy}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <AssessmentDialog
-              open={assessmentOpen}
-              onOpenChange={setAssessmentOpen}
-              residentId={residentId}
-              facilityNumber={facilityNumber}
-            />
-          </TabsContent>
-
-          {/* Care Plan Tab */}
-          <TabsContent value="careplan" className="mt-4 space-y-4">
-            {!carePlan ? (
-              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                No active care plan found.
-              </div>
-            ) : (
-              <>
-                <div className="rounded-lg border overflow-hidden">
-                  <div className="px-4 py-3 border-b flex items-center justify-between">
-                    <span className="text-sm font-medium">Active Care Plan</span>
-                    <Badge variant={carePlan.status === "active" ? "default" : "secondary"}>
-                      {carePlan.status}
-                    </Badge>
-                  </div>
-                  <FieldRow label="Goal" value={carePlan.goal} />
-                  <FieldRow label="Intervention" value={carePlan.intervention} />
-                  <FieldRow label="Frequency" value={carePlan.frequency} />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant={carePlan.residentSignedAt ? "secondary" : "outline"}
-                    onClick={() => signCarePlanMutation.mutate("resident")}
-                    disabled={!!carePlan.residentSignedAt || signCarePlanMutation.isPending}
-                  >
-                    {carePlan.residentSignedAt
-                      ? `Resident Signed ${new Date(carePlan.residentSignedAt).toLocaleDateString()}`
-                      : "Resident Sign"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={carePlan.familySignedAt ? "secondary" : "outline"}
-                    onClick={() => signCarePlanMutation.mutate("family")}
-                    disabled={!!carePlan.familySignedAt || signCarePlanMutation.isPending}
-                  >
-                    {carePlan.familySignedAt
-                      ? `Family Signed ${new Date(carePlan.familySignedAt).toLocaleDateString()}`
-                      : "Family Sign"}
-                  </Button>
-                </div>
-              </>
-            )}
-
-            <div>
-              <h2 className="text-sm font-medium mb-3">Today's Tasks</h2>
-              {todayTasks.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No tasks scheduled for today.</p>
-              ) : (
-                <div className="space-y-2">
-                  {todayTasks.map((t) => (
-                    <div key={t.id} className="rounded-lg border p-3 flex items-center gap-3">
-                      <span className="flex-1 text-sm">{t.description}</span>
-                      {t.status === "pending" ? (
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => completeTaskMutation.mutate({ taskId: t.id, status: "completed" })}
-                            aria-label="Mark complete"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => completeTaskMutation.mutate({ taskId: t.id, status: "refused" })}
-                            aria-label="Mark refused"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <Badge variant={t.status === "completed" ? "default" : "secondary"}>
-                          {t.status}
-                        </Badge>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          {/* Medications Tab */}
-          <TabsContent value="medications" className="mt-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium">Active Medications</h2>
-              <Button size="sm" variant="outline" onClick={() => setAddMedOpen(true)}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add Medication
-              </Button>
-            </div>
-            {medications.filter((m) => m.status !== "discontinued").length === 0 ? (
-              <p className="text-sm text-muted-foreground">No active medications.</p>
-            ) : (
-              <div className="space-y-2">
-                {medications
-                  .filter((m) => m.status !== "discontinued")
-                  .map((m) => (
-                    <div key={m.id} className="rounded-lg border p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm">{m.drugName}</span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive text-xs"
-                          onClick={() => discontinueMedMutation.mutate(m.id)}
-                          disabled={discontinueMedMutation.isPending}
-                        >
-                          Discontinue
-                        </Button>
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
-                        <span>{m.dosage}</span>
-                        <span>via {m.route}</span>
-                        <span>{m.frequency}</span>
-                        {m.scheduledTimes?.length > 0 && (
-                          <span>at {m.scheduledTimes.join(", ")}</span>
-                        )}
-                      </div>
-                      {m.prescriber && (
-                        <p className="text-xs text-muted-foreground mt-0.5">Prescriber: {m.prescriber}</p>
-                      )}
-                    </div>
-                  ))}
-              </div>
-            )}
-            <AddMedDialog
-              open={addMedOpen}
-              onOpenChange={setAddMedOpen}
-              residentId={residentId}
-              facilityNumber={facilityNumber}
-            />
-          </TabsContent>
-
-          {/* Incidents Tab */}
-          <TabsContent value="incidents" className="mt-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium">Incident Reports</h2>
-              <Button size="sm" variant="outline" onClick={() => navigate("/portal/incidents")}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Report Incident
-              </Button>
-            </div>
-            {incidents.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No incidents recorded.</p>
-            ) : (
-              <div className="space-y-2">
-                {incidents.map((i) => (
-                  <div key={i.id} className="rounded-lg border p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-sm capitalize">{i.incidentType?.replace(/_/g, " ")}</span>
-                      <Badge variant="outline">{i.status}</Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {new Date(i.incidentDate).toLocaleDateString()} &middot; {i.reportedBy}
-                    </p>
-                    <p className="text-sm mt-1 line-clamp-2">{i.description}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+        <ResidentProfileContent
+          facilityNumber={facilityNumber}
+          residentId={Number(params.id)}
+        />
       </div>
     </PortalLayout>
   );

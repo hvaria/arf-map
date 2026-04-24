@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, AlertTriangle } from "lucide-react";
+import { Plus, AlertTriangle, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
   id: number;
@@ -93,7 +93,7 @@ const EMPTY_FORM: IncidentFormData = {
   incidentType: "",
   incidentDate: new Date().toISOString().slice(0, 10),
   incidentTime: new Date().toTimeString().slice(0, 5),
-  residentId: "",
+  residentId: "none",
   location: "",
   description: "",
   immediateActionTaken: "",
@@ -128,20 +128,20 @@ function ReportIncidentDialog({
     mutationFn: async () => {
       const body = {
         ...form,
-        residentId: form.residentId ? Number(form.residentId) : null,
+        residentId: form.residentId && form.residentId !== "none" ? Number(form.residentId) : null,
         incidentDate: form.incidentDate ? new Date(form.incidentDate).getTime() : Date.now(),
         supervisorNotifiedAt: form.supervisorNotifiedAt ? new Date(form.supervisorNotifiedAt).getTime() : null,
         familyNotifiedAt: form.familyNotifiedAt ? new Date(form.familyNotifiedAt).getTime() : null,
         physicianNotifiedAt: form.physicianNotifiedAt ? new Date(form.physicianNotifiedAt).getTime() : null,
       };
-      const res = await apiRequest("POST", `/api/ops/facilities/${facilityNumber}/incidents`, body);
+      const res = await apiRequest("POST", `/api/ops/incidents`, body);
       return res.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`] });
       toast({ title: "Incident reported" });
       onOpenChange(false);
-      setForm(EMPTY_FORM);
+      setForm({ ...EMPTY_FORM, residentId: "none" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -172,8 +172,8 @@ function ReportIncidentDialog({
               <Select value={form.residentId} onValueChange={(v) => set("residentId", v)}>
                 <SelectTrigger><SelectValue placeholder="Select resident" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
-                  {residents.map((r) => (
+                  <SelectItem value="none">None</SelectItem>
+                  {Array.isArray(residents) && residents.map((r) => (
                     <SelectItem key={r.id} value={String(r.id)}>
                       {r.firstName} {r.lastName}
                     </SelectItem>
@@ -278,8 +278,8 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
   const updateMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest(
-        "PATCH",
-        `/api/ops/facilities/${facilityNumber}/incidents/${incident.id}`,
+        "PUT",
+        `/api/ops/incidents/${incident.id}`,
         { rootCause, correctiveAction }
       );
       return res.json();
@@ -359,36 +359,25 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
   );
 }
 
-export default function IncidentsPage() {
-  const [, navigate] = useLocation();
+export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
   const [reportOpen, setReportOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
-  const facilityNumber = me?.facilityNumber ?? "";
-
-  const { data: incidents = [], isLoading, error } = useQuery<Incident[]>({
+  const { data: incidentsEnvelope, isLoading, error } = useQuery<{ success: boolean; data: Incident[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
   });
 
-  const { data: residents = [] } = useQuery<Resident[]>({
+  const { data: residentsEnvelope } = useQuery<{ success: boolean; data: Resident[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
   });
+
+  const incidents = incidentsEnvelope?.data ?? [];
+  const residents = residentsEnvelope?.data ?? [];
 
   const filtered = incidents.filter((i) => {
     const typeMatch = typeFilter === "all" || i.incidentType === typeFilter;
@@ -397,73 +386,105 @@ export default function IncidentsPage() {
   });
 
   return (
-    <PortalLayout>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold">Incidents</h1>
-          <Button size="sm" onClick={() => setReportOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Report Incident
-          </Button>
-        </div>
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
 
-        <div className="flex flex-col sm:flex-row gap-3">
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="sm:w-48">
-              <SelectValue placeholder="Filter by type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              {INCIDENT_TYPES.map((t) => (
-                <SelectItem key={t} value={t} className="capitalize">{t.replace(/_/g, " ")}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="sm:w-40">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="open">Open</SelectItem>
-              <SelectItem value="under_review">Under Review</SelectItem>
-              <SelectItem value="closed">Closed</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
-            Failed to load incidents.
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-10 text-center">
-            <AlertTriangle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">
-              {incidents.length === 0 ? "No incidents recorded." : "No incidents match your filters."}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {filtered.map((incident) => (
-              <IncidentRow key={incident.id} incident={incident} facilityNumber={facilityNumber} />
-            ))}
-          </div>
-        )}
-
-        <ReportIncidentDialog
-          open={reportOpen}
-          onOpenChange={setReportOpen}
-          facilityNumber={facilityNumber}
-          residents={residents}
-        />
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Incidents</h1>
+        <Button size="sm" onClick={() => setReportOpen(true)}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Report Incident
+        </Button>
       </div>
+
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="sm:w-48">
+            <SelectValue placeholder="Filter by type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            {INCIDENT_TYPES.map((t) => (
+              <SelectItem key={t} value={t} className="capitalize">{t.replace(/_/g, " ")}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="sm:w-40">
+            <SelectValue placeholder="Filter by status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="under_review">Under Review</SelectItem>
+            <SelectItem value="closed">Closed</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
+          Failed to load incidents.
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-10 text-center">
+          <AlertTriangle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+          <p className="text-sm text-muted-foreground">
+            {incidents.length === 0 ? "No incidents recorded." : "No incidents match your filters."}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((incident) => (
+            <IncidentRow key={incident.id} incident={incident} facilityNumber={facilityNumber} />
+          ))}
+        </div>
+      )}
+
+      <ReportIncidentDialog
+        open={reportOpen}
+        onOpenChange={setReportOpen}
+        facilityNumber={facilityNumber}
+        residents={residents}
+      />
+    </div>
+  );
+}
+
+export default function IncidentsPage() {
+  const [, navigate] = useLocation();
+
+  const { data: me } = useQuery<SessionUser | null>({
+    queryKey: ["/api/facility/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const facilityNumber = me?.facilityNumber ?? "";
+
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
+
+  if (me === null) return null;
+
+  return (
+    <PortalLayout>
+      <IncidentsContent facilityNumber={facilityNumber} />
     </PortalLayout>
   );
 }

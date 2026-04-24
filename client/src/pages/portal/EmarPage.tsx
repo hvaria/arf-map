@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
   id: number;
@@ -94,7 +94,7 @@ function MedRow({ entry, facilityNumber }: MedRowProps) {
     }) => {
       const res = await apiRequest(
         "POST",
-        `/api/ops/facilities/${facilityNumber}/med-passes`,
+        `/api/ops/med-passes`,
         {
           medPassEntryId: entry.id,
           residentId: entry.residentId,
@@ -106,7 +106,6 @@ function MedRow({ entry, facilityNumber }: MedRowProps) {
       return res.json();
     },
     onSuccess: () => {
-      const dateParam = today;
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`] });
       toast({ title: "Med pass charted" });
       setExpanded(false);
@@ -263,30 +262,19 @@ function MedRow({ entry, facilityNumber }: MedRowProps) {
   );
 }
 
-export default function EmarPage() {
-  const [, navigate] = useLocation();
+export function EmarContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
   const [shift, setShift] = useState<Shift>("ALL");
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
-  const facilityNumber = me?.facilityNumber ?? "";
   const today = new Date().toISOString().slice(0, 10);
 
-  const { data: medPass = [], isLoading, error, refetch, isFetching } = useQuery<MedPassEntry[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`, today],
+  const { data: envelope, isLoading, error, refetch, isFetching } = useQuery<{ success: boolean; data: MedPassEntry[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass?date=${today}`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
     refetchInterval: 2 * 60 * 1000, // auto-refresh every 2 minutes
   });
+
+  const medPass = envelope?.data ?? [];
 
   const filtered = shift === "ALL" ? medPass : medPass.filter((e) => e.shift === shift);
 
@@ -315,88 +303,120 @@ export default function EmarPage() {
   };
 
   return (
-    <PortalLayout>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">eMAR</h1>
-            <p className="text-sm text-muted-foreground">Med pass for {today}</p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            aria-label="Refresh med pass"
-          >
-            <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-          </Button>
-        </div>
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
 
-        {/* Dashboard bar */}
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            { label: "Given", count: counts.given, color: "text-green-700 bg-green-50 border-green-200" },
-            { label: "Pending", count: counts.pending, color: "text-blue-700 bg-blue-50 border-blue-200" },
-            { label: "Late", count: counts.late, color: "text-orange-700 bg-orange-50 border-orange-200" },
-            { label: "Missed", count: counts.missed, color: "text-red-700 bg-red-50 border-red-200" },
-          ].map(({ label, count, color }) => (
-            <div key={label} className={cn("rounded-lg border p-2 text-center", color)}>
-              <p className="text-xl font-bold">{count}</p>
-              <p className="text-xs font-medium">{label}</p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">eMAR</h1>
+          <p className="text-sm text-muted-foreground">Med pass for {today}</p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => refetch()}
+          disabled={isFetching}
+          aria-label="Refresh med pass"
+        >
+          <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+        </Button>
+      </div>
+
+      {/* Dashboard bar */}
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { label: "Given", count: counts.given, color: "text-green-700 bg-green-50 border-green-200" },
+          { label: "Pending", count: counts.pending, color: "text-blue-700 bg-blue-50 border-blue-200" },
+          { label: "Late", count: counts.late, color: "text-orange-700 bg-orange-50 border-orange-200" },
+          { label: "Missed", count: counts.missed, color: "text-red-700 bg-red-50 border-red-200" },
+        ].map(({ label, count, color }) => (
+          <div key={label} className={cn("rounded-lg border p-2 text-center", color)}>
+            <p className="text-xl font-bold">{count}</p>
+            <p className="text-xs font-medium">{label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Shift filter */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">Shift:</span>
+        {(["ALL", "AM", "PM", "NOC"] as Shift[]).map((s) => (
+          <Button
+            key={s}
+            size="sm"
+            variant={shift === s ? "default" : "outline"}
+            onClick={() => setShift(s)}
+          >
+            {s}
+          </Button>
+        ))}
+      </div>
+
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
+          Failed to load med pass data.
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : Object.keys(byResident).length === 0 ? (
+        <div className="rounded-lg border border-dashed p-10 text-center">
+          <p className="text-sm text-muted-foreground">No medications scheduled for this shift.</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {Object.entries(byResident).map(([residentId, resident]) => (
+            <div key={residentId}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-medium">{resident.name}</span>
+                <Badge variant="outline">Room {resident.room}</Badge>
+              </div>
+              <div className="space-y-2">
+                {resident.entries.map((entry) => (
+                  <MedRow key={entry.id} entry={entry} facilityNumber={facilityNumber} />
+                ))}
+              </div>
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Shift filter */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Shift:</span>
-          {(["ALL", "AM", "PM", "NOC"] as Shift[]).map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant={shift === s ? "default" : "outline"}
-              onClick={() => setShift(s)}
-            >
-              {s}
-            </Button>
-          ))}
-        </div>
+export default function EmarPage() {
+  const [, navigate] = useLocation();
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
-            Failed to load med pass data.
-          </div>
-        )}
+  const { data: me } = useQuery<SessionUser | null>({
+    queryKey: ["/api/facility/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000,
+  });
 
-        {isLoading ? (
-          <div className="space-y-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-20 w-full rounded-lg" />
-            ))}
-          </div>
-        ) : Object.keys(byResident).length === 0 ? (
-          <div className="rounded-lg border border-dashed p-10 text-center">
-            <p className="text-sm text-muted-foreground">No medications scheduled for this shift.</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {Object.entries(byResident).map(([residentId, resident]) => (
-              <div key={residentId}>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm font-medium">{resident.name}</span>
-                  <Badge variant="outline">Room {resident.room}</Badge>
-                </div>
-                <div className="space-y-2">
-                  {resident.entries.map((entry) => (
-                    <MedRow key={entry.id} entry={entry} facilityNumber={facilityNumber} />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+  const facilityNumber = me?.facilityNumber ?? "";
+
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
+
+  if (me === null) return null;
+
+  return (
+    <PortalLayout>
+      <EmarContent facilityNumber={facilityNumber} />
     </PortalLayout>
   );
 }

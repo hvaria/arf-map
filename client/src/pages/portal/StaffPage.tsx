@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, Users, AlertCircle } from "lucide-react";
+import { Plus, Users, AlertCircle, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
   id: number;
@@ -87,7 +87,7 @@ function AddStaffDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/ops/facilities/${facilityNumber}/staff`, {
+      const res = await apiRequest("POST", `/api/ops/staff`, {
         ...form,
         hireDate: form.hireDate ? new Date(form.hireDate).getTime() : Date.now(),
         licenseExpiry: form.licenseExpiry ? new Date(form.licenseExpiry).getTime() : null,
@@ -189,7 +189,7 @@ function AddShiftDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/ops/facilities/${facilityNumber}/shifts`, {
+      const res = await apiRequest("POST", `/api/ops/shifts`, {
         ...form,
         staffId: Number(form.staffId),
         shiftDate: new Date(form.shiftDate).getTime(),
@@ -197,7 +197,7 @@ function AddShiftDialog({
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/shifts`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/schedule`] });
       toast({ title: "Shift added" });
       onOpenChange(false);
     },
@@ -323,10 +323,183 @@ function WeeklySchedule({ shifts, facilityNumber }: { shifts: Shift[]; facilityN
   );
 }
 
-export default function StaffPage() {
-  const [, navigate] = useLocation();
+export function StaffContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
   const [addStaffOpen, setAddStaffOpen] = useState(false);
   const [addShiftOpen, setAddShiftOpen] = useState(false);
+
+  const { data: staffEnvelope, isLoading: loadingStaff, error: staffError } = useQuery<{ success: boolean; data: StaffMember[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/staff`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber,
+  });
+
+  const { data: shiftsEnvelope, isLoading: loadingShifts } = useQuery<{ success: boolean; data: Shift[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/schedule`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber,
+  });
+
+  const staff = staffEnvelope?.data ?? [];
+  const shifts = shiftsEnvelope?.data ?? [];
+
+  const now = Date.now();
+
+  return (
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
+
+      <h1 className="text-xl font-semibold">Staff</h1>
+
+      <Tabs defaultValue="directory">
+        <TabsList className="w-full">
+          <TabsTrigger value="directory" className="flex-1">Directory</TabsTrigger>
+          <TabsTrigger value="schedule" className="flex-1">Schedule</TabsTrigger>
+        </TabsList>
+
+        {/* Directory Tab */}
+        <TabsContent value="directory" className="mt-4 space-y-4">
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => setAddStaffOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Add Staff
+            </Button>
+          </div>
+
+          {staffError && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
+              Failed to load staff.
+            </div>
+          )}
+
+          {loadingStaff ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+            </div>
+          ) : staff.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-10 text-center">
+              <Users className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground">No staff members yet.</p>
+            </div>
+          ) : (
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block rounded-lg border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-medium">Name</th>
+                      <th className="text-left px-4 py-3 font-medium">Role</th>
+                      <th className="text-left px-4 py-3 font-medium">Status</th>
+                      <th className="text-left px-4 py-3 font-medium">Hire Date</th>
+                      <th className="text-left px-4 py-3 font-medium">License Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {staff.map((s) => {
+                      const licExpired = s.licenseExpiry && s.licenseExpiry < now;
+                      return (
+                        <tr key={s.id} className="hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-3 font-medium">{s.firstName} {s.lastName}</td>
+                          <td className="px-4 py-3">
+                            <Badge variant="secondary" className="capitalize text-xs">
+                              {s.role?.replace(/_/g, " ")}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3">
+                            <Badge
+                              variant={s.status === "active" ? "default" : "outline"}
+                              className="text-xs capitalize"
+                            >
+                              {s.status?.replace(/_/g, " ")}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground">
+                            {s.hireDate ? new Date(s.hireDate).toLocaleDateString() : "—"}
+                          </td>
+                          <td className="px-4 py-3">
+                            {s.licenseExpiry ? (
+                              <span className={cn("flex items-center gap-1 text-sm", licExpired ? "text-red-600" : "text-muted-foreground")}>
+                                {licExpired && <AlertCircle className="h-3.5 w-3.5" />}
+                                {new Date(s.licenseExpiry).toLocaleDateString()}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="md:hidden space-y-2">
+                {staff.map((s) => {
+                  const licExpired = s.licenseExpiry && s.licenseExpiry < now;
+                  return (
+                    <div key={s.id} className="rounded-lg border p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-sm">{s.firstName} {s.lastName}</span>
+                        <Badge variant={s.status === "active" ? "default" : "outline"} className="text-xs capitalize">
+                          {s.status?.replace(/_/g, " ")}
+                        </Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-1 text-xs text-muted-foreground">
+                        <span className="capitalize">{s.role?.replace(/_/g, " ")}</span>
+                        {s.licenseExpiry && (
+                          <span className={cn(licExpired ? "text-red-600" : "")}>
+                            {licExpired && "EXPIRED: "}Lic expires {new Date(s.licenseExpiry).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <AddStaffDialog open={addStaffOpen} onOpenChange={setAddStaffOpen} facilityNumber={facilityNumber} />
+        </TabsContent>
+
+        {/* Schedule Tab */}
+        <TabsContent value="schedule" className="mt-4 space-y-4">
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => setAddShiftOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Add Shift
+            </Button>
+          </div>
+
+          {loadingShifts ? (
+            <Skeleton className="h-48 w-full" />
+          ) : (
+            <WeeklySchedule shifts={shifts} facilityNumber={facilityNumber} />
+          )}
+
+          <AddShiftDialog
+            open={addShiftOpen}
+            onOpenChange={setAddShiftOpen}
+            facilityNumber={facilityNumber}
+            staff={staff}
+          />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+export default function StaffPage() {
+  const [, navigate] = useLocation();
 
   const { data: me } = useQuery<SessionUser | null>({
     queryKey: ["/api/facility/me"],
@@ -334,169 +507,17 @@ export default function StaffPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
   const facilityNumber = me?.facilityNumber ?? "";
 
-  const { data: staff = [], isLoading: loadingStaff, error: staffError } = useQuery<StaffMember[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/staff`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber,
-  });
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
 
-  const { data: shifts = [], isLoading: loadingShifts } = useQuery<Shift[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/shifts`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber,
-  });
-
-  const now = Date.now();
+  if (me === null) return null;
 
   return (
     <PortalLayout>
-      <div className="space-y-4">
-        <h1 className="text-xl font-semibold">Staff</h1>
-
-        <Tabs defaultValue="directory">
-          <TabsList className="w-full">
-            <TabsTrigger value="directory" className="flex-1">Directory</TabsTrigger>
-            <TabsTrigger value="schedule" className="flex-1">Schedule</TabsTrigger>
-          </TabsList>
-
-          {/* Directory Tab */}
-          <TabsContent value="directory" className="mt-4 space-y-4">
-            <div className="flex justify-end">
-              <Button size="sm" onClick={() => setAddStaffOpen(true)}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add Staff
-              </Button>
-            </div>
-
-            {staffError && (
-              <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
-                Failed to load staff.
-              </div>
-            )}
-
-            {loadingStaff ? (
-              <div className="space-y-2">
-                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
-              </div>
-            ) : staff.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-10 text-center">
-                <Users className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">No staff members yet.</p>
-              </div>
-            ) : (
-              <>
-                {/* Desktop table */}
-                <div className="hidden md:block rounded-lg border overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
-                      <tr>
-                        <th className="text-left px-4 py-3 font-medium">Name</th>
-                        <th className="text-left px-4 py-3 font-medium">Role</th>
-                        <th className="text-left px-4 py-3 font-medium">Status</th>
-                        <th className="text-left px-4 py-3 font-medium">Hire Date</th>
-                        <th className="text-left px-4 py-3 font-medium">License Expiry</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {staff.map((s) => {
-                        const licExpired = s.licenseExpiry && s.licenseExpiry < now;
-                        return (
-                          <tr key={s.id} className="hover:bg-muted/20 transition-colors">
-                            <td className="px-4 py-3 font-medium">{s.firstName} {s.lastName}</td>
-                            <td className="px-4 py-3">
-                              <Badge variant="secondary" className="capitalize text-xs">
-                                {s.role?.replace(/_/g, " ")}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-3">
-                              <Badge
-                                variant={s.status === "active" ? "default" : "outline"}
-                                className="text-xs capitalize"
-                              >
-                                {s.status?.replace(/_/g, " ")}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-3 text-muted-foreground">
-                              {s.hireDate ? new Date(s.hireDate).toLocaleDateString() : "—"}
-                            </td>
-                            <td className="px-4 py-3">
-                              {s.licenseExpiry ? (
-                                <span className={cn("flex items-center gap-1 text-sm", licExpired ? "text-red-600" : "text-muted-foreground")}>
-                                  {licExpired && <AlertCircle className="h-3.5 w-3.5" />}
-                                  {new Date(s.licenseExpiry).toLocaleDateString()}
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Mobile card list */}
-                <div className="md:hidden space-y-2">
-                  {staff.map((s) => {
-                    const licExpired = s.licenseExpiry && s.licenseExpiry < now;
-                    return (
-                      <div key={s.id} className="rounded-lg border p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-medium text-sm">{s.firstName} {s.lastName}</span>
-                          <Badge variant={s.status === "active" ? "default" : "outline"} className="text-xs capitalize">
-                            {s.status?.replace(/_/g, " ")}
-                          </Badge>
-                        </div>
-                        <div className="flex flex-wrap gap-2 mt-1 text-xs text-muted-foreground">
-                          <span className="capitalize">{s.role?.replace(/_/g, " ")}</span>
-                          {s.licenseExpiry && (
-                            <span className={cn(licExpired ? "text-red-600" : "")}>
-                              {licExpired && "EXPIRED: "}Lic expires {new Date(s.licenseExpiry).toLocaleDateString()}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-
-            <AddStaffDialog open={addStaffOpen} onOpenChange={setAddStaffOpen} facilityNumber={facilityNumber} />
-          </TabsContent>
-
-          {/* Schedule Tab */}
-          <TabsContent value="schedule" className="mt-4 space-y-4">
-            <div className="flex justify-end">
-              <Button size="sm" onClick={() => setAddShiftOpen(true)}>
-                <Plus className="h-4 w-4 mr-1.5" />
-                Add Shift
-              </Button>
-            </div>
-
-            {loadingShifts ? (
-              <Skeleton className="h-48 w-full" />
-            ) : (
-              <WeeklySchedule shifts={shifts} facilityNumber={facilityNumber} />
-            )}
-
-            <AddShiftDialog
-              open={addShiftOpen}
-              onOpenChange={setAddShiftOpen}
-              facilityNumber={facilityNumber}
-              staff={staff}
-            />
-          </TabsContent>
-        </Tabs>
-      </div>
+      <StaffContent facilityNumber={facilityNumber} />
     </PortalLayout>
   );
 }

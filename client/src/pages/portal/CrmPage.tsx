@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
 import PortalLayout from "./PortalLayout";
+import { AdmissionsContent } from "./AdmissionsPage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, UserPlus, Clock } from "lucide-react";
+import { Plus, UserPlus, Clock, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
   id: number;
@@ -107,7 +108,7 @@ function AddLeadDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/ops/facilities/${facilityNumber}/leads`, {
+      const res = await apiRequest("POST", `/api/ops/leads`, {
         ...form,
         nextFollowUpDate: form.nextFollowUpDate ? new Date(form.nextFollowUpDate).getTime() : null,
       });
@@ -212,8 +213,8 @@ function TourDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest(
-        "PATCH",
-        `/api/ops/facilities/${facilityNumber}/leads/${lead.id}`,
+        "PUT",
+        `/api/ops/leads/${lead.id}`,
         {
           tourDate: tourDatetime ? new Date(tourDatetime).getTime() : null,
           stage: "tour_scheduled",
@@ -251,9 +252,11 @@ function TourDialog({
 function LeadCard({
   lead,
   facilityNumber,
+  onViewAdmissions,
 }: {
   lead: Lead;
   facilityNumber: string;
+  onViewAdmissions: (leadId: number) => void;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -266,8 +269,8 @@ function LeadCard({
   const moveStage = useMutation({
     mutationFn: async (newStage: LeadStage) => {
       const res = await apiRequest(
-        "PATCH",
-        `/api/ops/facilities/${facilityNumber}/leads/${lead.id}`,
+        "PUT",
+        `/api/ops/leads/${lead.id}`,
         { stage: newStage }
       );
       return res.json();
@@ -319,6 +322,14 @@ function LeadCard({
                 Schedule Tour
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs h-7"
+              onClick={() => onViewAdmissions(lead.id)}
+            >
+              View Admissions
+            </Button>
             {lead.stage !== "moved_in" && lead.stage !== "lost" && (
               <Button
                 size="sm"
@@ -344,28 +355,28 @@ function LeadCard({
   );
 }
 
-export default function CrmPage() {
-  const [, navigate] = useLocation();
+export function CrmContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
-  const facilityNumber = me?.facilityNumber ?? "";
-
-  const { data: leads = [], isLoading, error } = useQuery<Lead[]>({
+  const { data: envelope, isLoading, error } = useQuery<{ success: boolean; data: Lead[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/leads`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
   });
+
+  const leads = envelope?.data ?? [];
+
+  // If a lead is selected, show admissions drilldown
+  if (selectedLeadId !== null) {
+    return (
+      <AdmissionsContent
+        facilityNumber={facilityNumber}
+        leadId={String(selectedLeadId)}
+        onBack={() => setSelectedLeadId(null)}
+      />
+    );
+  }
 
   const leadsByStage = STAGES.reduce<Record<LeadStage, Lead[]>>((acc, stage) => {
     acc[stage] = leads.filter((l) => l.stage === stage);
@@ -373,68 +384,105 @@ export default function CrmPage() {
   }, {} as Record<LeadStage, Lead[]>);
 
   return (
-    <PortalLayout>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold">CRM</h1>
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Add Lead
-          </Button>
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
+
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">CRM</h1>
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Add Lead
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
+          Failed to load leads.
         </div>
+      )}
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
-            Failed to load leads.
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="flex gap-4 overflow-x-auto pb-2">
-            {STAGES.map((s) => (
-              <div key={s} className="min-w-[220px] space-y-2">
-                <Skeleton className="h-6 w-32" />
-                <Skeleton className="h-24 w-full" />
+      {isLoading ? (
+        <div className="flex gap-4 overflow-x-auto pb-2">
+          {STAGES.map((s) => (
+            <div key={s} className="min-w-[220px] space-y-2">
+              <Skeleton className="h-6 w-32" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Kanban board — horizontal scroll on mobile */
+        <div className="overflow-x-auto pb-4">
+          <div className="flex gap-4" style={{ minWidth: "max-content" }}>
+            {STAGES.map((stage) => (
+              <div key={stage} className="w-56 flex-shrink-0">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {STAGE_LABELS[stage]}
+                  </h2>
+                  {leadsByStage[stage].length > 0 && (
+                    <Badge variant="secondary" className="text-xs h-4 px-1">
+                      {leadsByStage[stage].length}
+                    </Badge>
+                  )}
+                </div>
+                <div className="space-y-2 min-h-[60px] rounded-lg bg-muted/30 p-2">
+                  {leadsByStage[stage].length === 0 ? (
+                    <div className="text-xs text-muted-foreground text-center py-4">Empty</div>
+                  ) : (
+                    leadsByStage[stage].map((lead) => (
+                      <LeadCard
+                        key={lead.id}
+                        lead={lead}
+                        facilityNumber={facilityNumber}
+                        onViewAdmissions={setSelectedLeadId}
+                      />
+                    ))
+                  )}
+                </div>
               </div>
             ))}
           </div>
-        ) : (
-          /* Kanban board — horizontal scroll on mobile */
-          <div className="overflow-x-auto pb-4">
-            <div className="flex gap-4" style={{ minWidth: "max-content" }}>
-              {STAGES.map((stage) => (
-                <div key={stage} className="w-56 flex-shrink-0">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      {STAGE_LABELS[stage]}
-                    </h2>
-                    {leadsByStage[stage].length > 0 && (
-                      <Badge variant="secondary" className="text-xs h-4 px-1">
-                        {leadsByStage[stage].length}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="space-y-2 min-h-[60px] rounded-lg bg-muted/30 p-2">
-                    {leadsByStage[stage].length === 0 ? (
-                      <div className="text-xs text-muted-foreground text-center py-4">Empty</div>
-                    ) : (
-                      leadsByStage[stage].map((lead) => (
-                        <LeadCard key={lead.id} lead={lead} facilityNumber={facilityNumber} />
-                      ))
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        </div>
+      )}
 
-        <AddLeadDialog
-          open={addOpen}
-          onOpenChange={setAddOpen}
-          facilityNumber={facilityNumber}
-        />
-      </div>
+      <AddLeadDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        facilityNumber={facilityNumber}
+      />
+    </div>
+  );
+}
+
+export default function CrmPage() {
+  const [, navigate] = useLocation();
+
+  const { data: me } = useQuery<SessionUser | null>({
+    queryKey: ["/api/facility/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const facilityNumber = me?.facilityNumber ?? "";
+
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
+
+  if (me === null) return null;
+
+  return (
+    <PortalLayout>
+      <CrmContent facilityNumber={facilityNumber} />
     </PortalLayout>
   );
 }

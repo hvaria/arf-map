@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
@@ -80,18 +81,21 @@ export default function PortalDashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
   const facilityNumber = me?.facilityNumber ?? "";
 
-  const { data: dashboard, isLoading, error } = useQuery<DashboardData>({
+  const { data: envelope, isLoading, error } = useQuery<{ success: boolean; data: DashboardData } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/dashboard`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
   });
+
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
+
+  if (me === null) return null;
+
+  const dashboard = envelope?.data ?? null;
 
   const kpiCards = dashboard
     ? [

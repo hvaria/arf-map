@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, Receipt, DollarSign } from "lucide-react";
+import { Plus, Receipt, DollarSign, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
   id: number;
@@ -21,11 +21,21 @@ interface SessionUser {
   username: string;
 }
 
-interface ResidentBilling {
-  residentId: number;
-  residentName: string;
-  balance: number;
-  status: "current" | "overdue" | "paid";
+interface Resident {
+  id: number;
+  facilityNumber: string;
+  firstName: string;
+  lastName: string;
+  dob: number;
+  gender: string;
+  roomNumber: string;
+  admissionDate: number;
+  primaryDx: string;
+  levelOfCare: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  fundingSource: string;
+  status: "active" | "discharged" | "on_leave";
 }
 
 interface Charge {
@@ -48,17 +58,9 @@ interface Invoice {
   createdAt: number;
 }
 
-interface ArAging {
-  current: number;
-  thirtyToSixty: number;
-  sixtyToNinety: number;
-  ninetyPlus: number;
-}
-
-interface ResidentBillingDetail {
+interface BillingDetail {
   charges: Charge[];
   invoices: Invoice[];
-  aging: ArAging;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -95,14 +97,14 @@ function AddChargeDialog({
     mutationFn: async () => {
       const res = await apiRequest(
         "POST",
-        `/api/ops/facilities/${facilityNumber}/billing/charges`,
+        `/api/ops/billing/charges`,
         { ...form, residentId, amount: parseFloat(form.amount) }
       );
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/billing/${residentId}`] });
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/billing`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/residents/${residentId}/billing`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents`] });
       toast({ title: "Charge added" });
       onOpenChange(false);
     },
@@ -188,14 +190,14 @@ function RecordPaymentDialog({
     mutationFn: async () => {
       const res = await apiRequest(
         "POST",
-        `/api/ops/facilities/${facilityNumber}/billing/payments`,
+        `/api/ops/billing/payments`,
         { ...form, residentId, amount: parseFloat(form.amount), paidAt: Date.now() }
       );
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/billing/${residentId}`] });
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/billing`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/residents/${residentId}/billing`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents`] });
       toast({ title: "Payment recorded" });
       onOpenChange(false);
     },
@@ -263,13 +265,13 @@ function GenerateInvoiceDialog({
     mutationFn: async () => {
       const res = await apiRequest(
         "POST",
-        `/api/ops/facilities/${facilityNumber}/billing/invoices`,
+        `/api/ops/billing/invoices/generate`,
         { residentId, billingPeriod }
       );
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/billing/${residentId}`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/residents/${residentId}/billing`] });
       toast({ title: "Invoice generated" });
       onOpenChange(false);
     },
@@ -301,43 +303,188 @@ function GenerateInvoiceDialog({
   );
 }
 
-function ArAgingBars({ aging }: { aging: ArAging }) {
-  const total = aging.current + aging.thirtyToSixty + aging.sixtyToNinety + aging.ninetyPlus;
-  if (total === 0) return <p className="text-sm text-muted-foreground">No outstanding balances.</p>;
+export function BillingContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
+  const [selectedResidentId, setSelectedResidentId] = useState<number | null>(null);
+  const [addChargeOpen, setAddChargeOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
 
-  const bars = [
-    { label: "Current", value: aging.current, color: "bg-green-500" },
-    { label: "31-60 days", value: aging.thirtyToSixty, color: "bg-yellow-500" },
-    { label: "61-90 days", value: aging.sixtyToNinety, color: "bg-orange-500" },
-    { label: "90+ days", value: aging.ninetyPlus, color: "bg-red-500" },
-  ];
+  const { data: residentsEnvelope, isLoading } = useQuery<{ success: boolean; data: Resident[]; meta: { total: number } } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber,
+  });
+
+  const { data: detailEnvelope } = useQuery<{ success: boolean; data: BillingDetail } | null>({
+    queryKey: [`/api/ops/residents/${selectedResidentId}/billing`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber && selectedResidentId !== null,
+  });
+
+  const residentList = residentsEnvelope?.data ?? [];
+  const detail = detailEnvelope?.data ?? null;
+  const selectedResident = residentList.find((r) => r.id === selectedResidentId);
 
   return (
-    <div className="space-y-2">
-      {bars.map(({ label, value, color }) => (
-        <div key={label} className="space-y-0.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="font-medium">${value.toLocaleString()}</span>
-          </div>
-          <div className="h-2 rounded-full bg-muted overflow-hidden">
-            <div
-              className={cn("h-full rounded-full transition-all", color)}
-              style={{ width: `${(value / total) * 100}%` }}
-            />
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
+
+      <h1 className="text-xl font-semibold">Billing</h1>
+
+      <div className="flex flex-col md:flex-row gap-4">
+        {/* Left: resident list */}
+        <div className="w-full md:w-72 shrink-0">
+          <div className="rounded-lg border overflow-hidden">
+            <div className="px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground">
+              Resident Accounts
+            </div>
+            {isLoading ? (
+              <div className="space-y-2 p-3">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full rounded" />)}
+              </div>
+            ) : residentList.length === 0 ? (
+              <div className="p-4 text-sm text-muted-foreground text-center">No residents found.</div>
+            ) : (
+              <div className="divide-y">
+                {residentList.map((r) => (
+                  <button
+                    key={r.id}
+                    className={cn(
+                      "w-full text-left px-4 py-3 hover:bg-muted/30 transition-colors",
+                      selectedResidentId === r.id ? "bg-muted/50" : ""
+                    )}
+                    onClick={() => setSelectedResidentId(r.id)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{r.firstName} {r.lastName}</span>
+                      <span className={cn("text-xs px-1.5 py-0.5 rounded", STATUS_STYLES[r.status] ?? "")}>
+                        {r.status}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Room {r.roomNumber}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      ))}
+
+        {/* Right: detail panel */}
+        <div className="flex-1 space-y-4">
+          {!selectedResident ? (
+            <div className="rounded-lg border border-dashed p-10 text-center">
+              <Receipt className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground">Select a resident to view billing details.</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-base font-semibold">{selectedResident.firstName} {selectedResident.lastName}</h2>
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm" variant="outline" onClick={() => setAddChargeOpen(true)}>
+                    <Plus className="h-4 w-4 mr-1.5" />
+                    Add Charge
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setInvoiceOpen(true)}>
+                    <Receipt className="h-4 w-4 mr-1.5" />
+                    Generate Invoice
+                  </Button>
+                  <Button size="sm" onClick={() => setPaymentOpen(true)}>
+                    <DollarSign className="h-4 w-4 mr-1.5" />
+                    Record Payment
+                  </Button>
+                </div>
+              </div>
+
+              {/* Recent charges */}
+              {detail?.charges && detail.charges.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground">
+                    Charges
+                  </div>
+                  <div className="divide-y">
+                    {detail.charges.map((c) => (
+                      <div key={c.id} className="px-4 py-3 flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm">{c.description || c.chargeType.replace(/_/g, " ")}</p>
+                          <p className="text-xs text-muted-foreground">{c.billingPeriod}</p>
+                        </div>
+                        <span className="text-sm font-medium">${c.amount.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Invoices */}
+              {detail?.invoices && detail.invoices.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground">
+                    Invoices
+                  </div>
+                  <div className="divide-y">
+                    {detail.invoices.map((inv) => (
+                      <div key={inv.id} className="px-4 py-3 flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm">Invoice — {inv.billingPeriod}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Due: {new Date(inv.dueDate).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">${inv.totalAmount.toLocaleString()}</span>
+                          <span className={cn("text-xs px-1.5 py-0.5 rounded", STATUS_STYLES[inv.status] ?? "")}>
+                            {inv.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {selectedResidentId !== null && (
+        <>
+          <AddChargeDialog
+            open={addChargeOpen}
+            onOpenChange={setAddChargeOpen}
+            residentId={selectedResidentId}
+            facilityNumber={facilityNumber}
+          />
+          <RecordPaymentDialog
+            open={paymentOpen}
+            onOpenChange={setPaymentOpen}
+            residentId={selectedResidentId}
+            facilityNumber={facilityNumber}
+          />
+          <GenerateInvoiceDialog
+            open={invoiceOpen}
+            onOpenChange={setInvoiceOpen}
+            residentId={selectedResidentId}
+            facilityNumber={facilityNumber}
+          />
+        </>
+      )}
     </div>
   );
 }
 
 export default function BillingPage() {
   const [, navigate] = useLocation();
-  const [selectedResidentId, setSelectedResidentId] = useState<number | null>(null);
-  const [addChargeOpen, setAddChargeOpen] = useState(false);
-  const [paymentOpen, setPaymentOpen] = useState(false);
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
 
   const { data: me } = useQuery<SessionUser | null>({
     queryKey: ["/api/facility/me"],
@@ -345,181 +492,17 @@ export default function BillingPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
   const facilityNumber = me?.facilityNumber ?? "";
 
-  const { data: residentList = [], isLoading } = useQuery<ResidentBilling[]>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/billing`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber,
-  });
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
 
-  const { data: detail } = useQuery<ResidentBillingDetail>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/billing/${selectedResidentId}`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && selectedResidentId !== null,
-  });
-
-  const selectedResident = residentList.find((r) => r.residentId === selectedResidentId);
+  if (me === null) return null;
 
   return (
     <PortalLayout>
-      <div className="space-y-4">
-        <h1 className="text-xl font-semibold">Billing</h1>
-
-        <div className="flex flex-col md:flex-row gap-4">
-          {/* Left: resident list */}
-          <div className="w-full md:w-72 shrink-0">
-            <div className="rounded-lg border overflow-hidden">
-              <div className="px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground">
-                Resident Accounts
-              </div>
-              {isLoading ? (
-                <div className="space-y-2 p-3">
-                  {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full rounded" />)}
-                </div>
-              ) : residentList.length === 0 ? (
-                <div className="p-4 text-sm text-muted-foreground text-center">No billing records.</div>
-              ) : (
-                <div className="divide-y">
-                  {residentList.map((r) => (
-                    <button
-                      key={r.residentId}
-                      className={cn(
-                        "w-full text-left px-4 py-3 hover:bg-muted/30 transition-colors",
-                        selectedResidentId === r.residentId ? "bg-muted/50" : ""
-                      )}
-                      onClick={() => setSelectedResidentId(r.residentId)}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium">{r.residentName}</span>
-                        <span className={cn("text-xs px-1.5 py-0.5 rounded", STATUS_STYLES[r.status])}>
-                          {r.status}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Balance: ${r.balance.toLocaleString()}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right: detail panel */}
-          <div className="flex-1 space-y-4">
-            {!selectedResident ? (
-              <div className="rounded-lg border border-dashed p-10 text-center">
-                <Receipt className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">Select a resident to view billing details.</p>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <h2 className="text-base font-semibold">{selectedResident.residentName}</h2>
-                  <div className="flex gap-2 flex-wrap">
-                    <Button size="sm" variant="outline" onClick={() => setAddChargeOpen(true)}>
-                      <Plus className="h-4 w-4 mr-1.5" />
-                      Add Charge
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setInvoiceOpen(true)}>
-                      <Receipt className="h-4 w-4 mr-1.5" />
-                      Generate Invoice
-                    </Button>
-                    <Button size="sm" onClick={() => setPaymentOpen(true)}>
-                      <DollarSign className="h-4 w-4 mr-1.5" />
-                      Record Payment
-                    </Button>
-                  </div>
-                </div>
-
-                {/* AR Aging */}
-                {detail?.aging && (
-                  <div className="rounded-lg border p-4 space-y-3">
-                    <h3 className="text-sm font-medium">AR Aging</h3>
-                    <ArAgingBars aging={detail.aging} />
-                  </div>
-                )}
-
-                {/* Recent charges */}
-                {detail?.charges && detail.charges.length > 0 && (
-                  <div className="rounded-lg border overflow-hidden">
-                    <div className="px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground">
-                      Charges
-                    </div>
-                    <div className="divide-y">
-                      {detail.charges.map((c) => (
-                        <div key={c.id} className="px-4 py-3 flex items-center gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm">{c.description || c.chargeType.replace(/_/g, " ")}</p>
-                            <p className="text-xs text-muted-foreground">{c.billingPeriod}</p>
-                          </div>
-                          <span className="text-sm font-medium">${c.amount.toLocaleString()}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Invoices */}
-                {detail?.invoices && detail.invoices.length > 0 && (
-                  <div className="rounded-lg border overflow-hidden">
-                    <div className="px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground">
-                      Invoices
-                    </div>
-                    <div className="divide-y">
-                      {detail.invoices.map((inv) => (
-                        <div key={inv.id} className="px-4 py-3 flex items-center gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm">Invoice — {inv.billingPeriod}</p>
-                            <p className="text-xs text-muted-foreground">
-                              Due: {new Date(inv.dueDate).toLocaleDateString()}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">${inv.totalAmount.toLocaleString()}</span>
-                            <span className={cn("text-xs px-1.5 py-0.5 rounded", STATUS_STYLES[inv.status] ?? "")}>
-                              {inv.status}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {selectedResidentId !== null && (
-          <>
-            <AddChargeDialog
-              open={addChargeOpen}
-              onOpenChange={setAddChargeOpen}
-              residentId={selectedResidentId}
-              facilityNumber={facilityNumber}
-            />
-            <RecordPaymentDialog
-              open={paymentOpen}
-              onOpenChange={setPaymentOpen}
-              residentId={selectedResidentId}
-              facilityNumber={facilityNumber}
-            />
-            <GenerateInvoiceDialog
-              open={invoiceOpen}
-              onOpenChange={setInvoiceOpen}
-              residentId={selectedResidentId}
-              facilityNumber={facilityNumber}
-            />
-          </>
-        )}
-      </div>
+      <BillingContent facilityNumber={facilityNumber} />
     </PortalLayout>
   );
 }

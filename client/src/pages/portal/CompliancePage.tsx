@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, ShieldCheck, Check, AlertCircle, Clock } from "lucide-react";
+import { Plus, ShieldCheck, Check, AlertCircle, Clock, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
   id: number;
@@ -73,7 +73,7 @@ function AddComplianceDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/ops/facilities/${facilityNumber}/compliance`, {
+      const res = await apiRequest("POST", `/api/ops/compliance`, {
         ...form,
         dueDate: form.dueDate ? new Date(form.dueDate).getTime() : null,
       });
@@ -150,37 +150,24 @@ function groupByMonth(items: ComplianceItem[]): Record<string, ComplianceItem[]>
   }, {});
 }
 
-export default function CompliancePage() {
-  const [, navigate] = useLocation();
+export function ComplianceContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
   const [addOpen, setAddOpen] = useState(false);
+  const { toast } = useToast();
+  const qc = useQueryClient();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
-  const facilityNumber = me?.facilityNumber ?? "";
-
-  const { data: items = [], isLoading, error } = useQuery<ComplianceItem[]>({
+  const { data: envelope, isLoading, error } = useQuery<{ success: boolean; data: ComplianceItem[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/compliance`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
   });
 
-  const qc = useQueryClient();
-  const { toast } = useToast();
+  const items = envelope?.data ?? [];
 
   const completeMutation = useMutation({
     mutationFn: async (itemId: number) => {
       const res = await apiRequest(
-        "PATCH",
-        `/api/ops/facilities/${facilityNumber}/compliance/${itemId}`,
+        "PUT",
+        `/api/ops/compliance/${itemId}`,
         { status: "completed", completedAt: Date.now() }
       );
       return res.json();
@@ -215,118 +202,150 @@ export default function CompliancePage() {
   const grouped = groupByMonth(sorted);
 
   return (
-    <PortalLayout>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold">Compliance</h1>
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Add Item
-          </Button>
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
+
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Compliance</h1>
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Add Item
+        </Button>
+      </div>
+
+      {/* Summary bar */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-lg border p-3 text-center">
+          <p className="text-xl font-bold">{pending.length}</p>
+          <p className="text-xs text-muted-foreground">Pending</p>
         </div>
-
-        {/* Summary bar */}
-        <div className="grid grid-cols-3 gap-3">
-          <div className="rounded-lg border p-3 text-center">
-            <p className="text-xl font-bold">{pending.length}</p>
-            <p className="text-xs text-muted-foreground">Pending</p>
-          </div>
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-center">
-            <p className="text-xl font-bold text-red-700">{overdue.length}</p>
-            <p className="text-xs text-red-600">Overdue</p>
-          </div>
-          <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-center">
-            <p className="text-xl font-bold text-yellow-700">{dueThisWeek.length}</p>
-            <p className="text-xs text-yellow-600">Due This Week</p>
-          </div>
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-center">
+          <p className="text-xl font-bold text-red-700">{overdue.length}</p>
+          <p className="text-xs text-red-600">Overdue</p>
         </div>
+        <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-center">
+          <p className="text-xl font-bold text-yellow-700">{dueThisWeek.length}</p>
+          <p className="text-xs text-yellow-600">Due This Week</p>
+        </div>
+      </div>
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
-            Failed to load compliance items.
-          </div>
-        )}
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
+          Failed to load compliance items.
+        </div>
+      )}
 
-        {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
-          </div>
-        ) : items.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-10 text-center">
-            <ShieldCheck className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">No compliance items. Add your first item.</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {Object.entries(grouped).map(([month, monthItems]) => (
-              <div key={month}>
-                <h2 className="text-sm font-medium text-muted-foreground mb-2">{month}</h2>
-                <div className="space-y-2">
-                  {monthItems.map((item) => {
-                    const isOverdueItem = item.status === "overdue" || (item.status === "pending" && item.dueDate < now);
-                    return (
-                      <div
-                        key={item.id}
-                        className={cn(
-                          "rounded-lg border p-4 flex items-start gap-3",
-                          isOverdueItem ? "border-red-200 bg-red-50" : item.status === "completed" ? "opacity-60" : ""
-                        )}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-sm capitalize">
-                              {item.type?.replace(/_/g, " ")}
-                            </span>
-                            {isOverdueItem && (
-                              <Badge className="bg-red-100 text-red-700 text-xs">
-                                <AlertCircle className="h-3 w-3 mr-0.5" />
-                                Overdue
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-0.5">{item.description}</p>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              Due {new Date(item.dueDate).toLocaleDateString()}
-                            </span>
-                            {item.assignedTo && (
-                              <span>Assigned: {item.assignedTo}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={cn("text-xs px-1.5 py-0.5 rounded capitalize", STATUS_STYLES[item.status] ?? "")}>
-                            {item.status}
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-10 text-center">
+          <ShieldCheck className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+          <p className="text-sm text-muted-foreground">No compliance items. Add your first item.</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {Object.entries(grouped).map(([month, monthItems]) => (
+            <div key={month}>
+              <h2 className="text-sm font-medium text-muted-foreground mb-2">{month}</h2>
+              <div className="space-y-2">
+                {monthItems.map((item) => {
+                  const isOverdueItem = item.status === "overdue" || (item.status === "pending" && item.dueDate < now);
+                  return (
+                    <div
+                      key={item.id}
+                      className={cn(
+                        "rounded-lg border p-4 flex items-start gap-3",
+                        isOverdueItem ? "border-red-200 bg-red-50" : item.status === "completed" ? "opacity-60" : ""
+                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-sm capitalize">
+                            {item.type?.replace(/_/g, " ")}
                           </span>
-                          {item.status !== "completed" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs"
-                              onClick={() => completeMutation.mutate(item.id)}
-                              disabled={completeMutation.isPending}
-                              aria-label="Mark complete"
-                            >
-                              <Check className="h-3.5 w-3.5" />
-                            </Button>
+                          {isOverdueItem && (
+                            <Badge className="bg-red-100 text-red-700 text-xs">
+                              <AlertCircle className="h-3 w-3 mr-0.5" />
+                              Overdue
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-0.5">{item.description}</p>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            Due {new Date(item.dueDate).toLocaleDateString()}
+                          </span>
+                          {item.assignedTo && (
+                            <span>Assigned: {item.assignedTo}</span>
                           )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={cn("text-xs px-1.5 py-0.5 rounded capitalize", STATUS_STYLES[item.status] ?? "")}>
+                          {item.status}
+                        </span>
+                        {item.status !== "completed" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={() => completeMutation.mutate(item.id)}
+                            disabled={completeMutation.isPending}
+                            aria-label="Mark complete"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
+      )}
 
-        <AddComplianceDialog
-          open={addOpen}
-          onOpenChange={setAddOpen}
-          facilityNumber={facilityNumber}
-        />
-      </div>
+      <AddComplianceDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        facilityNumber={facilityNumber}
+      />
+    </div>
+  );
+}
+
+export default function CompliancePage() {
+  const [, navigate] = useLocation();
+
+  const { data: me } = useQuery<SessionUser | null>({
+    queryKey: ["/api/facility/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const facilityNumber = me?.facilityNumber ?? "";
+
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
+
+  if (me === null) return null;
+
+  return (
+    <PortalLayout>
+      <ComplianceContent facilityNumber={facilityNumber} />
     </PortalLayout>
   );
 }

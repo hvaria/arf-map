@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
 import PortalLayout from "./PortalLayout";
+import { ResidentProfileContent } from "./ResidentProfilePage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, Search, User } from "lucide-react";
+import { Plus, Search, User, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
   id: number;
@@ -106,7 +107,7 @@ function AddResidentDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/ops/facilities/${facilityNumber}/residents`, {
+      const res = await apiRequest("POST", `/api/ops/residents`, {
         ...form,
         dob: form.dob ? new Date(form.dob).getTime() : undefined,
         admissionDate: form.admissionDate ? new Date(form.admissionDate).getTime() : undefined,
@@ -115,6 +116,7 @@ function AddResidentDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/dashboard`] });
       toast({ title: "Resident added" });
       onOpenChange(false);
       setForm(EMPTY_FORM);
@@ -234,30 +236,30 @@ function AddResidentDialog({
 
 type StatusFilter = "all" | "active" | "discharged" | "on_leave";
 
-export default function ResidentsPage() {
-  const [, navigate] = useLocation();
+export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [addOpen, setAddOpen] = useState(false);
+  const [selectedResidentId, setSelectedResidentId] = useState<number | null>(null);
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  if (me === null) {
-    navigate("/facility-portal");
-    return null;
-  }
-
-  const facilityNumber = me?.facilityNumber ?? "";
-
-  const { data: residents = [], isLoading, error } = useQuery<Resident[]>({
+  const { data: envelope, isLoading, error } = useQuery<{ success: boolean; data: Resident[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
   });
+
+  const residents = envelope?.data ?? [];
+
+  // If a resident is selected, show their profile
+  if (selectedResidentId !== null) {
+    return (
+      <ResidentProfileContent
+        facilityNumber={facilityNumber}
+        residentId={selectedResidentId}
+        onBack={() => setSelectedResidentId(null)}
+      />
+    );
+  }
 
   const filtered = residents.filter((r) => {
     const nameMatch =
@@ -268,126 +270,158 @@ export default function ResidentsPage() {
   });
 
   return (
-    <PortalLayout>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold">Residents</h1>
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Add Resident
-          </Button>
+    <div className="space-y-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Overview
+        </button>
+      )}
+
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Residents</h1>
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Add Resident
+        </Button>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+            aria-label="Search residents"
+          />
         </div>
+        <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+          <TabsList>
+            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="active">Active</TabsTrigger>
+            <TabsTrigger value="discharged">Discharged</TabsTrigger>
+            <TabsTrigger value="on_leave">On Leave</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
 
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by name..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-              aria-label="Search residents"
-            />
-          </div>
-          <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-            <TabsList>
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="active">Active</TabsTrigger>
-              <TabsTrigger value="discharged">Discharged</TabsTrigger>
-              <TabsTrigger value="on_leave">On Leave</TabsTrigger>
-            </TabsList>
-          </Tabs>
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
+          Failed to load residents.
         </div>
+      )}
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
-            Failed to load residents.
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-10 text-center">
+          <User className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+          <p className="text-sm text-muted-foreground">
+            {residents.length === 0 ? "No residents yet. Add your first resident." : "No residents match your filters."}
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block rounded-lg border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium">Name</th>
+                  <th className="text-left px-4 py-3 font-medium">Room</th>
+                  <th className="text-left px-4 py-3 font-medium">Status</th>
+                  <th className="text-left px-4 py-3 font-medium">Admission</th>
+                  <th className="text-left px-4 py-3 font-medium">Level of Care</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {filtered.map((r) => (
+                  <tr
+                    key={r.id}
+                    className="hover:bg-muted/30 cursor-pointer transition-colors"
+                    onClick={() => setSelectedResidentId(r.id)}
+                  >
+                    <td className="px-4 py-3 font-medium">
+                      {r.firstName} {r.lastName}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">Room {r.roomNumber}</td>
+                    <td className="px-4 py-3">
+                      <ResidentStatusBadge status={r.status} />
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {new Date(r.admissionDate).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground capitalize">
+                      {r.levelOfCare?.replace(/_/g, " ")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
 
-        {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-16 w-full rounded-lg" />
+          {/* Mobile card list */}
+          <div className="md:hidden space-y-2">
+            {filtered.map((r) => (
+              <button
+                key={r.id}
+                className="w-full text-left rounded-lg border p-4 hover:bg-muted/30 transition-colors"
+                onClick={() => setSelectedResidentId(r.id)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm">
+                    {r.firstName} {r.lastName}
+                  </span>
+                  <ResidentStatusBadge status={r.status} />
+                </div>
+                <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
+                  <span>Room {r.roomNumber}</span>
+                  <span>Admitted {new Date(r.admissionDate).toLocaleDateString()}</span>
+                </div>
+              </button>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-10 text-center">
-            <User className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">
-              {residents.length === 0 ? "No residents yet. Add your first resident." : "No residents match your filters."}
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* Desktop table */}
-            <div className="hidden md:block rounded-lg border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left px-4 py-3 font-medium">Name</th>
-                    <th className="text-left px-4 py-3 font-medium">Room</th>
-                    <th className="text-left px-4 py-3 font-medium">Status</th>
-                    <th className="text-left px-4 py-3 font-medium">Admission</th>
-                    <th className="text-left px-4 py-3 font-medium">Level of Care</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filtered.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="hover:bg-muted/30 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/portal/residents/${r.id}`)}
-                    >
-                      <td className="px-4 py-3 font-medium">
-                        {r.firstName} {r.lastName}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">Room {r.roomNumber}</td>
-                      <td className="px-4 py-3">
-                        <ResidentStatusBadge status={r.status} />
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {new Date(r.admissionDate).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground capitalize">
-                        {r.levelOfCare?.replace(/_/g, " ")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        </>
+      )}
 
-            {/* Mobile card list */}
-            <div className="md:hidden space-y-2">
-              {filtered.map((r) => (
-                <button
-                  key={r.id}
-                  className="w-full text-left rounded-lg border p-4 hover:bg-muted/30 transition-colors"
-                  onClick={() => navigate(`/portal/residents/${r.id}`)}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm">
-                      {r.firstName} {r.lastName}
-                    </span>
-                    <ResidentStatusBadge status={r.status} />
-                  </div>
-                  <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                    <span>Room {r.roomNumber}</span>
-                    <span>Admitted {new Date(r.admissionDate).toLocaleDateString()}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
+      <AddResidentDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        facilityNumber={facilityNumber}
+      />
+    </div>
+  );
+}
 
-        <AddResidentDialog
-          open={addOpen}
-          onOpenChange={setAddOpen}
-          facilityNumber={facilityNumber}
-        />
-      </div>
+export default function ResidentsPage() {
+  const [, navigate] = useLocation();
+
+  const { data: me } = useQuery<SessionUser | null>({
+    queryKey: ["/api/facility/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const facilityNumber = me?.facilityNumber ?? "";
+
+  useEffect(() => {
+    if (me === null) navigate("/facility-portal");
+  }, [me, navigate]);
+
+  if (me === null) return null;
+
+  return (
+    <PortalLayout>
+      <ResidentsContent facilityNumber={facilityNumber} />
     </PortalLayout>
   );
 }

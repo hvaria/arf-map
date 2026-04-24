@@ -367,6 +367,103 @@ const completeComplianceSchema = z.object({
 // Module 1 — Residents
 // ─────────────────────────────────────────────────────────────────────────────
 
+// GET /facilities/:facilityNumber/residents — facility-scoped list (used by portal pages)
+opsRouter.get("/facilities/:facilityNumber/residents", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const result = ops.listResidents(facilityNumber, { page, limit, status });
+    res.json({ success: true, data: result.residents, meta: { total: result.total, page, limit } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/residents/:id — facility-scoped single resident
+opsRouter.get("/facilities/:facilityNumber/residents/:id", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const resident = ops.getResident(id, facilityNumber);
+    if (!resident) return res.status(404).json({ success: false, error: "Not found" });
+    res.json({ success: true, data: resident });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/residents/:id/assessments
+opsRouter.get("/facilities/:facilityNumber/residents/:id/assessments", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const assessments = ops.listAssessments(id, facilityNumber);
+    res.json({ success: true, data: assessments });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/residents/:id/care-plan
+opsRouter.get("/facilities/:facilityNumber/residents/:id/care-plan", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const plan = ops.getActiveCarePlan(id, facilityNumber);
+    if (!plan) return res.status(404).json({ success: false, error: "No active care plan" });
+    res.json({ success: true, data: plan });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/residents/:id/daily-tasks
+opsRouter.get("/facilities/:facilityNumber/residents/:id/daily-tasks", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const residentId = parseInt(req.params.id, 10);
+    if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const dateParam = req.query.date ? parseInt(String(req.query.date), 10) : Date.now();
+    const shift = req.query.shift ? String(req.query.shift) : undefined;
+    const tasks = ops.getDailyTasks(residentId, facilityNumber, dateParam, shift);
+    res.json({ success: true, data: tasks });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/residents/:id/medications
+opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const residentId = parseInt(req.params.id, 10);
+    if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const meds = ops.listMedications(residentId, facilityNumber, status);
+    res.json({ success: true, data: meds });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/residents/:id/incidents
+opsRouter.get("/facilities/:facilityNumber/residents/:id/incidents", (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const residentId = parseInt(req.params.id, 10);
+    if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+    const result = ops.listIncidents(facilityNumber, { page, limit, residentId });
+    res.json({ success: true, data: result.incidents, meta: { total: result.total, page, limit } });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
 // GET /residents
 opsRouter.get("/residents", (req, res) => {
   try {
@@ -1107,6 +1204,116 @@ opsRouter.post("/leads/:id/admissions", (req, res) => {
     // Advance lead stage
     ops.updateLead(leadId, facilityNumber, { stage: "admission_in_progress" });
     res.status(201).json({ success: true, data: admission });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/leads/:leadId/admissions
+// Finds or creates the admission record for a lead, returns { lead, forms, admissionId }
+opsRouter.get("/facilities/:facilityNumber/leads/:leadId/admissions", (req, res) => {
+  try {
+    const { facilityNumber, leadId: leadIdStr } = req.params;
+    const leadId = parseInt(leadIdStr, 10);
+    if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid leadId" });
+
+    const lead = ops.getLead(leadId, facilityNumber);
+    if (!lead) return res.status(404).json({ success: false, error: "Lead not found" });
+
+    let admission = sqlite
+      .prepare(`SELECT * FROM ops_admissions WHERE lead_id = ? LIMIT 1`)
+      .get(leadId) as Record<string, unknown> | undefined;
+
+    if (!admission) {
+      const created = ops.startAdmission({ leadId, facilityNumber, createdAt: Date.now(), updatedAt: Date.now() });
+      admission = sqlite
+        .prepare(`SELECT * FROM ops_admissions WHERE id = ?`)
+        .get(created.id) as Record<string, unknown>;
+    }
+
+    const FORM_DEFS = [
+      { formId: "lic601",           label: "LIC 601 — Application for Licensure",  required: true,  col: "lic_601_completed",           dateCol: "lic_601_date" },
+      { formId: "lic602a",          label: "LIC 602A — Facility Personnel Record", required: true,  col: "lic_602a_completed",          dateCol: "lic_602a_date" },
+      { formId: "lic603",           label: "LIC 603 — Facility Liability",          required: true,  col: "lic_603_completed",           dateCol: "lic_603_date" },
+      { formId: "lic604a",          label: "LIC 604A — Admission Agreement",        required: true,  col: "lic_604a_completed",          dateCol: "lic_604a_date" },
+      { formId: "lic605a",          label: "LIC 605A — Personal Rights",            required: true,  col: "lic_605a_completed",          dateCol: "lic_605a_date" },
+      { formId: "lic610d",          label: "LIC 610D — Resident Appraisal",         required: true,  col: "lic_610d_completed",          dateCol: "lic_610d_date" },
+      { formId: "admission_agreement", label: "Admission Agreement",               required: true,  col: "admission_agreement_signed",  dateCol: null },
+      { formId: "physician_report", label: "Physician Report",                     required: false, col: "physician_report_received",   dateCol: null },
+      { formId: "tb_test",          label: "TB Test Results",                       required: false, col: "tb_test_results_received",    dateCol: null },
+    ];
+
+    const forms = FORM_DEFS.map((def) => ({
+      formId: def.formId,
+      label: def.label,
+      required: def.required,
+      completed: Boolean(admission![def.col]),
+      completedAt: def.dateCol ? (admission![def.dateCol] as number | null) ?? null : null,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        lead: {
+          id: lead.id,
+          prospectName: lead.prospectName,
+          contactName: lead.contactName ?? "",
+          contactPhone: lead.contactPhone ?? "",
+          contactEmail: lead.contactEmail ?? "",
+          careNeeds: lead.careNeedsSummary ?? "",
+          stage: lead.stage,
+        },
+        forms,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// PUT /leads/:leadId/lic/:form
+// Update LIC form completion for the admission belonging to this lead
+opsRouter.put("/leads/:leadId/lic/:form", (req, res) => {
+  try {
+    const leadId = parseInt(req.params.leadId, 10);
+    if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid leadId" });
+
+    const parsed = licFormSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    }
+
+    const row = sqlite
+      .prepare(`SELECT id FROM ops_admissions WHERE lead_id = ? LIMIT 1`)
+      .get(leadId) as { id: number } | undefined;
+    if (!row) return res.status(404).json({ success: false, error: "Admission not found for this lead" });
+
+    // Normalize frontend formId to storage column key: lic601 → lic_601, lic602a → lic_602a
+    const rawForm = req.params.form;
+    const normalizedForm = rawForm.replace(/^lic(\d)/, "lic_$1");
+    const ok = ops.updateAdmissionLicForm(row.id, normalizedForm, parsed.data.completed);
+    if (!ok) return res.status(404).json({ success: false, error: "Not found or invalid form" });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// POST /leads/:leadId/convert
+// Convert the admission for this lead into a resident record
+opsRouter.post("/leads/:leadId/convert", (req, res) => {
+  try {
+    const leadId = parseInt(req.params.leadId, 10);
+    if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid leadId" });
+
+    const row = sqlite
+      .prepare(`SELECT id FROM ops_admissions WHERE lead_id = ? LIMIT 1`)
+      .get(leadId) as { id: number } | undefined;
+    if (!row) return res.status(404).json({ success: false, error: "Admission not found for this lead" });
+
+    const resident = ops.convertAdmissionToResident(row.id);
+    if (!resident) return res.status(404).json({ success: false, error: "Admission not found or lead missing" });
+    res.status(201).json({ success: true, data: resident });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
