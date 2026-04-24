@@ -271,8 +271,12 @@ function AddMedDialog({
         "POST",
         `/api/ops/facilities/${facilityNumber}/residents/${residentId}/medications`,
         {
-          ...form,
-          scheduledTimes: form.scheduledTimes.split(",").map((t) => t.trim()).filter(Boolean),
+          drugName: form.drugName,
+          dosage: form.dosage,
+          route: form.route,
+          frequency: form.frequency,
+          scheduledTimes: form.scheduledTimes,
+          prescriberName: form.prescriber,
         }
       );
       return res.json();
