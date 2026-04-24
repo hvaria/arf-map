@@ -233,14 +233,20 @@ function TourDialog({
   });
 
   return (
-    <div className="space-y-3 p-4 border rounded-lg bg-muted/30">
+    <div className="space-y-3 p-4 rounded-lg bg-[#F0F4FF]" style={{ border: '1px solid #E0E7FF' }}>
       <p className="text-sm font-medium">Schedule Tour for {lead.prospectName}</p>
       <div className="space-y-1.5">
         <Label>Tour Date & Time</Label>
         <Input type="datetime-local" value={tourDatetime} onChange={(e) => setTourDatetime(e.target.value)} />
       </div>
       <div className="flex gap-2">
-        <Button size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending || !tourDatetime}>
+        <Button
+          size="sm"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending || !tourDatetime}
+          className="text-white border-0"
+          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+        >
           {mutation.isPending ? "Scheduling..." : "Confirm Tour"}
         </Button>
         <Button size="sm" variant="outline" onClick={onClose}>Cancel</Button>
@@ -396,8 +402,13 @@ export function CrmContent({ facilityNumber, onBack }: { facilityNumber: string;
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">CRM</h1>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
+        <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>CRM</h1>
+        <Button
+          size="sm"
+          onClick={() => setAddOpen(true)}
+          className="text-white border-0"
+          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+        >
           <Plus className="h-4 w-4 mr-1.5" />
           Add Lead
         </Button>

@@ -154,7 +154,12 @@ function AddStaffDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.firstName || !form.role}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.firstName || !form.role}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Adding..." : "Add Staff"}
             </Button>
           </div>
@@ -253,7 +258,12 @@ function AddShiftDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.staffId}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.staffId}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Adding..." : "Add Shift"}
             </Button>
           </div>
@@ -356,8 +366,9 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
         </button>
       )}
 
-      <h1 className="text-xl font-semibold">Staff</h1>
+      <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Staff</h1>
 
+      <div className="portal-tabs">
       <Tabs defaultValue="directory">
         <TabsList className="w-full">
           <TabsTrigger value="directory" className="flex-1">Directory</TabsTrigger>
@@ -367,7 +378,12 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
         {/* Directory Tab */}
         <TabsContent value="directory" className="mt-4 space-y-4">
           <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAddStaffOpen(true)}>
+            <Button
+              size="sm"
+              onClick={() => setAddStaffOpen(true)}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               <Plus className="h-4 w-4 mr-1.5" />
               Add Staff
             </Button>
@@ -474,7 +490,12 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
         {/* Schedule Tab */}
         <TabsContent value="schedule" className="mt-4 space-y-4">
           <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAddShiftOpen(true)}>
+            <Button
+              size="sm"
+              onClick={() => setAddShiftOpen(true)}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               <Plus className="h-4 w-4 mr-1.5" />
               Add Shift
             </Button>
@@ -494,6 +515,7 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
           />
         </TabsContent>
       </Tabs>
+      </div>
     </div>
   );
 }

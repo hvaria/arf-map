@@ -51,9 +51,18 @@ const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "des
   on_leave: "outline",
 };
 
+const STATUS_BADGE_CLASSES: Record<string, string> = {
+  active: "bg-[#D1FAE5] text-[#065F46] rounded-full border-0",
+  discharged: "bg-[#FEE2E2] text-[#991B1B] rounded-full border-0",
+  on_leave: "bg-[#FEF9C3] text-[#92400E] rounded-full border-0",
+};
+
 function ResidentStatusBadge({ status }: { status: string }) {
   return (
-    <Badge variant={STATUS_VARIANTS[status] ?? "outline"}>
+    <Badge
+      variant="outline"
+      className={cn(STATUS_BADGE_CLASSES[status] ?? "rounded-full border-0")}
+    >
       {STATUS_LABELS[status] ?? status}
     </Badge>
   );
@@ -224,7 +233,12 @@ function AddResidentDialog({
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Adding..." : "Add Resident"}
             </Button>
           </div>
@@ -282,8 +296,13 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Residents</h1>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
+        <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Residents</h1>
+        <Button
+          size="sm"
+          onClick={() => setAddOpen(true)}
+          className="text-white border-0"
+          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+        >
           <Plus className="h-4 w-4 mr-1.5" />
           Add Resident
         </Button>
@@ -298,8 +317,10 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
             aria-label="Search residents"
+            style={{ border: '1.5px solid #C7D2FE', background: '#FAFBFF' }}
           />
         </div>
+        <div className="portal-tabs">
         <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
           <TabsList>
             <TabsTrigger value="all">All</TabsTrigger>
@@ -308,6 +329,7 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
             <TabsTrigger value="on_leave">On Leave</TabsTrigger>
           </TabsList>
         </Tabs>
+        </div>
       </div>
 
       {error && (
@@ -332,10 +354,10 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden md:block rounded-lg border overflow-hidden">
+          <div className="hidden md:block rounded-lg overflow-hidden" style={{ border: '1px solid #E0E7FF' }}>
             <table className="w-full text-sm">
-              <thead className="bg-muted/50">
-                <tr>
+              <thead>
+                <tr style={{ background: 'linear-gradient(90deg, #EEF2FF, #FFF0F6)', color: '#1E1B4B' }}>
                   <th className="text-left px-4 py-3 font-medium">Name</th>
                   <th className="text-left px-4 py-3 font-medium">Room</th>
                   <th className="text-left px-4 py-3 font-medium">Status</th>
@@ -343,11 +365,14 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
                   <th className="text-left px-4 py-3 font-medium">Level of Care</th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody className="divide-y divide-[#E0E7FF]">
                 {filtered.map((r) => (
                   <tr
                     key={r.id}
-                    className="hover:bg-muted/30 cursor-pointer transition-colors"
+                    className="cursor-pointer transition-colors"
+                    style={{ background: 'white' }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#F0F4FF')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'white')}
                     onClick={() => setSelectedResidentId(r.id)}
                   >
                     <td className="px-4 py-3 font-medium">

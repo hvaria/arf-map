@@ -160,7 +160,12 @@ function AddChargeDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.chargeType || !form.amount}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.chargeType || !form.amount}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Adding..." : "Add Charge"}
             </Button>
           </div>
@@ -236,7 +241,12 @@ function RecordPaymentDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.amount || !form.paymentMethod}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.amount || !form.paymentMethod}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Recording..." : "Record Payment"}
             </Button>
           </div>
@@ -293,7 +303,12 @@ function GenerateInvoiceDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Generating..." : "Generate Invoice"}
             </Button>
           </div>
@@ -337,13 +352,13 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
         </button>
       )}
 
-      <h1 className="text-xl font-semibold">Billing</h1>
+      <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Billing</h1>
 
       <div className="flex flex-col md:flex-row gap-4">
         {/* Left: resident list */}
         <div className="w-full md:w-72 shrink-0">
-          <div className="rounded-lg border overflow-hidden">
-            <div className="px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground">
+          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #E0E7FF' }}>
+            <div className="px-4 py-2.5 text-xs font-medium" style={{ background: 'linear-gradient(90deg, #EEF2FF, #FFF0F6)', color: '#1E1B4B' }}>
               Resident Accounts
             </div>
             {isLoading ? (
@@ -399,7 +414,12 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
                     <Receipt className="h-4 w-4 mr-1.5" />
                     Generate Invoice
                   </Button>
-                  <Button size="sm" onClick={() => setPaymentOpen(true)}>
+                  <Button
+                    size="sm"
+                    onClick={() => setPaymentOpen(true)}
+                    className="text-white border-0"
+                    style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+                  >
                     <DollarSign className="h-4 w-4 mr-1.5" />
                     Record Payment
                   </Button>

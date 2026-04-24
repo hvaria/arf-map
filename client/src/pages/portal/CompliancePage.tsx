@@ -129,7 +129,12 @@ function AddComplianceDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.type}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.type}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Adding..." : "Add Item"}
             </Button>
           </div>
@@ -214,8 +219,13 @@ export function ComplianceContent({ facilityNumber, onBack }: { facilityNumber: 
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Compliance</h1>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
+        <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Compliance</h1>
+        <Button
+          size="sm"
+          onClick={() => setAddOpen(true)}
+          className="text-white border-0"
+          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+        >
           <Plus className="h-4 w-4 mr-1.5" />
           Add Item
         </Button>
@@ -223,7 +233,7 @@ export function ComplianceContent({ facilityNumber, onBack }: { facilityNumber: 
 
       {/* Summary bar */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-lg border p-3 text-center">
+        <div className="rounded-lg p-3 text-center" style={{ background: '#F0F4FF', border: '1px solid #E0E7FF' }}>
           <p className="text-xl font-bold">{pending.length}</p>
           <p className="text-xs text-muted-foreground">Pending</p>
         </div>

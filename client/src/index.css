@@ -4,6 +4,27 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Portal Pastel Design System ── */
+:root {
+  --color-bg-base: #FFFFFF;
+  --color-bg-surface: #F0F4FF;
+  --color-bg-gradient-start: #EEF2FF;
+  --color-bg-gradient-end: #FFF0F6;
+  --color-primary: #818CF8;
+  --color-primary-hover: #6366F1;
+  --color-secondary: #F9A8D4;
+  --color-accent: #6EE7B7;
+  --color-accent-blue: #93C5FD;
+  --color-text-primary: #1E1B4B;
+  --color-text-muted: #6B7280;
+  --color-border: #E0E7FF;
+  --color-success: #BBF7D0;
+  --color-warning: #FDE68A;
+  --color-badge-active: #D1FAE5;
+  --color-badge-discharged: #FEE2E2;
+  --color-badge-on-leave: #FEF9C3;
+}
+
 /* ── Neighbourhood Care Finder brand variables ── */
 :root {
   --brand-primary:       #D4693A;
@@ -363,4 +384,49 @@ a:hover {
 /* ── Brand: map tooltip font ── */
 .facility-tooltip .maplibregl-popup-content {
   font-family: 'Nunito', sans-serif;
+}
+
+/* ── Portal pastel tab styles (data-state selectors avoid touching shadcn internals) ── */
+.portal-tabs [role="tablist"] {
+  border-bottom: 2px solid #E0E7FF;
+  background: transparent;
+}
+
+.portal-tabs [role="tab"][data-state="active"] {
+  background: linear-gradient(90deg, #818CF8, #F9A8D4);
+  color: #ffffff;
+  border-radius: 6px;
+}
+
+.portal-tabs [role="tab"][data-state="inactive"] {
+  background: #F8FAFC;
+  color: #6B7280;
+}
+
+.portal-tabs [role="tab"]:hover[data-state="inactive"] {
+  background: #EEF2FF;
+  color: #1E1B4B;
+}
+
+/* ── Portal facility header card gradient ── */
+.portal-facility-card {
+  background: linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%);
+  border: 1px solid #E0E7FF;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(129, 140, 248, 0.08);
+}
+
+/* ── Portal primary button gradient ── */
+.portal-btn-primary {
+  background-color: #818CF8;
+  background: linear-gradient(135deg, #818CF8, #F9A8D4);
+  color: #ffffff;
+  border-radius: 10px;
+  border: none;
+}
+
+.portal-btn-primary:hover {
+  background-color: #6366F1;
+  background: linear-gradient(135deg, #6366F1, #F472B6);
+  color: #ffffff;
 }

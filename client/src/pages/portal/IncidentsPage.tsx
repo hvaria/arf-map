@@ -262,7 +262,12 @@ function ReportIncidentDialog({
 
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.incidentType}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.incidentType}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Reporting..." : "Report Incident"}
             </Button>
           </div>
@@ -298,9 +303,9 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
   });
 
   return (
-    <div className="rounded-lg border overflow-hidden">
+    <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #E0E7FF' }}>
       <button
-        className="w-full text-left p-4 flex items-start gap-3 hover:bg-muted/30 transition-colors"
+        className="w-full text-left p-4 flex items-start gap-3 hover:bg-[#F0F4FF] transition-colors"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
@@ -354,7 +359,13 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
               className="resize-none min-h-[60px]"
             />
           </div>
-          <Button size="sm" onClick={() => updateMutation.mutate()} disabled={updateMutation.isPending}>
+          <Button
+            size="sm"
+            onClick={() => updateMutation.mutate()}
+            disabled={updateMutation.isPending}
+            className="text-white border-0"
+            style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+          >
             {updateMutation.isPending ? "Saving..." : "Save"}
           </Button>
         </div>
@@ -402,8 +413,13 @@ export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: s
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Incidents</h1>
-        <Button size="sm" onClick={() => setReportOpen(true)}>
+        <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Incidents</h1>
+        <Button
+          size="sm"
+          onClick={() => setReportOpen(true)}
+          className="text-white border-0"
+          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+        >
           <Plus className="h-4 w-4 mr-1.5" />
           Report Incident
         </Button>

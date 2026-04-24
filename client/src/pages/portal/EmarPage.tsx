@@ -222,6 +222,8 @@ function MedRow({ entry, facilityNumber }: MedRowProps) {
             <Button
               onClick={() => mutation.mutate({ status: "given", notes, rights })}
               disabled={mutation.isPending || !Object.values(rights).every(Boolean)}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
             >
               {mutation.isPending ? "Charting..." : "Confirm & Chart"}
             </Button>

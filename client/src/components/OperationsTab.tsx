@@ -57,7 +57,7 @@ interface KpiCardProps {
 function KpiCard({ label, count, icon: Icon, colorClass, borderClass, onClick }: KpiCardProps) {
   return (
     <button className="block w-full text-left" onClick={onClick}>
-      <Card className={cn("border-l-4 hover:shadow-md transition-shadow cursor-pointer", borderClass)}>
+      <Card className={cn("border-l-4 hover:shadow-md transition-shadow cursor-pointer", borderClass)} style={{ background: '#F0F4FF' }}>
         <CardContent className="p-4 flex items-center gap-3">
           <div className={cn("h-10 w-10 rounded-full flex items-center justify-center shrink-0", colorClass)}>
             <Icon className="h-5 w-5" />
@@ -220,11 +220,14 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <LayoutDashboard className="h-5 w-5 text-muted-foreground" />
+      <div
+        className="flex items-center gap-2 px-4 py-3 rounded-xl"
+        style={{ background: 'linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%)', border: '1px solid #E0E7FF' }}
+      >
+        <LayoutDashboard className="h-5 w-5" style={{ color: '#818CF8' }} />
         <div>
-          <h2 className="text-base font-semibold leading-tight">Operations Overview</h2>
-          <p className="text-xs text-muted-foreground">Facility #{facilityNumber}</p>
+          <h2 className="text-base font-semibold leading-tight" style={{ color: '#1E1B4B' }}>Operations Overview</h2>
+          <p className="text-xs" style={{ color: '#6B7280' }}>Facility #{facilityNumber}</p>
         </div>
       </div>
 
@@ -254,7 +257,12 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       <div>
         <h3 className="text-sm font-medium mb-3">Quick Actions</h3>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => setSubView("emar")}>
+          <Button
+            size="sm"
+            onClick={() => setSubView("emar")}
+            className="text-white border-0"
+            style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+          >
             <Pill className="h-4 w-4 mr-1.5" />
             Chart Medication
           </Button>

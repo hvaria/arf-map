@@ -231,7 +231,12 @@ function AssessmentDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.assessedBy}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.assessedBy}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Saving..." : "Save Assessment"}
             </Button>
           </div>
@@ -336,7 +341,12 @@ function AddMedDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Adding..." : "Add Medication"}
             </Button>
           </div>
@@ -408,7 +418,12 @@ function CreateCarePlanDialog({
           </div>
           <div className="flex gap-2 justify-end pt-1">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.goal || !form.intervention}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.goal || !form.intervention}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Creating..." : "Create Care Plan"}
             </Button>
           </div>
@@ -497,7 +512,12 @@ function ReportIncidentInlineDialog({
           </div>
           <div className="flex gap-2 justify-end pt-1">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.incidentType || !form.description}>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !form.incidentType || !form.description}
+              className="text-white border-0"
+              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+            >
               {mutation.isPending ? "Reporting..." : "Report Incident"}
             </Button>
           </div>
@@ -739,7 +759,12 @@ export function ResidentProfileContent({
           {!carePlan ? (
             <div className="rounded-lg border border-dashed p-8 text-center space-y-3">
               <p className="text-sm text-muted-foreground">No active care plan found.</p>
-              <Button size="sm" onClick={() => setCreateCarePlanOpen(true)}>
+              <Button
+                size="sm"
+                onClick={() => setCreateCarePlanOpen(true)}
+                className="text-white border-0"
+                style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
+              >
                 <Plus className="h-4 w-4 mr-1.5" />
                 Create Care Plan
               </Button>
@@ -845,7 +870,7 @@ export function ResidentProfileContent({
               {medications
                 .filter((m) => m.status !== "discontinued")
                 .map((m) => (
-                  <div key={m.id} className="rounded-lg border p-3">
+                  <div key={m.id} className="rounded-lg p-3" style={{ border: '1px solid #E0E7FF', background: '#F0F4FF' }}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium text-sm">{m.drugName}</span>
                       <Button
@@ -901,7 +926,7 @@ export function ResidentProfileContent({
           ) : (
             <div className="space-y-2">
               {incidents.map((i) => (
-                <div key={i.id} className="rounded-lg border p-3">
+                <div key={i.id} className="rounded-lg p-3" style={{ border: '1px solid #E0E7FF', background: '#F0F4FF' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium text-sm capitalize">{i.incidentType?.replace(/_/g, " ")}</span>
                     <Badge variant="outline">{i.status}</Badge>

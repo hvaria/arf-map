@@ -1032,7 +1032,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   return (
     <div className="space-y-6">
       {/* Profile card */}
-      <Card>
+      <Card className="portal-facility-card border-0">
         <CardContent className="pt-5 pb-4">
           <div className="flex items-start gap-4">
             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
@@ -1066,6 +1066,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </CardContent>
       </Card>
 
+      <div className="portal-tabs">
       <Tabs defaultValue="details">
         <TabsList className="w-full">
           <TabsTrigger value="details" className="flex-1">
@@ -1167,6 +1168,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
           <OperationsTab facilityNumber={user.facilityNumber} />
         </TabsContent>
       </Tabs>
+      </div>
 
       <Separator />
 
@@ -1225,9 +1227,10 @@ export default function FacilityPortal() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-white">
       {/* Header */}
       <header className="border-b px-4 py-3 flex items-center gap-3" style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}>
+        {/* DO NOT MODIFY - Brand Lock */}
         <BrandLogo />
         <Separator orientation="vertical" className="h-8" />
         <Link href="/">
@@ -1281,6 +1284,7 @@ export default function FacilityPortal() {
                     onBack={() => setForgotPasswordState(null)}
                   />
                 ) : (
+                  <div className="portal-tabs">
                   <Tabs defaultValue="login">
                     <TabsList className="w-full mb-6">
                       <TabsTrigger value="login" className="flex-1">Log In</TabsTrigger>
@@ -1302,6 +1306,7 @@ export default function FacilityPortal() {
                       <RegisterForm onNeedsVerification={(email) => setPendingVerification(email)} />
                     </TabsContent>
                   </Tabs>
+                  </div>
                 )}
               </CardContent>
             </Card>

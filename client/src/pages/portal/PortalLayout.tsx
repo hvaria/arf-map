@@ -61,9 +61,10 @@ function NavLink({
         className={cn(
           "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors",
           isActive
-            ? "bg-primary text-primary-foreground"
-            : "text-muted-foreground hover:text-foreground hover:bg-muted"
+            ? "text-white"
+            : "text-muted-foreground hover:bg-[#EEF2FF] hover:text-[#1E1B4B]"
         )}
+        style={isActive ? { background: 'linear-gradient(90deg, #818CF8, #F9A8D4)' } : undefined}
         aria-current={isActive ? "page" : undefined}
       >
         <Icon className="h-4 w-4 shrink-0" />
@@ -83,9 +84,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   });
 
   return (
-    <div className="min-h-screen bg-muted/30 flex flex-col">
+    <div className="min-h-screen flex flex-col" style={{ background: '#FFFFFF' }}>
       {/* Top navigation bar */}
-      <header className="bg-background border-b sticky top-0 z-40">
+      <header className="border-b sticky top-0 z-40" style={{ background: 'linear-gradient(135deg, #EEF2FF, #FFF0F6)', borderBottom: '1px solid #E0E7FF' }}>
         <div className="flex items-center gap-2 px-4 h-14">
           {/* Mobile hamburger */}
           <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
@@ -95,9 +96,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
               </Button>
             </SheetTrigger>
             <SheetContent side="left" className="w-64 p-0">
-              <div className="p-4 border-b">
+              <div className="p-4 border-b" style={{ background: 'linear-gradient(135deg, #EEF2FF, #FFF0F6)', borderBottom: '1px solid #E0E7FF' }}>
                 <div className="flex items-center gap-2">
-                  <Building2 className="h-5 w-5 text-primary" />
+                  <Building2 className="h-5 w-5" style={{ color: '#818CF8' }} />
                   <div>
                     <p className="text-sm font-semibold">
                       {me ? `Facility #${me.facilityNumber}` : "Portal"}
@@ -133,7 +134,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
           {/* Logo / facility name */}
           <div className="flex items-center gap-2 mr-4">
-            <Building2 className="h-5 w-5 text-primary shrink-0" />
+            <Building2 className="h-5 w-5 shrink-0" style={{ color: '#818CF8' }} />
             <span className="text-sm font-semibold hidden sm:block">
               {me ? `Facility #${me.facilityNumber}` : "Facility Portal"}
             </span>
@@ -159,7 +160,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
       </header>
 
       {/* Main content */}
-      <main className="flex-1 px-4 py-6 max-w-7xl w-full mx-auto">
+      <main className="flex-1 px-4 py-6 max-w-7xl w-full mx-auto bg-white">
         {children}
       </main>
     </div>
