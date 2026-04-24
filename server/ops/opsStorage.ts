@@ -417,6 +417,50 @@ export function discontinueMedication(
 
 // Med pass queue
 
+export function generateDailyMedPassEntries(facilityNumber: string, date: number): void {
+  const dayStart = date;
+  const dayEnd = date + 86400000;
+
+  const meds = sqlite.prepare(
+    `SELECT m.id AS medication_id, m.resident_id, m.scheduled_times, m.is_prn
+     FROM ops_medications m
+     JOIN ops_residents r ON m.resident_id = r.id
+     WHERE m.facility_number = ?
+       AND m.status = 'active'
+       AND (m.start_date IS NULL OR m.start_date <= ?)
+       AND (m.end_date IS NULL OR m.end_date >= ?)
+       AND r.status = 'active'`
+  ).all(facilityNumber, dayEnd, dayStart) as Array<{
+    medication_id: number;
+    resident_id: number;
+    scheduled_times: string | null;
+    is_prn: number;
+  }>;
+
+  const insert = sqlite.prepare(
+    `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status)
+     SELECT ?, ?, ?, ?, 'pending'
+     WHERE NOT EXISTS (
+       SELECT 1 FROM ops_med_passes WHERE medication_id = ? AND scheduled_datetime = ?
+     )`
+  );
+
+  for (const med of meds) {
+    if (med.is_prn) continue;
+    const times = med.scheduled_times
+      ? med.scheduled_times.split(",").map((t) => t.trim()).filter(Boolean)
+      : ["08:00"];
+    for (const time of times) {
+      const [h, m] = time.split(":").map(Number);
+      if (isNaN(h) || isNaN(m)) continue;
+      const dt = new Date(date);
+      dt.setHours(h, m, 0, 0);
+      const scheduledDatetime = dt.getTime();
+      insert.run(med.medication_id, med.resident_id, facilityNumber, scheduledDatetime, med.medication_id, scheduledDatetime);
+    }
+  }
+}
+
 export function getFacilityMedPassQueue(
   facilityNumber: string,
   date: number

@@ -874,9 +874,10 @@ opsRouter.delete("/medications/:id", (req, res) => {
 opsRouter.get("/facilities/:facilityNumber/med-pass", (req, res) => {
   try {
     const { facilityNumber } = req.params;
-    const date = req.query.date ? parseInt(String(req.query.date), 10) : (() => {
-      const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.getTime();
-    })();
+    const date = req.query.date
+      ? new Date(String(req.query.date)).setHours(0, 0, 0, 0)
+      : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+    ops.generateDailyMedPassEntries(facilityNumber, date);
     const queue = ops.getFacilityMedPassQueue(facilityNumber, date);
     res.json({ success: true, data: queue });
   } catch (e) {
