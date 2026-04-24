@@ -113,6 +113,8 @@ function AssessmentDialog({
   const { toast } = useToast();
   const qc = useQueryClient();
   const [form, setForm] = useState({
+    assessmentType: "adl",
+    assessedBy: "",
     bathing: "3",
     dressing: "3",
     grooming: "3",
@@ -132,7 +134,9 @@ function AssessmentDialog({
         "POST",
         `/api/ops/facilities/${facilityNumber}/residents/${residentId}/assessments`,
         {
-          ...form,
+          assessmentType: form.assessmentType,
+          assessedBy: form.assessedBy,
+          assessedAt: Date.now(),
           bathing: Number(form.bathing),
           dressing: Number(form.dressing),
           grooming: Number(form.grooming),
@@ -141,6 +145,7 @@ function AssessmentDialog({
           mobility: Number(form.mobility),
           transfers: Number(form.transfers),
           cognitionScore: Number(form.cognitionScore),
+          fallRiskLevel: form.fallRiskLevel,
         }
       );
       return res.json();
@@ -172,6 +177,23 @@ function AssessmentDialog({
           <DialogTitle>New Assessment</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Assessment Type</Label>
+            <Select value={form.assessmentType} onValueChange={(v) => set("assessmentType", v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="adl">ADL</SelectItem>
+                <SelectItem value="annual">Annual</SelectItem>
+                <SelectItem value="quarterly">Quarterly</SelectItem>
+                <SelectItem value="admission">Admission</SelectItem>
+                <SelectItem value="change_in_condition">Change in Condition</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Assessed By</Label>
+            <Input value={form.assessedBy} onChange={(e) => set("assessedBy", e.target.value)} placeholder="Staff name" />
+          </div>
           <p className="text-xs text-muted-foreground">Score each ADL: 1=Total Assist, 2=Max Assist, 3=Mod Assist, 4=Min Assist, 5=Independent</p>
           {adlFields.map(([key, label]) => (
             <div key={key} className="space-y-1.5">
@@ -209,7 +231,7 @@ function AssessmentDialog({
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.assessedBy}>
               {mutation.isPending ? "Saving..." : "Save Assessment"}
             </Button>
           </div>
