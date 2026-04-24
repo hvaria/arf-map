@@ -428,7 +428,7 @@ opsRouter.post("/facilities/:facilityNumber/residents/:id/assessments", (req, re
       goal: `Maintain or improve ADL independence based on ${parsed.data.assessmentType} assessment`,
       intervention: `Provide assistance per assessed needs. Fall risk: ${parsed.data.fallRiskLevel ?? "unspecified"}. Cognition score: ${parsed.data.cognitionScore ?? "N/A"}.`,
       frequency: "Daily",
-      status: "draft",
+      status: "active",
       createdAt: now,
       updatedAt: now,
     });
@@ -638,7 +638,7 @@ opsRouter.post("/residents/:id/assessments", (req, res) => {
       goal: `Maintain or improve ADL independence based on ${parsed.data.assessmentType} assessment`,
       intervention: `Provide assistance per assessed needs. Fall risk: ${parsed.data.fallRiskLevel ?? "unspecified"}. Cognition score: ${parsed.data.cognitionScore ?? "N/A"}.`,
       frequency: "Daily",
-      status: "draft",
+      status: "active",
       createdAt: now,
       updatedAt: now,
     });

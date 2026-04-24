@@ -207,10 +207,11 @@ export function getActiveCarePlan(
     .where(
       and(
         eq(opsCarePlans.residentId, residentId),
-        eq(opsCarePlans.facilityNumber, facilityNumber),
-        eq(opsCarePlans.status, "active")
+        eq(opsCarePlans.facilityNumber, facilityNumber)
       )
     )
+    .orderBy(desc(opsCarePlans.createdAt))
+    .limit(1)
     .get();
 }
 

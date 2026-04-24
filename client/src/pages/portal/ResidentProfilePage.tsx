@@ -365,7 +365,7 @@ function CreateCarePlanDialog({
         ...form,
         effectiveDate: now,
         reviewDate: now + 90 * 86400000,
-        status: "draft",
+        status: "active",
       });
       return res.json();
     },
