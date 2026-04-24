@@ -76,9 +76,9 @@ interface Medication {
   dosage: string;
   route: string;
   frequency: string;
-  scheduledTimes: string[];
+  scheduledTimes: string | null;
   status: string;
-  prescriber: string;
+  prescriberName: string | null;
 }
 
 interface Incident {
@@ -862,12 +862,12 @@ export function ResidentProfileContent({
                       <span>{m.dosage}</span>
                       <span>via {m.route}</span>
                       <span>{m.frequency}</span>
-                      {m.scheduledTimes?.length > 0 && (
-                        <span>at {m.scheduledTimes.join(", ")}</span>
+                      {m.scheduledTimes && (
+                        <span>at {m.scheduledTimes}</span>
                       )}
                     </div>
-                    {m.prescriber && (
-                      <p className="text-xs text-muted-foreground mt-0.5">Prescriber: {m.prescriber}</p>
+                    {m.prescriberName && (
+                      <p className="text-xs text-muted-foreground mt-0.5">Prescriber: {m.prescriberName}</p>
                     )}
                   </div>
                 ))}
