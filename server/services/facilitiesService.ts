@@ -213,37 +213,182 @@ async function seedFromCCL(): Promise<void> {
   );
 }
 
-// ── Nominatim geocoder ────────────────────────────────────────────────────────
+// ── Geocoding helpers ─────────────────────────────────────────────────────────
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function nominatimLookup(q: string): Promise<{ lat: number; lng: number } | null> {
+/** Normalize an ALL-CAPS city name to Title Case for geocoder queries. */
+function toTitleCase(s: string): string {
+  return s
+    .split(" ")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/** Returns true only when coordinates fall within California's bounding box. */
+function isInCalifornia(lat: number, lng: number): boolean {
+  return lat >= 32.5 && lat <= 42.0 && lng >= -124.5 && lng <= -114.1;
+}
+
+/**
+ * Nominatim (OpenStreetMap) geocoder.
+ * Returns `{ lat, lng }` on a genuine match, `null` on genuine no-result,
+ * or throws a `TransientGeocoderError` on network / HTTP errors so the
+ * caller can distinguish transient from permanent failures.
+ */
+class TransientGeocoderError extends Error {}
+
+async function nominatimLookup(
+  q: string,
+): Promise<{ lat: number; lng: number } | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const params = new URLSearchParams({ q, format: "json", limit: "1", countrycodes: "us" });
+    const params = new URLSearchParams({
+      q,
+      format: "json",
+      limit: "1",
+      countrycodes: "us",
+    });
     const res = await fetch(`${NOMINATIM_BASE}?${params}`, {
       headers: { "User-Agent": NOMINATIM_UA, Accept: "application/json" },
+      signal: controller.signal,
     });
-    if (!res.ok) return null;
-    const json = await res.json();
+    if (!res.ok) {
+      throw new TransientGeocoderError(`Nominatim HTTP ${res.status}`);
+    }
+    const json: unknown = await res.json();
     if (!Array.isArray(json) || json.length === 0) return null;
-    const lat = parseFloat(json[0].lat);
-    const lng = parseFloat(json[0].lon);
+    const lat = parseFloat((json[0] as Record<string, string>).lat);
+    const lng = parseFloat((json[0] as Record<string, string>).lon);
     if (isNaN(lat) || isNaN(lng)) return null;
+    if (!isInCalifornia(lat, lng)) return null;
     return { lat, lng };
-  } catch {
-    return null;
+  } catch (err) {
+    if (err instanceof TransientGeocoderError) throw err;
+    // AbortError or network error → transient
+    throw new TransientGeocoderError(`Nominatim network error: ${String(err)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * US Census Bureau geocoder (primary, free, no API key).
+ * Uses the structured single-address endpoint.
+ */
+const CENSUS_BASE =
+  "https://geocoding.geo.census.gov/geocoder/locations/address";
+
+async function censusBureauLookup(
+  address: string,
+  city: string,
+  zip: string,
+): Promise<{ lat: number; lng: number } | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const params = new URLSearchParams({
+      street: address,
+      city: toTitleCase(city),
+      state: "CA",
+      zip,
+      benchmark: "Public_AR_Current",
+      format: "json",
+    });
+    const res = await fetch(`${CENSUS_BASE}?${params}`, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new TransientGeocoderError(`Census Bureau HTTP ${res.status}`);
+    }
+    const json = (await res.json()) as {
+      result?: {
+        addressMatches?: Array<{
+          coordinates?: { x: number; y: number };
+        }>;
+      };
+    };
+    const match = json.result?.addressMatches?.[0];
+    if (!match?.coordinates) return null;
+    const lng = match.coordinates.x;
+    const lat = match.coordinates.y;
+    if (isNaN(lat) || isNaN(lng)) return null;
+    if (!isInCalifornia(lat, lng)) return null;
+    return { lat, lng };
+  } catch (err) {
+    if (err instanceof TransientGeocoderError) throw err;
+    throw new TransientGeocoderError(`Census Bureau network error: ${String(err)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * OpenCage geocoder — optional second fallback.
+ * Only called when `OPENCAGE_API_KEY` env var is set.
+ */
+async function openCageLookup(
+  address: string,
+  city: string,
+  zip: string,
+): Promise<{ lat: number; lng: number } | null> {
+  const apiKey = process.env.OPENCAGE_API_KEY;
+  if (!apiKey) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const q = encodeURIComponent(
+      `${address}, ${toTitleCase(city)}, CA ${zip}, USA`,
+    );
+    const url = `https://api.opencagedata.com/geocode/v1/json?q=${q}&key=${apiKey}&countrycode=us&limit=1`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new TransientGeocoderError(`OpenCage HTTP ${res.status}`);
+    }
+    const json = (await res.json()) as {
+      results?: Array<{
+        geometry?: { lat: number; lng: number };
+      }>;
+    };
+    const geo = json.results?.[0]?.geometry;
+    if (!geo) return null;
+    if (isNaN(geo.lat) || isNaN(geo.lng)) return null;
+    if (!isInCalifornia(geo.lat, geo.lng)) return null;
+    return { lat: geo.lat, lng: geo.lng };
+  } catch (err) {
+    if (err instanceof TransientGeocoderError) throw err;
+    throw new TransientGeocoderError(`OpenCage network error: ${String(err)}`);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /**
  * Background loop: geocodes facilities that have no coordinates yet.
- * Respects Nominatim's 1 req/sec rate limit.
- * Marks permanently unfound addresses as "geocode_failed" to skip on re-runs.
+ *
+ * Geocoding cascade per facility:
+ *   1. Census Bureau (primary — free, authoritative, no key)
+ *   2. Nominatim (fallback — existing OSM-based geocoder)
+ *   3. OpenCage (optional — only if OPENCAGE_API_KEY is set)
+ *
+ * Transient network errors leave geocode_quality unchanged so the facility
+ * is retried on the next server restart. Only genuine "no match" responses
+ * from all geocoders write "geocode_failed".
+ *
+ * Rows previously marked "geocode_failed" by old Nominatim-only runs are
+ * re-eligible because the WHERE clause only excludes the quality strings
+ * that represent confirmed successful geocodes.
  */
 async function geocodeMissingCoords(): Promise<void> {
-  console.log("[facilitiesService] starting background geocoder…");
+  console.log("[facilitiesService] starting background geocoder (tiered: Census → Nominatim → OpenCage)…");
   let processed = 0;
 
   while (true) {
@@ -251,39 +396,85 @@ async function geocodeMissingCoords(): Promise<void> {
       .prepare(
         `SELECT number, name, address, city, zip
          FROM facilities
-         WHERE lat IS NULL AND geocode_quality != 'geocode_failed'
+         WHERE (lat IS NULL OR lat = 0)
+           AND geocode_quality NOT IN ('census_exact', 'census_non_exact', 'census', 'nominatim', 'opencage', 'api')
          LIMIT 50`,
       )
-      .all() as { number: string; name: string; address: string; city: string; zip: string }[];
+      .all() as {
+        number: string;
+        name: string;
+        address: string;
+        city: string;
+        zip: string;
+      }[];
 
     if (batch.length === 0) {
-      console.log(`[facilitiesService] geocoder done — ${processed} facilities geocoded`);
+      console.log(
+        `[facilitiesService] geocoder done — ${processed} facilities geocoded`,
+      );
       break;
     }
 
     for (const fac of batch) {
-      // Try: facility name + address + city + CA
-      const q1 = `${fac.name} ${fac.address} ${fac.city} CA ${fac.zip}`.trim();
-      let coords = await nominatimLookup(q1);
+      let coords: { lat: number; lng: number } | null = null;
+      let quality = "";
+      let transientError = false;
+
+      // ── 1. Census Bureau ──────────────────────────────────────────────────
+      try {
+        coords = await censusBureauLookup(fac.address, fac.city, fac.zip);
+        if (coords) quality = "census";
+      } catch {
+        transientError = true;
+      }
       await sleep(GEOCODE_DELAY);
 
-      // Fallback: street address + city + CA
-      if (!coords) {
-        const q2 = `${fac.address} ${fac.city} CA ${fac.zip}`.trim();
-        coords = await nominatimLookup(q2);
+      // ── 2. Nominatim (fallback) ───────────────────────────────────────────
+      if (!coords && !transientError) {
+        try {
+          const titleCity = toTitleCase(fac.city);
+          const q1 = `${fac.name} ${fac.address} ${titleCity} CA ${fac.zip}`.trim();
+          coords = await nominatimLookup(q1);
+          if (coords) {
+            quality = "nominatim";
+          } else {
+            // Second Nominatim attempt: address only
+            await sleep(GEOCODE_DELAY);
+            const q2 = `${fac.address} ${titleCity} CA ${fac.zip}`.trim();
+            coords = await nominatimLookup(q2);
+            if (coords) quality = "nominatim";
+          }
+        } catch {
+          transientError = true;
+        }
         await sleep(GEOCODE_DELAY);
       }
 
+      // ── 3. OpenCage (optional second fallback) ────────────────────────────
+      if (!coords && !transientError && process.env.OPENCAGE_API_KEY) {
+        try {
+          coords = await openCageLookup(fac.address, fac.city, fac.zip);
+          if (coords) quality = "opencage";
+        } catch {
+          transientError = true;
+        }
+        await sleep(GEOCODE_DELAY);
+      }
+
+      // ── Write result ──────────────────────────────────────────────────────
       if (coords) {
-        updateFacilityCoords(fac.number, coords.lat, coords.lng, "nominatim");
+        updateFacilityCoords(fac.number, coords.lat, coords.lng, quality);
         processed++;
         if (processed % 100 === 0) {
-          console.log(`[facilitiesService] geocoded ${processed} facilities so far…`);
+          console.log(
+            `[facilitiesService] geocoded ${processed} facilities so far…`,
+          );
         }
-      } else {
-        // Mark as failed so we don't waste requests on it next time
+      } else if (!transientError) {
+        // All geocoders returned genuine no-match — mark permanently failed
         updateFacilityCoords(fac.number, null, null, "geocode_failed");
       }
+      // transientError: leave geocode_quality unchanged → row retried next run
     }
   }
 }

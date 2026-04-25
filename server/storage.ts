@@ -670,8 +670,13 @@ export function getFacilityDbCount(): number {
 /** Query all facilities matching filters (no pagination — full list for map). */
 export function queryFacilitiesAll(filters: FacilityQueryFilters): FacilityDbRow[] {
   const { where, params } = buildFacilityWhere(filters);
+  // Always exclude facilities without valid coordinates — null/zero coords cause
+  // MapLibre bounds errors and render pins at (0,0) in the Gulf of Guinea.
+  const coordClause = where
+    ? `${where} AND lat IS NOT NULL AND lng IS NOT NULL AND lat != 0 AND lng != 0`
+    : `WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat != 0 AND lng != 0`;
   return sqlite
-    .prepare(`SELECT * FROM facilities ${where} ORDER BY name`)
+    .prepare(`SELECT * FROM facilities ${coordClause} ORDER BY name`)
     .all(...params) as FacilityDbRow[];
 }
 
@@ -762,8 +767,13 @@ export function bulkUpsertFacilities(rows: Omit<FacilityDbRow, "updated_at">[]):
       first_license_date=excluded.first_license_date, closed_date=excluded.closed_date,
       last_inspection_date=CASE WHEN last_inspection_date != '' THEN last_inspection_date ELSE excluded.last_inspection_date END,
       total_visits=excluded.total_visits, total_type_b=excluded.total_type_b,
-      citations=excluded.citations, lat=excluded.lat, lng=excluded.lng,
-      geocode_quality=excluded.geocode_quality, updated_at=excluded.updated_at
+      citations=excluded.citations,
+      lat=CASE WHEN excluded.lat IS NOT NULL THEN excluded.lat ELSE facilities.lat END,
+      lng=CASE WHEN excluded.lng IS NOT NULL THEN excluded.lng ELSE facilities.lng END,
+      geocode_quality=CASE WHEN excluded.geocode_quality != '' AND excluded.geocode_quality IS NOT NULL
+                           THEN excluded.geocode_quality
+                           ELSE facilities.geocode_quality END,
+      updated_at=excluded.updated_at
   `);
 
   const now = Date.now();
