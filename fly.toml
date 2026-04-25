@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for ncu on 2026-04-08T14:22:28-07:00
+# fly.toml app configuration file generated for ncu on 2026-04-25T17:02:43Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -27,4 +27,6 @@ primary_region = 'lax'
 
 [[vm]]
   memory = '512mb'
+  cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 512
