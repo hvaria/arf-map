@@ -81,11 +81,11 @@ export function MyInterestsTab() {
   return (
     <div className="space-y-3">
       {interests.map((interest) => (
-        <div key={interest.id} className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
+        <div key={interest.id} className="rounded-xl p-4" style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
-                <Building2 className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+              <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "#EEF2FF" }}>
+                <Building2 className="h-4 w-4" style={{ color: "#818CF8" }} />
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium leading-tight truncate">

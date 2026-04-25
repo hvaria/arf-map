@@ -106,51 +106,60 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
   // Not logged in — curiosity trap: write pending action and go to register
   if (!me) {
     return (
-      <Button
-        className="w-full"
+      <button
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white rounded-[10px] transition-opacity hover:opacity-90"
+        style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
         onClick={() => {
           setPendingAction({ type: "express_interest", facilityId: facilityNumber, facilityName });
           setLocation("/job-seeker");
         }}
       >
-        <Send className="h-4 w-4 mr-2" />
+        <Send className="h-4 w-4" />
         Express Interest
-      </Button>
+      </button>
     );
   }
 
   // Shortlisted
   if (existing?.status === "shortlisted") {
     return (
-      <Button
+      <button
         disabled
-        className="w-full bg-yellow-100 text-yellow-800 border-yellow-300 hover:bg-yellow-100 dark:bg-yellow-950/40 dark:text-yellow-300 dark:border-yellow-800"
-        variant="outline"
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-[10px] opacity-80 cursor-not-allowed"
+        style={{ background: "#D1FAE5", color: "#065F46", border: "1px solid #BBF7D0" }}
         title="The facility is reviewing your profile"
       >
-        <Star className="h-4 w-4 mr-2 fill-yellow-500 text-yellow-500" />
+        <Star className="h-4 w-4 fill-[#065F46]" />
         Shortlisted ✓
-      </Button>
+      </button>
     );
   }
 
   // Already applied (pending or viewed)
   if (existing) {
     return (
-      <Button disabled variant="secondary" className="w-full text-green-700 dark:text-green-400">
-        <CheckCircle2 className="h-4 w-4 mr-2 text-green-600 dark:text-green-400" />
+      <button
+        disabled
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-[10px] cursor-not-allowed"
+        style={{ background: "#F0F4FF", color: "#4F46E5", border: "1px solid #E0E7FF" }}
+      >
+        <CheckCircle2 className="h-4 w-4" />
         Interest Sent ✓
-      </Button>
+      </button>
     );
   }
 
   // Logged in, not yet applied — show dialog
   return (
     <>
-      <Button className="w-full" onClick={() => setDialogOpen(true)}>
-        <Send className="h-4 w-4 mr-2" />
+      <button
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white rounded-[10px] transition-opacity hover:opacity-90"
+        style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
+        onClick={() => setDialogOpen(true)}
+      >
+        <Send className="h-4 w-4" />
         Express Interest
-      </Button>
+      </button>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-sm">
@@ -195,13 +204,14 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
               <Button variant="outline" className="flex-1" onClick={() => setDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button
-                className="flex-1"
+              <button
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-[10px] transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
+                style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
                 onClick={() => submitMutation.mutate()}
                 disabled={submitMutation.isPending}
               >
                 {submitMutation.isPending ? "Sending…" : "Send Interest"}
-              </Button>
+              </button>
             </div>
           </div>
         </DialogContent>

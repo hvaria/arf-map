@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils";
 type InterestStatus = "pending" | "viewed" | "shortlisted";
 
 const CONFIG: Record<InterestStatus, { label: string; className: string }> = {
-  pending:     { label: "Pending",     className: "bg-amber-50  text-amber-700  border-amber-200  dark:bg-amber-950/40  dark:text-amber-400  dark:border-amber-800"  },
-  viewed:      { label: "Viewed",      className: "bg-blue-50   text-blue-700   border-blue-200   dark:bg-blue-950/40   dark:text-blue-400   dark:border-blue-800"   },
-  shortlisted: { label: "Shortlisted", className: "bg-yellow-50 text-yellow-700 border-yellow-300 dark:bg-yellow-950/40 dark:text-yellow-400 dark:border-yellow-800" },
+  pending:     { label: "Pending",     className: "bg-[#FEF9C3] text-[#92400E] border-[#FDE68A]"  },
+  viewed:      { label: "Viewed",      className: "bg-[#F0F4FF] text-[#4F46E5] border-[#E0E7FF]"  },
+  shortlisted: { label: "Shortlisted", className: "bg-[#D1FAE5] text-[#065F46] border-[#BBF7D0]"  },
 };
 
 interface Props {
