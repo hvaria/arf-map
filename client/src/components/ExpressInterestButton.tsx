@@ -1,8 +1,7 @@
-// NEW: expression-of-interest — curiosity-trap button for job seekers
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Send, CheckCircle2, Star, ChevronDown } from "lucide-react";
+import { Send, CheckCircle2, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -107,8 +106,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
   if (!me) {
     return (
       <button
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white rounded-[10px] transition-opacity hover:opacity-90"
-        style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
+        className="portal-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
         onClick={() => {
           setPendingAction({ type: "express_interest", facilityId: facilityNumber, facilityName });
           setLocation("/job-seeker");
@@ -153,8 +151,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
   return (
     <>
       <button
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white rounded-[10px] transition-opacity hover:opacity-90"
-        style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
+        className="portal-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
         onClick={() => setDialogOpen(true)}
       >
         <Send className="h-4 w-4" />
@@ -205,8 +202,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
                 Cancel
               </Button>
               <button
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-[10px] transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
+                className="portal-btn-primary flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
                 onClick={() => submitMutation.mutate()}
                 disabled={submitMutation.isPending}
               >

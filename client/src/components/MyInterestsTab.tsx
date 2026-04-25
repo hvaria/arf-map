@@ -1,4 +1,3 @@
-// NEW: expression-of-interest — job seeker's submitted interests list
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Building2, Clock, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -109,7 +108,7 @@ export function MyInterestsTab() {
           </div>
 
           {interest.status === "shortlisted" && (
-            <p className="mt-2 text-xs text-yellow-700 dark:text-yellow-400 font-medium">
+            <p className="mt-2 text-xs font-medium" style={{ color: "#92400E" }}>
               The facility is reviewing your profile!
             </p>
           )}

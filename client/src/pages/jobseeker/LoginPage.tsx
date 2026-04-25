@@ -23,10 +23,14 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 function BrandMark() {
   return (
-    <div className="flex flex-col items-center gap-3 mb-8">
-      {/* Brand logo placeholder — swap src for your logo asset */}
+    <div
+      className="flex flex-col items-center gap-3 mb-8 -mx-8 -mt-10 px-8 pt-8 pb-6 rounded-t-2xl"
+      style={{ background: "linear-gradient(135deg, #EEF2FF, #FFF0F6)" }}
+    >
+      {/* DO NOT MODIFY - Brand Lock */}
       <div
-        className="flex items-center justify-center w-12 h-12 rounded-xl bg-blue-600 shadow-md"
+        className="flex items-center justify-center w-12 h-12 rounded-xl shadow-md"
+        style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
         aria-hidden="true"
       >
         <svg
@@ -43,7 +47,7 @@ function BrandMark() {
           <path d="M9 12l2 2 4-4" />
         </svg>
       </div>
-      <span className="text-sm font-semibold tracking-wide text-slate-500 dark:text-slate-400 uppercase">
+      <span className="text-sm font-semibold tracking-wide uppercase" style={{ color: "#1E1B4B" }}>
         ARF Care Portal
       </span>
     </div>
@@ -127,25 +131,26 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center px-4 py-12">
-      {/* Subtle background texture */}
-      <div
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-50 via-transparent to-transparent dark:from-blue-950/20 dark:via-transparent dark:to-transparent"
-        aria-hidden="true"
-      />
-
+    <div className="min-h-screen bg-white flex items-center justify-center px-4 py-12">
       <div className="relative w-full max-w-[420px]">
         {/* Card */}
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div
+          className="rounded-2xl"
+          style={{
+            background: "#F0F4FF",
+            border: "1px solid #E0E7FF",
+            boxShadow: "0 2px 12px rgba(129,140,248,0.08)",
+          }}
+        >
           <div className="px-8 pt-10 pb-8">
             <BrandMark />
 
             {/* Heading */}
             <div className="mb-7 text-center">
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+              <h1 className="text-2xl font-semibold tracking-tight" style={{ color: "#1E1B4B" }}>
                 Job Seeker Sign In
               </h1>
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              <p className="mt-2 text-sm" style={{ color: "#6B7280" }}>
                 Access your profile, applications, and job opportunities.
               </p>
             </div>
@@ -170,7 +175,8 @@ export default function LoginPage() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="email"
-                  className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+                  className="block text-sm font-medium"
+                  style={{ color: "#1E1B4B" }}
                 >
                   Email address
                 </label>
@@ -181,15 +187,12 @@ export default function LoginPage() {
                   aria-describedby={errors.email ? "email-error" : undefined}
                   aria-invalid={!!errors.email}
                   placeholder="you@example.com"
-                  className={[
-                    "block w-full rounded-lg border px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400",
-                    "bg-white dark:bg-slate-800 dark:text-slate-50 dark:placeholder:text-slate-500",
-                    "shadow-sm outline-none transition-colors",
-                    "focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20",
-                    errors.email
-                      ? "border-red-400 dark:border-red-600"
-                      : "border-slate-300 dark:border-slate-700",
-                  ].join(" ")}
+                  className="block w-full rounded-lg px-3.5 py-2.5 text-sm outline-none transition-colors shadow-sm focus:ring-2 focus:ring-[#818CF8]/20"
+                  style={{
+                    border: errors.email ? "1.5px solid #f87171" : "1.5px solid #C7D2FE",
+                    background: "#FAFBFF",
+                    color: "#1E1B4B",
+                  }}
                   {...register("email")}
                 />
                 {errors.email && (
@@ -208,13 +211,15 @@ export default function LoginPage() {
                 <div className="flex items-center justify-between">
                   <label
                     htmlFor="password"
-                    className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+                    className="block text-sm font-medium"
+                    style={{ color: "#1E1B4B" }}
                   >
                     Password
                   </label>
                   <a
                     href="#/job-seeker?action=forgot-password"
-                    className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 underline-offset-2 hover:underline"
+                    className="text-xs underline-offset-2 hover:underline"
+                    style={{ color: "#818CF8" }}
                   >
                     Forgot password?
                   </a>
@@ -227,15 +232,12 @@ export default function LoginPage() {
                     aria-describedby={errors.password ? "password-error" : undefined}
                     aria-invalid={!!errors.password}
                     placeholder="••••••••"
-                    className={[
-                      "block w-full rounded-lg border px-3.5 py-2.5 pr-10 text-sm text-slate-900 placeholder:text-slate-400",
-                      "bg-white dark:bg-slate-800 dark:text-slate-50 dark:placeholder:text-slate-500",
-                      "shadow-sm outline-none transition-colors",
-                      "focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20",
-                      errors.password
-                        ? "border-red-400 dark:border-red-600"
-                        : "border-slate-300 dark:border-slate-700",
-                    ].join(" ")}
+                    className="block w-full rounded-lg px-3.5 py-2.5 pr-10 text-sm outline-none transition-colors shadow-sm focus:ring-2 focus:ring-[#818CF8]/20"
+                    style={{
+                      border: errors.password ? "1.5px solid #f87171" : "1.5px solid #C7D2FE",
+                      background: "#FAFBFF",
+                      color: "#1E1B4B",
+                    }}
                     {...register("password")}
                   />
                   <button
@@ -289,14 +291,11 @@ export default function LoginPage() {
                 type="submit"
                 disabled={isSubmitting}
                 aria-busy={isSubmitting}
-                className={[
-                  "w-full flex items-center justify-center gap-2 rounded-lg px-4 py-2.5",
-                  "bg-blue-600 hover:bg-blue-700 active:bg-blue-800",
-                  "text-sm font-semibold text-white shadow-sm",
-                  "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
-                  "disabled:cursor-not-allowed disabled:opacity-60",
-                  "dark:focus-visible:ring-offset-slate-900",
-                ].join(" ")}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-[#818CF8] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                style={{
+                  background: "linear-gradient(135deg, #818CF8, #F9A8D4)",
+                  borderRadius: "10px",
+                }}
               >
                 {isSubmitting ? (
                   <>

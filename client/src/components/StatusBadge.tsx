@@ -1,4 +1,3 @@
-// NEW: expression-of-interest — shared status badge for pending/viewed/shortlisted
 import { cn } from "@/lib/utils";
 
 type InterestStatus = "pending" | "viewed" | "shortlisted";
