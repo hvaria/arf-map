@@ -784,6 +784,18 @@ export function bulkUpsertFacilities(rows: Omit<FacilityDbRow, "updated_at">[]):
   insertMany(rows);
 }
 
+/** Update lat/lng for a single facility after geocoding. */
+export function updateFacilityCoords(
+  number: string,
+  lat: number | null,
+  lng: number | null,
+  quality: string,
+): void {
+  sqlite
+    .prepare("UPDATE facilities SET lat=?, lng=?, geocode_quality=? WHERE number=?")
+    .run(lat, lng, quality, number);
+}
+
 // ── Enrichment logging ────────────────────────────────────────────────────────
 
 export interface EnrichmentRunRecord {

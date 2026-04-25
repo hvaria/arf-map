@@ -2,45 +2,67 @@
  * server/services/facilitiesService.ts
  *
  * Two modes:
- *  1. SQLite-first (when DB is seeded via `npx tsx scripts/seed-facilities-db.ts`):
- *     Routes query the `facilities` table directly for fast, filterable responses.
- *
- *  2. CHHS live-fetch fallback (cold start / un-seeded DB):
- *     Fetches ALL California care facility types from two CHHS open-data endpoints,
- *     merges them, and caches in memory for 24 hours.
+ *  1. SQLite-first (DB is seeded): routes query `facilities` table directly.
+ *  2. Auto-seed (DB is empty): fetches all facilities from the CCL CHHS resource
+ *     on startup, upserts into SQLite, then geocodes lat/lng via Nominatim.
  *
  * Data sources:
- *  - GeoJSON/ArcGIS dataset  (resource f9c77b0d…) → coordinates + basic info + TYPE code
- *  - CCL Facilities CSV       (resource 9f5d1d00…) → licensee, admin, status, dates, facility_type
+ *  - CCL Facilities resource (9f5d1d00) → name, address, type, status, capacity, etc.
+ *  - Nominatim / OpenStreetMap          → lat/lng from facility name + address
  */
 
 import type { Facility } from "../../shared/schema";
-import { getFacilityDbCount } from "../storage";
-import {
-  typeToGroup,
-  formatPhone,
-  GEO_STATUS,
-  TYPE_TO_NAME,
-} from "@shared/etl-types";
+import { getFacilityDbCount, bulkUpsertFacilities, updateFacilityCoords } from "../storage";
+import { sqlite } from "../db/index";
+import { typeToGroup, formatPhone } from "@shared/etl-types";
 
-// Re-export so existing callers (scripts/etl.ts) keep working without change.
+// Re-export so existing callers keep working without change.
 export { typeToGroup, formatPhone };
 
-// ── Cache (live-fetch fallback only) ──────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
+/** Facility shape without jobPostings / isHiring (added by the route). */
+export type FacilityBase = Omit<Facility, "jobPostings" | "isHiring">;
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const CHHS_BASE    = "https://data.chhs.ca.gov/api/3/action/datastore_search";
+const CCL_RESOURCE = "9f5d1d00-6b24-4f44-a158-9cbe4b43f117";
+const PAGE_SIZE    = 5000;
+
+const NOMINATIM_BASE = "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_UA   = "arf-map-geocoder/1.0 (himanshu.a.varia@gmail.com)";
+const GEOCODE_DELAY  = 1100; // ms — Nominatim rate limit: 1 req/sec
+
+// ── In-memory cache (used while DB is seeding or as live-fetch fallback) ──────
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 let _cache: { data: FacilityBase[]; fetchedAt: number } | null = null;
+let _seeding = false;
 
-/** Returns raw facility data (without job postings — those are merged in the route). */
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Called once on server startup. If the DB is empty, kicks off a background
+ * seed from the CCL CHHS resource followed by Nominatim geocoding.
+ * Non-blocking — returns immediately.
+ */
+export async function autoSeedIfEmpty(): Promise<void> {
+  if (isDatabaseSeeded() || _seeding) return;
+  setImmediate(() => seedFromCCL().catch((err) => console.error("[facilitiesService] seed error:", err)));
+}
+
+/**
+ * Returns facilities from the in-memory cache (populated during seeding or
+ * by an explicit live-fetch). Used by routes when the DB is not yet seeded.
+ */
 export async function getCachedFacilities(): Promise<FacilityBase[]> {
-  if (_cache && Date.now() - _cache.fetchedAt < CACHE_TTL_MS) {
-    return _cache.data;
-  }
-  console.log("[facilitiesService] cache miss — fetching from CHHS…");
+  if (_cache && Date.now() - _cache.fetchedAt < CACHE_TTL_MS) return _cache.data;
+  // If a seed is already running, return whatever is cached so far (may be empty)
+  if (_seeding) return _cache?.data ?? [];
+  // Otherwise trigger a fresh CCL fetch for the in-memory cache only
   const data = await buildFacilityList();
   _cache = { data, fetchedAt: Date.now() };
-  console.log(`[facilitiesService] cached ${data.length} facilities`);
   return data;
 }
 
@@ -51,7 +73,7 @@ export function invalidateFacilitiesCache(): void {
 
 /**
  * Whether the `facilities` SQLite table has been seeded with data.
- * When true, routes should query SQLite directly instead of the CHHS live-fetch.
+ * When true, routes should query SQLite directly instead of the live-fetch.
  */
 export function isDatabaseSeeded(): boolean {
   try {
@@ -61,23 +83,9 @@ export function isDatabaseSeeded(): boolean {
   }
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── CHHS fetch helpers ────────────────────────────────────────────────────────
 
-/** Facility shape without jobPostings / isHiring (added by the route). */
-export type FacilityBase = Omit<Facility, "jobPostings" | "isHiring">;
-
-// ── CHHS API helpers ──────────────────────────────────────────────────────────
-
-const CHHS_BASE = "https://data.chhs.ca.gov/api/3/action/datastore_search";
-const GEO_RESOURCE = "f9c77b0d-9711-4f34-8c7f-90f542fbc24a";
-const CCL_RESOURCE = "9f5d1d00-6b24-4f44-a158-9cbe4b43f117";
-const PAGE_SIZE = 5000;
-
-async function fetchAllPages(
-  resourceId: string,
-  filters?: Record<string, string>,
-  q?: string,
-): Promise<any[]> {
+async function fetchAllPages(resourceId: string): Promise<any[]> {
   const rows: any[] = [];
   let offset = 0;
 
@@ -87,8 +95,6 @@ async function fetchAllPages(
       limit: String(PAGE_SIZE),
       offset: String(offset),
     });
-    if (filters) params.set("filters", JSON.stringify(filters));
-    if (q) params.set("q", q);
 
     const res = await fetch(`${CHHS_BASE}?${params}`, {
       headers: { Accept: "application/json" },
@@ -98,6 +104,7 @@ async function fetchAllPages(
     const json = await res.json();
     const records: any[] = json.result?.records ?? [];
     rows.push(...records);
+    console.log(`[facilitiesService] fetched ${rows.length} rows (offset ${offset})…`);
 
     if (records.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
@@ -106,77 +113,190 @@ async function fetchAllPages(
   return rows;
 }
 
-// ── Facility type mapping, status codes, phone formatter ─────────────────────
-// All moved to shared/etl-types.ts and imported above.
+// ── CCL row → FacilityBase mapping ───────────────────────────────────────────
 
-// ── Main build (ALL facility types, ALL counties) ─────────────────────────────
+function mapCCLToFacility(row: any): FacilityBase {
+  const rawType = (row.facility_type ?? "").trim();
+  // CCL returns uppercase names like "ADULT RESIDENTIAL FACILITY" — title-case them
+  const facilityType = rawType
+    .toLowerCase()
+    .replace(/\b\w/g, (c: string) => c.toUpperCase()) || "Adult Residential Facility";
+  const facilityGroup = typeToGroup(facilityType);
 
-export async function buildFacilityList(): Promise<FacilityBase[]> {
-  // Fetch both sources concurrently — NO type filter → gets ALL facility types
-  const [geoRows, cclRows] = await Promise.all([
-    fetchAllPages(GEO_RESOURCE),          // all types
-    fetchAllPages(CCL_RESOURCE),          // all types
-  ]);
+  return {
+    number:            String(row.facility_number ?? "").trim(),
+    name:              (row.facility_name ?? "").trim(),
+    facilityType,
+    facilityGroup,
+    status:            (row.facility_status ?? "LICENSED").toUpperCase(),
+    address:           (row.facility_address ?? "").trim(),
+    city:              (row.facility_city ?? "").trim().toUpperCase(),
+    county:            (row.county_name ?? "").trim(),
+    zip:               String(row.facility_zip ?? "").trim(),
+    phone:             formatPhone(row.facility_telephone_number),
+    licensee:          (row.licensee ?? "").trim(),
+    administrator:     (row.facility_administrator ?? "").trim(),
+    capacity:          parseInt(row.facility_capacity ?? "0", 10) || 0,
+    firstLicenseDate:  row.license_first_date ?? "",
+    closedDate:        row.closed_date ?? "",
+    lastInspectionDate: "",
+    totalVisits:       0,
+    inspectionVisits:  0,
+    complaintVisits:   0,
+    inspectTypeB:      0,
+    otherTypeB:        0,
+    complaintTypeB:    0,
+    totalTypeB:        0,
+    citations:         "",
+    // 0,0 = no coordinates yet; routes/map filter these out by checking lat !== 0
+    lat:               0,
+    lng:               0,
+    geocodeQuality:    "",
+  };
+}
 
-  console.log(`[facilitiesService] GEO rows: ${geoRows.length}, CCL rows: ${cclRows.length}`);
+// ── Seed from CCL CHHS resource ───────────────────────────────────────────────
 
-  // Index CCL rows by facility_number for O(1) lookup
-  const cclByNumber = new Map<string, any>();
-  for (const row of cclRows) {
-    if (row.facility_number) cclByNumber.set(String(row.facility_number).trim(), row);
+async function seedFromCCL(): Promise<void> {
+  if (_seeding) return;
+  _seeding = true;
+  try {
+    console.log("[facilitiesService] starting CCL seed…");
+    const cclRows = await fetchAllPages(CCL_RESOURCE);
+    const facilities = cclRows
+      .map(mapCCLToFacility)
+      .filter((f) => f.number); // skip rows without a facility number
+
+    // Populate in-memory cache so requests during seeding get data immediately
+    _cache = { data: facilities, fetchedAt: Date.now() };
+
+    // Upsert into SQLite in chunks of 1000
+    const CHUNK = 1000;
+    for (let i = 0; i < facilities.length; i += CHUNK) {
+      const chunk = facilities.slice(i, i + CHUNK);
+      bulkUpsertFacilities(
+        chunk.map((f) => ({
+          number:               f.number,
+          name:                 f.name,
+          facility_type:        f.facilityType,
+          facility_group:       f.facilityGroup,
+          status:               f.status,
+          address:              f.address,
+          city:                 f.city,
+          county:               f.county,
+          zip:                  f.zip,
+          phone:                f.phone,
+          licensee:             f.licensee,
+          administrator:        f.administrator,
+          capacity:             f.capacity,
+          first_license_date:   f.firstLicenseDate,
+          closed_date:          f.closedDate,
+          last_inspection_date: "",
+          total_visits:         0,
+          total_type_b:         0,
+          citations:            0,
+          lat:                  null,
+          lng:                  null,
+          geocode_quality:      "",
+        })),
+      );
+    }
+
+    console.log(`[facilitiesService] seeded ${facilities.length} facilities into SQLite`);
+  } finally {
+    _seeding = false;
   }
 
-  const facilities: FacilityBase[] = [];
+  // Geocode in background after seed — don't await, don't block startup
+  geocodeMissingCoords().catch((err) =>
+    console.error("[facilitiesService] geocoder error:", err),
+  );
+}
 
-  for (const geo of geoRows) {
-    const num = String(geo.FAC_NBR ?? "").trim();
-    if (!num) continue;
+// ── Nominatim geocoder ────────────────────────────────────────────────────────
 
-    const lat = parseFloat(geo.FAC_LATITUDE ?? "0");
-    const lng = parseFloat(geo.FAC_LONGITUDE ?? "0");
-    if (!lat || !lng) continue;
+async function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
-    const ccl = cclByNumber.get(num);
-
-    // Derive facility type — prefer CCL's human-readable name, fall back to TYPE code map
-    const rawType = (ccl?.facility_type ?? TYPE_TO_NAME[String(geo.TYPE)] ?? "Adult Residential Facility").trim();
-    const facilityType = rawType || "Adult Residential Facility";
-    const facilityGroup = typeToGroup(facilityType);
-
-    // County — from CCL if available, else from GEO
-    const county = (ccl?.county ?? geo.COUNTY ?? "").trim();
-
-    facilities.push({
-      number: num,
-      name: (ccl?.facility_name ?? geo.NAME ?? "").trim(),
-      facilityType,
-      facilityGroup,
-      county,
-      address: (geo.RES_STREET_ADDR ?? "").trim(),
-      city: (geo.RES_CITY ?? "").trim().toUpperCase(),
-      zip: (geo.RES_ZIP_CODE ?? "").trim(),
-      phone: formatPhone(geo.FAC_PHONE_NBR),
-      licensee: (ccl?.licensee ?? "").trim(),
-      administrator: (ccl?.facility_administrator ?? "").trim(),
-      status: (ccl?.facility_status ?? GEO_STATUS[String(geo.STATUS)] ?? "LICENSED").toUpperCase(),
-      capacity: parseInt(geo.CAPACITY ?? ccl?.facility_capacity ?? "0", 10) || 0,
-      firstLicenseDate: ccl?.license_first_date ?? "",
-      closedDate: ccl?.closed_date ?? "",
-      // Fields not available from CHHS open data
-      lastInspectionDate: "",
-      totalVisits: 0,
-      inspectionVisits: 0,
-      complaintVisits: 0,
-      inspectTypeB: 0,
-      otherTypeB: 0,
-      complaintTypeB: 0,
-      totalTypeB: 0,
-      citations: "",
-      lat,
-      lng,
-      geocodeQuality: "api",
+async function nominatimLookup(q: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const params = new URLSearchParams({ q, format: "json", limit: "1", countrycodes: "us" });
+    const res = await fetch(`${NOMINATIM_BASE}?${params}`, {
+      headers: { "User-Agent": NOMINATIM_UA, Accept: "application/json" },
     });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!Array.isArray(json) || json.length === 0) return null;
+    const lat = parseFloat(json[0].lat);
+    const lng = parseFloat(json[0].lon);
+    if (isNaN(lat) || isNaN(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
   }
+}
 
-  return facilities;
+/**
+ * Background loop: geocodes facilities that have no coordinates yet.
+ * Respects Nominatim's 1 req/sec rate limit.
+ * Marks permanently unfound addresses as "geocode_failed" to skip on re-runs.
+ */
+async function geocodeMissingCoords(): Promise<void> {
+  console.log("[facilitiesService] starting background geocoder…");
+  let processed = 0;
+
+  while (true) {
+    const batch = sqlite
+      .prepare(
+        `SELECT number, name, address, city, zip
+         FROM facilities
+         WHERE lat IS NULL AND geocode_quality != 'geocode_failed'
+         LIMIT 50`,
+      )
+      .all() as { number: string; name: string; address: string; city: string; zip: string }[];
+
+    if (batch.length === 0) {
+      console.log(`[facilitiesService] geocoder done — ${processed} facilities geocoded`);
+      break;
+    }
+
+    for (const fac of batch) {
+      // Try: facility name + address + city + CA
+      const q1 = `${fac.name} ${fac.address} ${fac.city} CA ${fac.zip}`.trim();
+      let coords = await nominatimLookup(q1);
+      await sleep(GEOCODE_DELAY);
+
+      // Fallback: street address + city + CA
+      if (!coords) {
+        const q2 = `${fac.address} ${fac.city} CA ${fac.zip}`.trim();
+        coords = await nominatimLookup(q2);
+        await sleep(GEOCODE_DELAY);
+      }
+
+      if (coords) {
+        updateFacilityCoords(fac.number, coords.lat, coords.lng, "nominatim");
+        processed++;
+        if (processed % 100 === 0) {
+          console.log(`[facilitiesService] geocoded ${processed} facilities so far…`);
+        }
+      } else {
+        // Mark as failed so we don't waste requests on it next time
+        updateFacilityCoords(fac.number, null, null, "geocode_failed");
+      }
+    }
+  }
+}
+
+// ── Live-fetch fallback (CCL only, no coordinates) ────────────────────────────
+
+/**
+ * Builds the facility list from the CCL CHHS resource.
+ * Used by getCachedFacilities() when the DB is not seeded.
+ * Facilities will have no coordinates until geocoding runs.
+ */
+export async function buildFacilityList(): Promise<FacilityBase[]> {
+  const cclRows = await fetchAllPages(CCL_RESOURCE);
+  console.log(`[facilitiesService] CCL rows: ${cclRows.length}`);
+  return cclRows.map(mapCCLToFacility).filter((f) => f.number);
 }

@@ -10,7 +10,7 @@ import { storage } from "./storage";
 import { comparePassword } from "./auth";
 import { sqlite } from "./db/index";
 import { SqliteSessionStore } from "./session/sqliteSessionStore";
-import { getCachedFacilities } from "./services/facilitiesService";
+import { getCachedFacilities, autoSeedIfEmpty } from "./services/facilitiesService";
 import { startEtlScheduler } from "./etlScheduler";
 import { opsRouter } from "./ops/opsRouter";
 import type { FacilityAccount } from "@shared/schema";
@@ -210,11 +210,17 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
     log(`[email] RESEND_API_KEY set: ${!!process.env.RESEND_API_KEY}`);
 
-    // Pre-warm facility cache in the background so the first user request is instant
-    if (!process.env.SKIP_PREWARM) {
+    // Auto-seed the facilities DB from CCL CHHS on first run (non-blocking).
+    // If already seeded, this is a no-op. Geocoding runs as a background job.
+    autoSeedIfEmpty().catch((err) =>
+      log(`[facilitiesService] auto-seed error: ${err.message}`),
+    );
+
+    // Legacy pre-warm: only runs if DB is already seeded (fast SQLite path).
+    if (!process.env.SKIP_PREWARM && !process.env.SKIP_CACHE_PREWARM) {
       getCachedFacilities()
-        .then((f) => log(`[facilitiesService] pre-warmed ${f.length} facilities`))
-        .catch((err) => log(`[facilitiesService] pre-warm failed: ${err.message}`));
+        .then((f) => { if (f.length) log(`[facilitiesService] pre-warmed ${f.length} facilities`); })
+        .catch(() => { /* silently skip — autoSeedIfEmpty handles the empty-DB case */ });
     }
 
     // Start the nightly CCLD enrichment scheduler (production only)

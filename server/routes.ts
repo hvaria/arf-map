@@ -292,8 +292,8 @@ export async function registerRoutes(server: Server, app: Express) {
 
         res.json(result);
       } else {
-        // Fallback: in-memory CHHS data
-        let facilities = await getCachedFacilities();
+        // Fallback: in-memory CCL data (no coords yet — geocoding runs in background)
+        let facilities = (await getCachedFacilities()).filter((f) => f.lat !== 0 && f.lng !== 0);
 
         // Apply filters client-side on the in-memory list
         if (search) {
