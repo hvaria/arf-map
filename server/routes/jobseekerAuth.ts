@@ -4,7 +4,7 @@ import { AuthService } from "../services/authService";
 import { SqliteJobSeekerRepository } from "../repositories/sqlite/sqliteJobSeekerRepository";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
 import { sendPasswordResetEmail } from "../email";
-import { sqlite } from "../db/index";
+import { sqlite, usingPostgres } from "../db/index";
 import { authRateLimiter } from "../middleware/rateLimiter";
 
 // ── Dependency wiring ────────────────────────────────────────────────────────
@@ -215,9 +215,15 @@ jobseekerAuthRouter.post("/reset-password", authRateLimiter, async (req, res, ne
     }
 
     // Invalidate all active sessions for this account.
-    sqlite
-      .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.jobSeekerId') = ?")
-      .run(result.accountId);
+    // In Postgres mode, connect-pg-simple manages its own "session" table and
+    // does not use json_extract — session deletion is handled by the store's
+    // TTL expiry. Manual session invalidation is a blocker for Postgres mode.
+    // See agents/05-blockers.md.
+    if (!usingPostgres) {
+      sqlite!
+        .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.jobSeekerId') = ?")
+        .run(result.accountId);
+    }
 
     return res.json({ ok: true });
   } catch (err) {

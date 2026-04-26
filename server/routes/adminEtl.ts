@@ -15,7 +15,7 @@ import {
   triggerEnrichmentNow,
   isEnrichmentRunning,
 } from "../etlScheduler";
-import { getEnrichmentLog } from "../storage";
+import { getEnrichmentLogAsync } from "../storage";
 
 export const adminEtlRouter = Router();
 
@@ -42,6 +42,6 @@ adminEtlRouter.get("/status", requireAuth, (_req: Request, res: Response) => {
 
 // ── GET /api/admin/etl/log ────────────────────────────────────────────────────
 
-adminEtlRouter.get("/log", requireAuth, (_req: Request, res: Response) => {
-  res.json(getEnrichmentLog());
+adminEtlRouter.get("/log", requireAuth, async (_req: Request, res: Response) => {
+  res.json(await getEnrichmentLogAsync());
 });

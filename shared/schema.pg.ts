@@ -1,0 +1,244 @@
+/**
+ * shared/schema.pg.ts
+ *
+ * PostgreSQL version of the Drizzle schema.
+ * Column variable names, TypeScript type names, and table names are
+ * IDENTICAL to shared/schema.ts so callers can import from either file
+ * and get the same shape.
+ *
+ * Key differences from SQLite schema:
+ *  - sqliteTable → pgTable
+ *  - integer().primaryKey({ autoIncrement: true }) → serial().primaryKey()
+ *  - integer() boolean columns (emailVerified) → boolean().default(false)
+ *  - integer() timestamp columns → bigint({ mode: "number" }) — avoids 32-bit overflow
+ *  - real() → doublePrecision()
+ *  - text().$type<T>() → unchanged (keep as text, no jsonb)
+ *  - text().primaryKey() → unchanged
+ *
+ * The OPS tables (ops_*) are defined in server/ops/opsSchema.ts using
+ * SQLite column types. When running in Postgres mode those tables are
+ * created via OPS_PG_SCHEMA_SQL (raw SQL), NOT via Drizzle migrations,
+ * so they do not need a pg-core Drizzle definition here.
+ * shared/schema.ts re-exports the SQLite Drizzle table objects for ops_*
+ * and those types remain compatible as TypeScript shapes only (no DB calls
+ * go through them in Postgres mode — ops routes use raw pool queries).
+ */
+
+import {
+  pgTable,
+  text,
+  integer,
+  bigint,
+  doublePrecision,
+  boolean,
+  serial,
+  unique,
+} from "drizzle-orm/pg-core";
+import { z } from "zod";
+
+// ============ DRIZZLE TABLES (PostgreSQL) ============
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+});
+
+export const jobSeekerAccounts = pgTable("job_seeker_accounts", {
+  id: serial("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  email: text("email").notNull().unique(),
+  password: text("password").notNull(),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  verificationToken: text("verification_token"),
+  verificationExpiry: bigint("verification_expiry", { mode: "number" }),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // Extended fields — added via addColumnIfMissing migration in storage.ts (SQLite)
+  // In Postgres mode these columns are present from initial migration
+  lastLoginAt: bigint("last_login_at", { mode: "number" }),
+  failedLoginCount: integer("failed_login_count").notNull().default(0),
+  updatedAt: bigint("updated_at", { mode: "number" }),
+});
+
+export const jobSeekerProfiles = pgTable("job_seeker_profiles", {
+  id: serial("id").primaryKey(),
+  accountId: integer("account_id").notNull().unique(),
+  // Legacy name field (kept for backward compatibility)
+  name: text("name"),
+  // New split name fields
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  phone: text("phone"),
+  address: text("address"),
+  city: text("city"),
+  state: text("state"),
+  zipCode: text("zip_code"),
+  profilePictureUrl: text("profile_picture_url"),
+  yearsExperience: integer("years_experience"),
+  jobTypes: text("job_types"), // JSON array stored as string
+  bio: text("bio"),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const facilityAccounts = pgTable("facility_accounts", {
+  id: serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull().unique(),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+  email: text("email"),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  verificationToken: text("verification_token"),
+  verificationExpiry: bigint("verification_expiry", { mode: "number" }),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // F-01: account lockout parity with job-seeker portal
+  failedLoginCount: integer("failed_login_count").notNull().default(0),
+});
+
+export const facilityOverrides = pgTable("facility_overrides", {
+  id: serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull().unique(),
+  phone: text("phone"),
+  description: text("description"),
+  website: text("website"),
+  email: text("email"),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+export const jobPostingsTable = pgTable("job_postings", {
+  id: serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  title: text("title").notNull(),
+  type: text("type").notNull(),
+  salary: text("salary").notNull(),
+  description: text("description").notNull(),
+  requirements: text("requirements").notNull(), // JSON array stored as string
+  postedAt: bigint("posted_at", { mode: "number" }).notNull(),
+});
+
+// Persistent store for all California CCLD facilities (all types, all counties)
+export const facilitiesTable = pgTable("facilities", {
+  number: text("number").primaryKey(),
+  name: text("name").notNull(),
+  facilityType: text("facility_type").notNull().default(""),
+  facilityGroup: text("facility_group").notNull().default(""),
+  status: text("status").notNull(),
+  address: text("address").notNull().default(""),
+  city: text("city").notNull().default(""),
+  county: text("county").notNull().default(""),
+  zip: text("zip").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  licensee: text("licensee").notNull().default(""),
+  administrator: text("administrator").notNull().default(""),
+  capacity: integer("capacity").default(0),
+  firstLicenseDate: text("first_license_date").default(""),
+  closedDate: text("closed_date").default(""),
+  lastInspectionDate: text("last_inspection_date").default(""),
+  totalVisits: integer("total_visits").default(0),
+  totalTypeB: integer("total_type_b").default(0),
+  citations: integer("citations").default(0),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  geocodeQuality: text("geocode_quality").default(""),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  // enriched_at added as a separate column (present from initial migration in Postgres)
+  enrichedAt: bigint("enriched_at", { mode: "number" }),
+});
+
+// NEW: expression-of-interest — links a job seeker to a facility with status tracking
+export const applicantInterests = pgTable(
+  "applicant_interests",
+  {
+    id: serial("id").primaryKey(),
+    jobSeekerId: integer("job_seeker_id").notNull(),
+    facilityNumber: text("facility_number").notNull(),
+    roleInterest: text("role_interest"),
+    message: text("message"),
+    status: text("status").notNull().default("pending"), // pending | viewed | shortlisted
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [unique("applicant_interests_job_seeker_id_facility_number_unique").on(t.jobSeekerId, t.facilityNumber)]
+);
+
+// ============ DRIZZLE TYPES ============
+// These type aliases have the SAME names as in shared/schema.ts
+// so callers can import from either file interchangeably.
+
+export type User = typeof users.$inferSelect;
+export type InsertUser = typeof users.$inferInsert;
+export type FacilityAccount = typeof facilityAccounts.$inferSelect;
+export type InsertFacilityAccount = typeof facilityAccounts.$inferInsert;
+export type FacilityOverride = typeof facilityOverrides.$inferSelect;
+export type DbJobPosting = typeof jobPostingsTable.$inferSelect;
+export type InsertDbJobPosting = typeof jobPostingsTable.$inferInsert;
+export type JobSeekerAccount = typeof jobSeekerAccounts.$inferSelect;
+export type InsertJobSeekerAccount = typeof jobSeekerAccounts.$inferInsert;
+export type JobSeekerProfile = typeof jobSeekerProfiles.$inferSelect;
+
+// NEW: expression-of-interest types
+export type ApplicantInterest = typeof applicantInterests.$inferSelect;
+export type InsertApplicantInterest = typeof applicantInterests.$inferInsert;
+export const interestStatusSchema = z.enum(["pending", "viewed", "shortlisted"]);
+export type InterestStatus = z.infer<typeof interestStatusSchema>;
+
+// ============ ZOD SCHEMAS ============
+// Re-exported identically from shared/schema.ts for API compatibility.
+
+export const jobPostingSchema = z.object({
+  title: z.string(),
+  type: z.string(),
+  salary: z.string(),
+  description: z.string(),
+  requirements: z.array(z.string()),
+  postedDaysAgo: z.number(),
+});
+
+export type JobPosting = z.infer<typeof jobPostingSchema>;
+
+export const facilitySchema = z.object({
+  number: z.string(),
+  name: z.string(),
+  facilityType: z.string().default("Adult Residential Facility"),
+  facilityGroup: z.string().default("Adult & Senior Care"),
+  county: z.string().default(""),
+  address: z.string(),
+  city: z.string(),
+  zip: z.string(),
+  phone: z.string(),
+  licensee: z.string(),
+  administrator: z.string(),
+  status: z.string(),
+  capacity: z.number(),
+  firstLicenseDate: z.string(),
+  closedDate: z.string(),
+  lastInspectionDate: z.string(),
+  totalVisits: z.number(),
+  inspectionVisits: z.number().default(0),
+  complaintVisits: z.number().default(0),
+  inspectTypeB: z.number().default(0),
+  otherTypeB: z.number().default(0),
+  complaintTypeB: z.number().default(0),
+  totalTypeB: z.number(),
+  citations: z.string(),
+  lat: z.number(),
+  lng: z.number(),
+  geocodeQuality: z.string(),
+  isHiring: z.boolean(),
+  jobPostings: z.array(jobPostingSchema),
+});
+
+export type Facility = z.infer<typeof facilitySchema>;
+
+export const facilitiesMetaSchema = z.object({
+  totalCount: z.number(),
+  facilityTypes: z.array(z.string()),
+  facilityGroups: z.array(z.string()),
+  counties: z.array(z.string()),
+  statuses: z.array(z.string()),
+  countByType: z.record(z.number()),
+  countByGroup: z.record(z.number()),
+  countByCounty: z.record(z.number()),
+  countByStatus: z.record(z.number()),
+  lastUpdated: z.number().nullable(),
+});
+export type FacilitiesMeta = z.infer<typeof facilitiesMetaSchema>;

@@ -8,8 +8,9 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { storage } from "./storage";
 import { comparePassword } from "./auth";
-import { sqlite } from "./db/index";
+import { sqlite, pool, usingPostgres } from "./db/index";
 import { SqliteSessionStore } from "./session/sqliteSessionStore";
+import connectPgSimple from "connect-pg-simple";
 import { getCachedFacilities, autoSeedIfEmpty } from "./services/facilitiesService";
 import { startEtlScheduler } from "./etlScheduler";
 import { opsRouter } from "./ops/opsRouter";
@@ -48,14 +49,24 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// ── Session store: dual-mode ──────────────────────────────────────────────────
+// PostgreSQL mode: connect-pg-simple creates the "session" table automatically.
+// SQLite mode: SqliteSessionStore (custom, using better-sqlite3).
+const PgSessionStore = connectPgSimple(session);
+const sessionStore = usingPostgres
+  ? new PgSessionStore({
+      pool: pool!,
+      tableName: "session",       // connect-pg-simple default
+      createTableIfMissing: true, // auto-creates "session" table in Postgres
+    })
+  : new SqliteSessionStore(sqlite!);
+
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "arf-map-facility-portal-secret",
     resave: false,
     saveUninitialized: false,
-    // Production-safe SQLite session store — survives server restarts.
-    // Swap for connect-pg-simple (PostgreSQL) or connect-redis as you scale.
-    store: new SqliteSessionStore(sqlite),
+    store: sessionStore,
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,

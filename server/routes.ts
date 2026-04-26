@@ -20,10 +20,14 @@ import {
 } from "./services/facilitiesService";
 import {
   queryFacilitiesAll,
+  queryFacilitiesAllAsync,
   searchFacilitiesAutocomplete,
+  searchFacilitiesAutocompleteAsync,
   getFacilitiesMeta,
+  getFacilitiesMetaAsync,
   type FacilityDbRow,
 } from "./storage";
+import { usingPostgres } from "./db/index";
 
 const facilityOtpStore = new Map<string, { otp: string; expiry: number }>();
 
@@ -120,7 +124,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/facilities/meta", async (_req, res, next) => {
     try {
       if (isDatabaseSeeded()) {
-        res.json(getFacilitiesMeta());
+        res.json(await getFacilitiesMetaAsync());
       } else {
         // Compute from in-memory cache
         const facilities = await getCachedFacilities();
@@ -159,7 +163,7 @@ export async function registerRoutes(server: Server, app: Express) {
       if (!q) return res.json([]);
 
       if (isDatabaseSeeded()) {
-        const rows = searchFacilitiesAutocomplete(q, 10);
+        const rows = await searchFacilitiesAutocompleteAsync(q, 10);
         res.json(rows.map((r) => ({
           number: r.number,
           name: r.name,
@@ -242,7 +246,7 @@ export async function registerRoutes(server: Server, app: Express) {
       };
 
       if (isDatabaseSeeded()) {
-        let rows = queryFacilitiesAll({
+        let rows = await queryFacilitiesAllAsync({
           search,
           county,
           facilityType,
@@ -559,9 +563,17 @@ export async function registerRoutes(server: Server, app: Express) {
       });
 
       // Invalidate all active sessions for this facility account.
-      sqlite
-        .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.passport.user') = ?")
-        .run(account.id);
+      if (usingPostgres) {
+        const { pool } = await import("./db/index");
+        await pool!.query(
+          "DELETE FROM session WHERE sess->>'passport'->>'user' = $1",
+          [String(account.id)]
+        );
+      } else {
+        sqlite
+          .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.passport.user') = ?")
+          .run(account.id);
+      }
 
       return res.json({ ok: true });
     } catch (err) {

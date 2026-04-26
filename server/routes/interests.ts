@@ -2,7 +2,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { Request, Response, NextFunction } from "express";
-import { storage, getInterestsByFacility, getInterestsBySeeker } from "../storage";
+import { storage, getInterestsByFacilityAsync, getInterestsBySeekerAsync } from "../storage";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
 import { interestStatusSchema } from "@shared/schema";
 
@@ -49,7 +49,7 @@ interestsRouter.post("/jobseeker/interests", requireJobSeekerAuth, async (req, r
 /** GET /api/jobseeker/interests — list all my interests with facility names */
 interestsRouter.get("/jobseeker/interests", requireJobSeekerAuth, async (req, res, next) => {
   try {
-    const interests = getInterestsBySeeker(req.session.jobSeekerId!);
+    const interests = await getInterestsBySeekerAsync(req.session.jobSeekerId!);
     res.json(interests);
   } catch (err) {
     next(err);
@@ -74,7 +74,7 @@ interestsRouter.delete("/jobseeker/interests/:id", requireJobSeekerAuth, async (
 /** GET /api/facility/applicants — list applicants interested in my facility */
 interestsRouter.get("/facility/applicants", requireFacilityAuth, async (req, res, next) => {
   try {
-    const applicants = getInterestsByFacility(req.user!.facilityNumber);
+    const applicants = await getInterestsByFacilityAsync(req.user!.facilityNumber);
     res.json(
       applicants.map((a) => ({
         ...a,

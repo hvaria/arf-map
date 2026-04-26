@@ -1,0 +1,141 @@
+[migrate] SQLite source: C:\Users\Himanshukumar\OneDrive\Documents\arf-map\data.db
+[migrate] PostgreSQL target: postgres://ncu:***@127.0.0.1:5433/ncu?sslmode=disable
+[migrate] PostgreSQL connection: OK
+
+[migrate] Pre-flight row counts (SQLite):
+  users: 0
+  job_seeker_accounts: 6
+  job_seeker_profiles: 5
+  facilities: 10498
+  facility_accounts: 0
+  facility_overrides: 3
+  applicant_interests: 0
+  job_postings: 3
+  login_attempts: 22
+  enrichment_runs: 0
+  ops_residents: 0
+  ops_resident_assessments: 0
+  ops_care_plans: 0
+  ops_daily_tasks: 0
+  ops_medications: 0
+  ops_med_passes: 0
+  ops_controlled_sub_counts: 0
+  ops_med_destruction: 0
+  ops_incidents: 0
+  ops_leads: 0
+  ops_tours: 0
+  ops_admissions: 0
+  ops_billing_charges: 0
+  ops_invoices: 0
+  ops_payments: 0
+  ops_staff: 0
+  ops_shifts: 0
+  ops_facility_settings: 0
+  ops_compliance_calendar: 0
+
+[migrate] Skipping users (0 rows in SQLite)
+
+[migrate] Migrating job_seeker_accounts (6 rows)…
+  inserted 6/6 rows into job_seeker_accounts
+
+[migrate] Migrating job_seeker_profiles (5 rows)…
+  inserted 5/5 rows into job_seeker_profiles
+
+[migrate] Migrating facilities (10498 rows)…
+  inserted 500/10498…  inserted 1000/10498…  inserted 1500/10498…  inserted 2000/10498…  inserted 2500/10498…  inserted 3000/10498…  inserted 3500/10498…  inserted 4000/10498…  inserted 4500/10498…  inserted 5000/10498…  inserted 5500/10498…  inserted 6000/10498…  inserted 6500/10498…  inserted 7000/10498…  inserted 7500/10498…  inserted 8000/10498…  inserted 8500/10498…  inserted 9000/10498…  inserted 9500/10498…  inserted 10000/10498…  inserted 10498/10498 rows into facilities
+
+[migrate] Skipping facility_accounts (0 rows in SQLite)
+
+[migrate] Migrating facility_overrides (3 rows)…
+  inserted 3/3 rows into facility_overrides
+
+[migrate] Skipping applicant_interests (0 rows in SQLite)
+
+[migrate] Migrating job_postings (3 rows)…
+  inserted 3/3 rows into job_postings
+
+[migrate] Migrating login_attempts (22 rows)…
+  inserted 22/22 rows into login_attempts
+
+[migrate] Skipping enrichment_runs (0 rows in SQLite)
+
+[migrate] Skipping ops_residents (0 rows in SQLite)
+
+[migrate] Skipping ops_resident_assessments (0 rows in SQLite)
+
+[migrate] Skipping ops_care_plans (0 rows in SQLite)
+
+[migrate] Skipping ops_daily_tasks (0 rows in SQLite)
+
+[migrate] Skipping ops_medications (0 rows in SQLite)
+
+[migrate] Skipping ops_med_passes (0 rows in SQLite)
+
+[migrate] Skipping ops_controlled_sub_counts (0 rows in SQLite)
+
+[migrate] Skipping ops_med_destruction (0 rows in SQLite)
+
+[migrate] Skipping ops_incidents (0 rows in SQLite)
+
+[migrate] Skipping ops_leads (0 rows in SQLite)
+
+[migrate] Skipping ops_tours (0 rows in SQLite)
+
+[migrate] Skipping ops_admissions (0 rows in SQLite)
+
+[migrate] Skipping ops_billing_charges (0 rows in SQLite)
+
+[migrate] Skipping ops_invoices (0 rows in SQLite)
+
+[migrate] Skipping ops_payments (0 rows in SQLite)
+
+[migrate] Skipping ops_staff (0 rows in SQLite)
+
+[migrate] Skipping ops_shifts (0 rows in SQLite)
+
+[migrate] Skipping ops_facility_settings (0 rows in SQLite)
+
+[migrate] Skipping ops_compliance_calendar (0 rows in SQLite)
+
+[migrate] Resetting SERIAL sequences…
+  reset users_id_seq
+  reset job_seeker_accounts_id_seq
+  reset job_seeker_profiles_id_seq
+  reset facility_accounts_id_seq
+  reset facility_overrides_id_seq
+  reset applicant_interests_id_seq
+  reset job_postings_id_seq
+  reset login_attempts_id_seq
+  reset enrichment_runs_id_seq
+  reset ops_residents_id_seq
+  reset ops_resident_assessments_id_seq
+  reset ops_care_plans_id_seq
+  reset ops_daily_tasks_id_seq
+  reset ops_medications_id_seq
+  reset ops_med_passes_id_seq
+  reset ops_controlled_sub_counts_id_seq
+  reset ops_med_destruction_id_seq
+  reset ops_incidents_id_seq
+  reset ops_leads_id_seq
+  reset ops_tours_id_seq
+  reset ops_admissions_id_seq
+  reset ops_billing_charges_id_seq
+  reset ops_invoices_id_seq
+  reset ops_payments_id_seq
+  reset ops_staff_id_seq
+  reset ops_shifts_id_seq
+  reset ops_facility_settings_id_seq
+  reset ops_compliance_calendar_id_seq
+
+[migrate] Verification:
+  PASS  job_seeker_accounts: SQLite=6 Postgres=6
+  PASS  job_seeker_profiles: SQLite=5 Postgres=5
+  PASS  facilities: SQLite=10498 Postgres=10498
+  PASS  facility_overrides: SQLite=3 Postgres=3
+  PASS  job_postings: SQLite=3 Postgres=3
+  PASS  login_attempts: SQLite=22 Postgres=22
+
+─────────────────────────────────────────────────
+6 tables PASSED | 0 tables FAILED | 23 tables SKIPPED
+
+[migrate] Migration completed successfully.

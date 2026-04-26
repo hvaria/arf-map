@@ -8,8 +8,13 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { sqlite } from "../db/index";
+import { sqlite as _sqlite, usingPostgres } from "../db/index";
 import * as ops from "./opsStorage";
+
+// In Postgres mode the early-return middleware ensures sqlite is never called.
+// The non-null assertion is safe because the middleware blocks Postgres requests.
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+const sqlite = _sqlite!;
 
 export const opsRouter = Router();
 
@@ -26,6 +31,20 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
 
 // Apply to all ops routes
 opsRouter.use(requireFacilityAuth);
+
+// In PostgreSQL mode, several ops endpoints use raw SQLite queries that are not
+// yet ported to Postgres. Return 503 with a clear message for those routes.
+// See agents/05-blockers.md for the full list of ops endpoints needing async migration.
+// Routes that use only Drizzle ORM (no raw sqlite.prepare) will work in Postgres mode
+// once the Drizzle sync→async blocker is resolved.
+if (usingPostgres) {
+  opsRouter.use((_req, res, _next) => {
+    res.status(503).json({
+      success: false,
+      error: "Ops module: not yet fully implemented for PostgreSQL mode. See agents/05-blockers.md.",
+    });
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

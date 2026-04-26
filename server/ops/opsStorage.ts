@@ -7,7 +7,7 @@
  */
 
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
-import { db, sqlite } from "../db/index";
+import { db, sqlite, usingPostgres } from "../db/index";
 import {
   opsResidents,
   opsResidentAssessments,
@@ -418,10 +418,13 @@ export function discontinueMedication(
 // Med pass queue
 
 export function generateDailyMedPassEntries(facilityNumber: string, date: number): void {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] generateDailyMedPassEntries: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
   const dayStart = date;
   const dayEnd = date + 86400000;
 
-  const meds = sqlite.prepare(
+  const meds = sqlite!.prepare(
     `SELECT m.id AS medication_id, m.resident_id, m.scheduled_times, m.is_prn
      FROM ops_medications m
      JOIN ops_residents r ON m.resident_id = r.id
@@ -437,7 +440,7 @@ export function generateDailyMedPassEntries(facilityNumber: string, date: number
     is_prn: number;
   }>;
 
-  const insert = sqlite.prepare(
+  const insert = sqlite!.prepare(
     `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status)
      SELECT ?, ?, ?, ?, 'pending'
      WHERE NOT EXISTS (
@@ -465,10 +468,13 @@ export function getFacilityMedPassQueue(
   facilityNumber: string,
   date: number
 ): Array<OpsMedPass & { drug_name: string; resident_first_name: string; resident_last_name: string; room_number: string | null }> {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getFacilityMedPassQueue: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
   const dayStart = date;
   const dayEnd = date + 86400000; // +24h in ms
 
-  return sqlite
+  return sqlite!
     .prepare(
       `SELECT mp.*, m.drug_name, r.first_name AS resident_first_name, r.last_name AS resident_last_name, r.room_number
        FROM ops_med_passes mp
@@ -489,10 +495,13 @@ export function getResidentMedPassQueue(
   facilityNumber: string,
   date: number
 ): Array<OpsMedPass & { drug_name: string }> {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getResidentMedPassQueue: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
   const dayStart = date;
   const dayEnd = date + 86400000;
 
-  return sqlite
+  return sqlite!
     .prepare(
       `SELECT mp.*, m.drug_name
        FROM ops_med_passes mp
@@ -563,11 +572,14 @@ export function getMedPassDashboard(
   facilityNumber: string,
   date: number
 ): { overdue: number; late: number; missed: number; given: number; pending: number } {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getMedPassDashboard: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
   const dayStart = date;
   const dayEnd = date + 86400000;
   const now = Date.now();
 
-  const rows = sqlite
+  const rows = sqlite!
     .prepare(
       `SELECT status,
               COUNT(*) as cnt,
@@ -621,7 +633,10 @@ export function getPrnReport(
   startDate: number,
   endDate: number
 ): Array<OpsMedPass & { drug_name: string; resident_name: string }> {
-  return sqlite
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getPrnReport: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+  return sqlite!
     .prepare(
       `SELECT mp.*, m.drug_name, (r.first_name || ' ' || r.last_name) AS resident_name
        FROM ops_med_passes mp
@@ -664,13 +679,17 @@ export function listIncidents(
 
   const whereClause = whereParts.join(" AND ");
 
-  const incidents = sqlite
+  if (usingPostgres) {
+    throw new Error("[opsStorage] listIncidents: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+
+  const incidents = sqlite!
     .prepare(
       `SELECT * FROM ops_incidents WHERE ${whereClause} ORDER BY incident_date DESC LIMIT ? OFFSET ?`
     )
     .all(...params, limit, offset) as OpsIncident[];
 
-  const countRow = sqlite
+  const countRow = sqlite!
     .prepare(`SELECT COUNT(*) as count FROM ops_incidents WHERE ${whereClause}`)
     .get(...params) as { count: number };
 
@@ -709,8 +728,11 @@ export function getIncidentTrends(
   facilityNumber: string,
   days: number
 ): Array<{ incident_type: string; count: number; date: string }> {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getIncidentTrends: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
   const since = Date.now() - days * 86400000;
-  return sqlite
+  return sqlite!
     .prepare(
       `SELECT incident_type,
               COUNT(*) as count,
@@ -860,8 +882,12 @@ export function updateAdmissionLicForm(
   const mapping = validForms[form];
   if (!mapping) return false;
 
+  if (usingPostgres) {
+    throw new Error("[opsStorage] updateAdmissionLicForm: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+
   const now = Date.now();
-  const result = sqlite
+  const result = sqlite!
     .prepare(
       `UPDATE ops_admissions
        SET ${mapping.completedCol} = ?, ${mapping.dateCol} = ?, updated_at = ?
@@ -931,9 +957,13 @@ export function getOccupancy(facilityNumber: string): {
   beds_available: number;
   occupancy_rate: number;
 } {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getOccupancy: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+
   // Total capacity: count all non-discharged residents as a proxy,
   // and use a facility setting if available, else default 6 (typical ARF).
-  const settingRow = sqlite
+  const settingRow = sqlite!
     .prepare(
       `SELECT setting_value FROM ops_facility_settings WHERE facility_number = ? AND setting_key = 'bed_capacity'`
     )
@@ -941,7 +971,7 @@ export function getOccupancy(facilityNumber: string): {
 
   const total = settingRow ? parseInt(settingRow.setting_value, 10) : 6;
 
-  const activeRow = sqlite
+  const activeRow = sqlite!
     .prepare(
       `SELECT COUNT(*) as count FROM ops_residents WHERE facility_number = ? AND status = 'active'`
     )
@@ -1003,8 +1033,12 @@ export function generateInvoice(
   periodStart: number,
   periodEnd: number
 ): OpsInvoice {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] generateInvoice: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+
   // Sum charges in the billing period
-  const chargesRow = sqlite
+  const chargesRow = sqlite!
     .prepare(
       `SELECT COALESCE(SUM(amount * quantity), 0) as subtotal
        FROM ops_billing_charges
@@ -1108,12 +1142,16 @@ export function getArAging(facilityNumber: string): {
   days_90: number;
   over_90: number;
 } {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getArAging: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+
   const now = Date.now();
   const d30 = now - 30 * 86400000;
   const d60 = now - 60 * 86400000;
   const d90 = now - 90 * 86400000;
 
-  const rows = sqlite
+  const rows = sqlite!
     .prepare(
       `SELECT
          SUM(CASE WHEN due_date >= ? THEN balance_due ELSE 0 END) as current_amt,
@@ -1146,7 +1184,11 @@ export function getBillingSummary(
   periodStart: number,
   periodEnd: number
 ): { total_billed: number; total_paid: number; total_outstanding: number } {
-  const row = sqlite
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getBillingSummary: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+
+  const row = sqlite!
     .prepare(
       `SELECT
          COALESCE(SUM(total), 0) as total_billed,
@@ -1341,6 +1383,10 @@ export function getFacilityDashboard(facilityNumber: string): {
   overdueInvoices: number;
   overdueCompliance: number;
 } {
+  if (usingPostgres) {
+    throw new Error("[opsStorage] getFacilityDashboard: not implemented for Postgres mode. See agents/05-blockers.md.");
+  }
+
   const now = Date.now();
   const todayStart = (() => {
     const d = new Date();
@@ -1351,7 +1397,7 @@ export function getFacilityDashboard(facilityNumber: string): {
 
   const activeResidents =
     (
-      sqlite
+      sqlite!
         .prepare(
           `SELECT COUNT(*) as c FROM ops_residents WHERE facility_number = ? AND status = 'active'`
         )
@@ -1360,7 +1406,7 @@ export function getFacilityDashboard(facilityNumber: string): {
 
   const pendingMedPasses =
     (
-      sqlite
+      sqlite!
         .prepare(
           `SELECT COUNT(*) as c FROM ops_med_passes WHERE facility_number = ? AND status = 'pending' AND scheduled_datetime >= ? AND scheduled_datetime < ?`
         )
@@ -1369,7 +1415,7 @@ export function getFacilityDashboard(facilityNumber: string): {
 
   const overdueTasks =
     (
-      sqlite
+      sqlite!
         .prepare(
           `SELECT COUNT(*) as c FROM ops_daily_tasks WHERE facility_number = ? AND status = 'pending' AND task_date < ?`
         )
@@ -1378,7 +1424,7 @@ export function getFacilityDashboard(facilityNumber: string): {
 
   const openIncidents =
     (
-      sqlite
+      sqlite!
         .prepare(
           `SELECT COUNT(*) as c FROM ops_incidents WHERE facility_number = ? AND status = 'open'`
         )
@@ -1387,7 +1433,7 @@ export function getFacilityDashboard(facilityNumber: string): {
 
   const pendingLeads =
     (
-      sqlite
+      sqlite!
         .prepare(
           `SELECT COUNT(*) as c FROM ops_leads WHERE facility_number = ? AND stage NOT IN ('admitted', 'lost')`
         )
@@ -1396,7 +1442,7 @@ export function getFacilityDashboard(facilityNumber: string): {
 
   const overdueInvoices =
     (
-      sqlite
+      sqlite!
         .prepare(
           `SELECT COUNT(*) as c FROM ops_invoices WHERE facility_number = ? AND status NOT IN ('paid', 'void') AND balance_due > 0 AND due_date < ?`
         )
@@ -1405,7 +1451,7 @@ export function getFacilityDashboard(facilityNumber: string): {
 
   const overdueCompliance =
     (
-      sqlite
+      sqlite!
         .prepare(
           `SELECT COUNT(*) as c FROM ops_compliance_calendar WHERE facility_number = ? AND status = 'pending' AND due_date < ?`
         )
