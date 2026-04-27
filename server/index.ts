@@ -14,6 +14,7 @@ import connectPgSimple from "connect-pg-simple";
 import { getCachedFacilities, autoSeedIfEmpty } from "./services/facilitiesService";
 import { startEtlScheduler } from "./etlScheduler";
 import { opsRouter } from "./ops/opsRouter";
+import { bootstrapOpsSchema } from "./ops/opsStorage";
 import type { FacilityAccount } from "@shared/schema";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
@@ -184,6 +185,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Create ops tables in PostgreSQL on startup (no-op in SQLite mode)
+  await bootstrapOpsSchema();
+
   // Mount the Facility Operations Module router before existing routes
   app.use("/api/ops", opsRouter);
 

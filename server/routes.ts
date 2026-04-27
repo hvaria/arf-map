@@ -27,7 +27,7 @@ import {
   getFacilitiesMetaAsync,
   type FacilityDbRow,
 } from "./storage";
-import { usingPostgres } from "./db/index";
+import { usingPostgres, pool } from "./db/index";
 
 const facilityOtpStore = new Map<string, { otp: string; expiry: number }>();
 
@@ -119,6 +119,45 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ── Facilities (live from CHHS open data, 24 h server-side cache) ─────────
+
+  // ── /api/facilities/geocode-status — diagnostic geocoding progress ───────────
+  app.get("/api/facilities/geocode-status", async (_req, res, next) => {
+    try {
+      const STATUS_SQL = `
+        SELECT
+          COUNT(*)                                                          AS total,
+          COUNT(CASE WHEN lat IS NOT NULL AND lat != 0 THEN 1 END)         AS geocoded,
+          COUNT(CASE WHEN (lat IS NULL OR lat = 0)
+                      AND geocode_quality != 'geocode_failed' THEN 1 END)  AS pending,
+          COUNT(CASE WHEN geocode_quality = 'geocode_failed' THEN 1 END)   AS failed
+        FROM facilities
+      `;
+
+      let total = 0, geocoded = 0, pending = 0, failed = 0;
+
+      if (usingPostgres) {
+        const result = await pool!.query(STATUS_SQL);
+        const row = result.rows[0];
+        total    = parseInt(row.total,    10) || 0;
+        geocoded = parseInt(row.geocoded, 10) || 0;
+        pending  = parseInt(row.pending,  10) || 0;
+        failed   = parseInt(row.failed,   10) || 0;
+      } else {
+        const row = sqlite!.prepare(STATUS_SQL).get() as {
+          total: number; geocoded: number; pending: number; failed: number;
+        };
+        total    = row?.total    ?? 0;
+        geocoded = row?.geocoded ?? 0;
+        pending  = row?.pending  ?? 0;
+        failed   = row?.failed   ?? 0;
+      }
+
+      const pct = total > 0 ? ((geocoded / total) * 100).toFixed(1) + "%" : "0.0%";
+      res.json({ total, geocoded, pending, failed, pctComplete: pct });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   // ── /api/facilities/meta — filter UI metadata ────────────────────────────────
   app.get("/api/facilities/meta", async (_req, res, next) => {

@@ -915,6 +915,467 @@ export const opsComplianceCalendar = sqliteTable("ops_compliance_calendar", {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PostgreSQL DDL — created at startup via bootstrapOpsSchema() in opsStorage.ts
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const OPS_PG_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS ops_residents (
+    id                        BIGSERIAL PRIMARY KEY,
+    facility_number           TEXT NOT NULL,
+    first_name                TEXT NOT NULL,
+    last_name                 TEXT NOT NULL,
+    dob                       BIGINT,
+    gender                    TEXT,
+    ssn_last4                 TEXT,
+    admission_date            BIGINT,
+    discharge_date            BIGINT,
+    room_number               TEXT,
+    bed_number                TEXT,
+    primary_dx                TEXT,
+    secondary_dx              TEXT,
+    level_of_care             TEXT,
+    emergency_contact_name    TEXT,
+    emergency_contact_phone   TEXT,
+    emergency_contact_relation TEXT,
+    funding_source            TEXT,
+    regional_center_id        TEXT,
+    status                    TEXT NOT NULL DEFAULT 'active',
+    created_at                BIGINT NOT NULL,
+    updated_at                BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_residents_facility ON ops_residents(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_residents_status   ON ops_residents(status);
+  CREATE INDEX IF NOT EXISTS idx_ops_residents_adm_date ON ops_residents(admission_date);
+
+  CREATE TABLE IF NOT EXISTS ops_resident_assessments (
+    id                    BIGSERIAL PRIMARY KEY,
+    resident_id           BIGINT NOT NULL,
+    facility_number       TEXT NOT NULL,
+    assessment_type       TEXT NOT NULL,
+    assessed_by           TEXT NOT NULL,
+    assessed_at           BIGINT NOT NULL,
+    bathing               INTEGER DEFAULT 0,
+    dressing              INTEGER DEFAULT 0,
+    grooming              INTEGER DEFAULT 0,
+    toileting             INTEGER DEFAULT 0,
+    continence            INTEGER DEFAULT 0,
+    eating                INTEGER DEFAULT 0,
+    mobility              INTEGER DEFAULT 0,
+    transfers             INTEGER DEFAULT 0,
+    meal_prep             INTEGER DEFAULT 0,
+    housekeeping          INTEGER DEFAULT 0,
+    laundry               INTEGER DEFAULT 0,
+    transportation        INTEGER DEFAULT 0,
+    finances              INTEGER DEFAULT 0,
+    communication         INTEGER DEFAULT 0,
+    cognition_score       INTEGER,
+    behavior_notes        TEXT,
+    fall_risk_level       TEXT,
+    vision                TEXT,
+    hearing               TEXT,
+    speech                TEXT,
+    ambulation            TEXT,
+    self_administer_meds  INTEGER DEFAULT 0,
+    next_due_date         BIGINT,
+    lic_form_number       TEXT,
+    raw_json              TEXT,
+    created_at            BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_ra_resident   ON ops_resident_assessments(resident_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_ra_facility   ON ops_resident_assessments(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_ra_assessed   ON ops_resident_assessments(assessed_at);
+
+  CREATE TABLE IF NOT EXISTS ops_care_plans (
+    id                         BIGSERIAL PRIMARY KEY,
+    resident_id                BIGINT NOT NULL,
+    facility_number            TEXT NOT NULL,
+    created_by                 TEXT NOT NULL,
+    effective_date             BIGINT NOT NULL,
+    review_date                BIGINT NOT NULL,
+    goal                       TEXT NOT NULL,
+    intervention               TEXT NOT NULL,
+    frequency                  TEXT NOT NULL,
+    responsible_staff          TEXT,
+    digital_signature_resident TEXT,
+    digital_signature_family   TEXT,
+    signature_date             BIGINT,
+    status                     TEXT NOT NULL DEFAULT 'draft',
+    created_at                 BIGINT NOT NULL,
+    updated_at                 BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_cp_resident ON ops_care_plans(resident_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_cp_status   ON ops_care_plans(status);
+
+  CREATE TABLE IF NOT EXISTS ops_daily_tasks (
+    id               BIGSERIAL PRIMARY KEY,
+    care_plan_id     BIGINT NOT NULL,
+    resident_id      BIGINT NOT NULL,
+    facility_number  TEXT NOT NULL,
+    task_name        TEXT NOT NULL,
+    task_type        TEXT NOT NULL,
+    scheduled_time   TEXT,
+    shift            TEXT,
+    assigned_to      TEXT,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    completed_at     BIGINT,
+    completion_notes TEXT,
+    refused          INTEGER DEFAULT 0,
+    refuse_reason    TEXT,
+    task_date        BIGINT NOT NULL,
+    created_at       BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_dt_resident  ON ops_daily_tasks(resident_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_dt_task_date ON ops_daily_tasks(task_date);
+  CREATE INDEX IF NOT EXISTS idx_ops_dt_status    ON ops_daily_tasks(status);
+
+  CREATE TABLE IF NOT EXISTS ops_medications (
+    id                       BIGSERIAL PRIMARY KEY,
+    resident_id              BIGINT NOT NULL,
+    facility_number          TEXT NOT NULL,
+    drug_name                TEXT NOT NULL,
+    generic_name             TEXT,
+    dosage                   TEXT NOT NULL,
+    route                    TEXT NOT NULL,
+    frequency                TEXT NOT NULL,
+    scheduled_times          TEXT,
+    prescriber_name          TEXT,
+    prescriber_npi           TEXT,
+    rx_number                TEXT,
+    pharmacy_name            TEXT,
+    start_date               BIGINT,
+    end_date                 BIGINT,
+    is_prn                   INTEGER DEFAULT 0,
+    prn_indication           TEXT,
+    is_controlled            INTEGER DEFAULT 0,
+    is_psychotropic          INTEGER DEFAULT 0,
+    is_hazardous             INTEGER DEFAULT 0,
+    classification           TEXT,
+    requires_vitals_before   INTEGER DEFAULT 0,
+    vital_type               TEXT,
+    refill_threshold_days    INTEGER DEFAULT 7,
+    auto_refill_request      INTEGER DEFAULT 0,
+    status                   TEXT NOT NULL DEFAULT 'active',
+    discontinued_reason      TEXT,
+    discontinued_by          TEXT,
+    discontinued_at          BIGINT,
+    created_at               BIGINT NOT NULL,
+    updated_at               BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_med_resident ON ops_medications(resident_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_med_facility ON ops_medications(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_med_status   ON ops_medications(status);
+
+  CREATE TABLE IF NOT EXISTS ops_med_passes (
+    id                          BIGSERIAL PRIMARY KEY,
+    medication_id               BIGINT NOT NULL,
+    resident_id                 BIGINT NOT NULL,
+    facility_number             TEXT NOT NULL,
+    scheduled_datetime          BIGINT NOT NULL,
+    administered_datetime       BIGINT,
+    administered_by             TEXT,
+    witness_by                  TEXT,
+    right_resident              INTEGER DEFAULT 0,
+    right_medication            INTEGER DEFAULT 0,
+    right_dose                  INTEGER DEFAULT 0,
+    right_route                 INTEGER DEFAULT 0,
+    right_time                  INTEGER DEFAULT 0,
+    right_reason                INTEGER DEFAULT 0,
+    right_documentation         INTEGER DEFAULT 0,
+    right_to_refuse             INTEGER DEFAULT 0,
+    status                      TEXT NOT NULL DEFAULT 'pending',
+    refusal_reason              TEXT,
+    hold_reason                 TEXT,
+    notes                       TEXT,
+    pre_vitals_bp               TEXT,
+    pre_vitals_pulse            INTEGER,
+    pre_vitals_temp             DOUBLE PRECISION,
+    pre_vitals_spo2             INTEGER,
+    prn_reason                  TEXT,
+    prn_effectiveness_noted_at  BIGINT,
+    prn_effectiveness_notes     TEXT,
+    created_at                  BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_mp_medication ON ops_med_passes(medication_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_mp_resident   ON ops_med_passes(resident_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_mp_scheduled  ON ops_med_passes(scheduled_datetime);
+  CREATE INDEX IF NOT EXISTS idx_ops_mp_status     ON ops_med_passes(status);
+
+  CREATE TABLE IF NOT EXISTS ops_controlled_sub_counts (
+    id                 BIGSERIAL PRIMARY KEY,
+    medication_id      BIGINT NOT NULL,
+    facility_number    TEXT NOT NULL,
+    count_date         BIGINT NOT NULL,
+    shift              TEXT NOT NULL,
+    counted_by         TEXT NOT NULL,
+    witnessed_by       TEXT NOT NULL,
+    opening_count      INTEGER NOT NULL,
+    closing_count      INTEGER NOT NULL,
+    administered_count INTEGER NOT NULL DEFAULT 0,
+    wasted_count       INTEGER NOT NULL DEFAULT 0,
+    discrepancy        INTEGER DEFAULT 0,
+    discrepancy_notes  TEXT,
+    resolved           INTEGER DEFAULT 0,
+    created_at         BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_csc_medication  ON ops_controlled_sub_counts(medication_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_csc_count_date  ON ops_controlled_sub_counts(count_date);
+
+  CREATE TABLE IF NOT EXISTS ops_med_destruction (
+    id                 BIGSERIAL PRIMARY KEY,
+    medication_id      BIGINT NOT NULL,
+    facility_number    TEXT NOT NULL,
+    quantity           INTEGER NOT NULL,
+    unit               TEXT NOT NULL,
+    destruction_method TEXT NOT NULL,
+    destroyed_by       TEXT NOT NULL,
+    witnessed_by       TEXT NOT NULL,
+    destruction_date   BIGINT NOT NULL,
+    reason             TEXT NOT NULL,
+    created_at         BIGINT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS ops_incidents (
+    id                       BIGSERIAL PRIMARY KEY,
+    facility_number          TEXT NOT NULL,
+    resident_id              BIGINT,
+    incident_type            TEXT NOT NULL,
+    incident_date            BIGINT NOT NULL,
+    incident_time            TEXT,
+    location                 TEXT,
+    description              TEXT NOT NULL,
+    immediate_action_taken   TEXT,
+    injury_involved          INTEGER DEFAULT 0,
+    injury_description       TEXT,
+    hospitalization_required INTEGER DEFAULT 0,
+    hospital_name            TEXT,
+    reported_by              TEXT NOT NULL,
+    supervisor_notified      INTEGER DEFAULT 0,
+    supervisor_notified_at   BIGINT,
+    family_notified          INTEGER DEFAULT 0,
+    family_notified_at       BIGINT,
+    physician_notified       INTEGER DEFAULT 0,
+    physician_notified_at    BIGINT,
+    lic_624_required         INTEGER DEFAULT 0,
+    lic_624_submitted        INTEGER DEFAULT 0,
+    lic_624_submitted_at     BIGINT,
+    soc_341_required         INTEGER DEFAULT 0,
+    soc_341_submitted        INTEGER DEFAULT 0,
+    root_cause               TEXT,
+    corrective_action        TEXT,
+    follow_up_date           BIGINT,
+    follow_up_completed      INTEGER DEFAULT 0,
+    status                   TEXT NOT NULL DEFAULT 'open',
+    created_at               BIGINT NOT NULL,
+    updated_at               BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_inc_facility      ON ops_incidents(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_inc_resident      ON ops_incidents(resident_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_inc_incident_date ON ops_incidents(incident_date);
+  CREATE INDEX IF NOT EXISTS idx_ops_inc_status        ON ops_incidents(status);
+
+  CREATE TABLE IF NOT EXISTS ops_leads (
+    id                   BIGSERIAL PRIMARY KEY,
+    facility_number      TEXT NOT NULL,
+    contact_name         TEXT NOT NULL,
+    contact_phone        TEXT,
+    contact_email        TEXT,
+    contact_relation     TEXT,
+    prospect_name        TEXT NOT NULL,
+    prospect_dob         BIGINT,
+    prospect_gender      TEXT,
+    care_needs_summary   TEXT,
+    funding_source       TEXT,
+    desired_move_in_date BIGINT,
+    referral_source      TEXT,
+    assigned_to          TEXT,
+    stage                TEXT NOT NULL DEFAULT 'inquiry',
+    lost_reason          TEXT,
+    notes                TEXT,
+    last_contact_date    BIGINT,
+    next_follow_up_date  BIGINT,
+    created_at           BIGINT NOT NULL,
+    updated_at           BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_leads_facility     ON ops_leads(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_leads_stage        ON ops_leads(stage);
+  CREATE INDEX IF NOT EXISTS idx_ops_leads_follow_up    ON ops_leads(next_follow_up_date);
+
+  CREATE TABLE IF NOT EXISTS ops_tours (
+    id               BIGSERIAL PRIMARY KEY,
+    lead_id          BIGINT NOT NULL,
+    facility_number  TEXT NOT NULL,
+    scheduled_at     BIGINT NOT NULL,
+    completed_at     BIGINT,
+    conducted_by     TEXT,
+    outcome          TEXT,
+    notes            TEXT,
+    follow_up_action TEXT,
+    created_at       BIGINT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS ops_admissions (
+    id                             BIGSERIAL PRIMARY KEY,
+    lead_id                        BIGINT NOT NULL,
+    facility_number                TEXT NOT NULL,
+    resident_id                    BIGINT,
+    lic_601_completed              INTEGER DEFAULT 0,
+    lic_601_date                   BIGINT,
+    lic_602a_completed             INTEGER DEFAULT 0,
+    lic_602a_date                  BIGINT,
+    lic_603_completed              INTEGER DEFAULT 0,
+    lic_603_date                   BIGINT,
+    lic_604a_completed             INTEGER DEFAULT 0,
+    lic_604a_date                  BIGINT,
+    lic_605a_completed             INTEGER DEFAULT 0,
+    lic_605a_date                  BIGINT,
+    lic_610d_completed             INTEGER DEFAULT 0,
+    lic_610d_date                  BIGINT,
+    admission_agreement_signed     INTEGER DEFAULT 0,
+    admission_agreement_signed_at  BIGINT,
+    admission_agreement_signed_by  TEXT,
+    physician_report_received      INTEGER DEFAULT 0,
+    tb_test_results_received       INTEGER DEFAULT 0,
+    move_in_date                   BIGINT,
+    move_in_completed              INTEGER DEFAULT 0,
+    assigned_room                  TEXT,
+    welcome_completed              INTEGER DEFAULT 0,
+    notes                          TEXT,
+    created_at                     BIGINT NOT NULL,
+    updated_at                     BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_adm_lead     ON ops_admissions(lead_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_adm_facility ON ops_admissions(facility_number);
+
+  CREATE TABLE IF NOT EXISTS ops_billing_charges (
+    id                   BIGSERIAL PRIMARY KEY,
+    facility_number      TEXT NOT NULL,
+    resident_id          BIGINT NOT NULL,
+    charge_type          TEXT NOT NULL,
+    description          TEXT NOT NULL,
+    amount               DOUBLE PRECISION NOT NULL,
+    unit                 TEXT,
+    quantity             DOUBLE PRECISION NOT NULL DEFAULT 1,
+    billing_period_start BIGINT,
+    billing_period_end   BIGINT,
+    is_recurring         INTEGER DEFAULT 0,
+    recurrence_interval  TEXT,
+    prorated             INTEGER DEFAULT 0,
+    prorate_from         BIGINT,
+    prorate_to           BIGINT,
+    source               TEXT NOT NULL DEFAULT 'manual',
+    clinical_ref_id      BIGINT,
+    created_at           BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_bc_facility  ON ops_billing_charges(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_bc_resident  ON ops_billing_charges(resident_id);
+
+  CREATE TABLE IF NOT EXISTS ops_invoices (
+    id                   BIGSERIAL PRIMARY KEY,
+    facility_number      TEXT NOT NULL,
+    resident_id          BIGINT NOT NULL,
+    invoice_number       TEXT NOT NULL UNIQUE,
+    billing_period_start BIGINT NOT NULL,
+    billing_period_end   BIGINT NOT NULL,
+    subtotal             DOUBLE PRECISION NOT NULL DEFAULT 0,
+    tax                  DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total                DOUBLE PRECISION NOT NULL DEFAULT 0,
+    amount_paid          DOUBLE PRECISION NOT NULL DEFAULT 0,
+    balance_due          DOUBLE PRECISION NOT NULL DEFAULT 0,
+    status               TEXT NOT NULL DEFAULT 'draft',
+    due_date             BIGINT,
+    sent_at              BIGINT,
+    paid_at              BIGINT,
+    payment_method       TEXT,
+    payment_reference    TEXT,
+    notes                TEXT,
+    created_at           BIGINT NOT NULL,
+    updated_at           BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_inv_facility ON ops_invoices(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_inv_resident ON ops_invoices(resident_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_inv_status   ON ops_invoices(status);
+  CREATE INDEX IF NOT EXISTS idx_ops_inv_due_date ON ops_invoices(due_date);
+
+  CREATE TABLE IF NOT EXISTS ops_payments (
+    id               BIGSERIAL PRIMARY KEY,
+    invoice_id       BIGINT NOT NULL,
+    facility_number  TEXT NOT NULL,
+    resident_id      BIGINT NOT NULL,
+    amount           DOUBLE PRECISION NOT NULL,
+    payment_date     BIGINT NOT NULL,
+    payment_method   TEXT NOT NULL,
+    reference_number TEXT,
+    type             TEXT NOT NULL DEFAULT 'payment',
+    notes            TEXT,
+    recorded_by      TEXT,
+    created_at       BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_pay_invoice ON ops_payments(invoice_id);
+
+  CREATE TABLE IF NOT EXISTS ops_staff (
+    id               BIGSERIAL PRIMARY KEY,
+    facility_number  TEXT NOT NULL,
+    first_name       TEXT NOT NULL,
+    last_name        TEXT NOT NULL,
+    email            TEXT,
+    phone            TEXT,
+    role             TEXT NOT NULL,
+    hire_date        BIGINT,
+    termination_date BIGINT,
+    license_number   TEXT,
+    license_expiry   BIGINT,
+    status           TEXT NOT NULL DEFAULT 'active',
+    created_at       BIGINT NOT NULL,
+    updated_at       BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_staff_facility ON ops_staff(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_staff_status   ON ops_staff(status);
+
+  CREATE TABLE IF NOT EXISTS ops_shifts (
+    id               BIGSERIAL PRIMARY KEY,
+    facility_number  TEXT NOT NULL,
+    staff_id         BIGINT NOT NULL,
+    shift_date       BIGINT NOT NULL,
+    shift_type       TEXT NOT NULL,
+    start_time       TEXT NOT NULL,
+    end_time         TEXT NOT NULL,
+    is_overtime      INTEGER DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'scheduled',
+    covered_by_id    BIGINT,
+    notes            TEXT,
+    created_at       BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_shifts_facility   ON ops_shifts(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_shifts_staff      ON ops_shifts(staff_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_shifts_shift_date ON ops_shifts(shift_date);
+
+  CREATE TABLE IF NOT EXISTS ops_facility_settings (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    setting_key     TEXT NOT NULL,
+    setting_value   TEXT,
+    updated_at      BIGINT NOT NULL,
+    UNIQUE(facility_number, setting_key)
+  );
+
+  CREATE TABLE IF NOT EXISTS ops_compliance_calendar (
+    id                   BIGSERIAL PRIMARY KEY,
+    facility_number      TEXT NOT NULL,
+    item_type            TEXT NOT NULL,
+    description          TEXT NOT NULL,
+    due_date             BIGINT NOT NULL,
+    completed_date       BIGINT,
+    assigned_to          TEXT,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    reminder_days_before INTEGER DEFAULT 30,
+    created_at           BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_cc_facility ON ops_compliance_calendar(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_cc_due_date ON ops_compliance_calendar(due_date);
+  CREATE INDEX IF NOT EXISTS idx_ops_cc_status   ON ops_compliance_calendar(status);
+`;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
 
