@@ -1,23 +1,12 @@
 import { defineConfig } from "drizzle-kit";
 
-const isPg = !!process.env.DATABASE_URL;
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is required for drizzle-kit");
+}
 
-export default defineConfig(
-  isPg
-    ? {
-        out: "./migrations",
-        schema: "./shared/schema.pg.ts",
-        dialect: "postgresql",
-        dbCredentials: { url: process.env.DATABASE_URL! },
-      }
-    : {
-        out: "./migrations",
-        schema: "./shared/schema.ts",
-        dialect: "sqlite",
-        dbCredentials: {
-          url: process.env.DATA_DIR
-            ? `${process.env.DATA_DIR}/data.db`
-            : "./data.db",
-        },
-      }
-);
+export default defineConfig({
+  out: "./migrations",
+  schema: "./shared/schema.ts",
+  dialect: "postgresql",
+  dbCredentials: { url: process.env.DATABASE_URL },
+});

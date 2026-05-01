@@ -1,35 +1,34 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, serial, bigint, doublePrecision } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
-// ============ DRIZZLE TABLES ============
+// ============ DRIZZLE TABLES (PostgreSQL) ============
 
-export const users = sqliteTable("users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+const ts = (col: string) => bigint(col, { mode: "number" });
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
 });
 
-export const jobSeekerAccounts = sqliteTable("job_seeker_accounts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const jobSeekerAccounts = pgTable("job_seeker_accounts", {
+  id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   emailVerified: integer("email_verified").notNull().default(0),
   verificationToken: text("verification_token"),
-  verificationExpiry: integer("verification_expiry"),
-  createdAt: integer("created_at").notNull(),
-  // Extended fields — added via addColumnIfMissing migration in storage.ts
-  lastLoginAt: integer("last_login_at"),
+  verificationExpiry: ts("verification_expiry"),
+  createdAt: ts("created_at").notNull(),
+  lastLoginAt: ts("last_login_at"),
   failedLoginCount: integer("failed_login_count").notNull().default(0),
-  updatedAt: integer("updated_at"),
+  updatedAt: ts("updated_at"),
 });
 
-export const jobSeekerProfiles = sqliteTable("job_seeker_profiles", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const jobSeekerProfiles = pgTable("job_seeker_profiles", {
+  id: serial("id").primaryKey(),
   accountId: integer("account_id").notNull().unique(),
-  // Legacy name field (kept for backward compatibility)
   name: text("name"),
-  // New split name fields
   firstName: text("first_name"),
   lastName: text("last_name"),
   phone: text("phone"),
@@ -39,48 +38,47 @@ export const jobSeekerProfiles = sqliteTable("job_seeker_profiles", {
   zipCode: text("zip_code"),
   profilePictureUrl: text("profile_picture_url"),
   yearsExperience: integer("years_experience"),
-  jobTypes: text("job_types"), // JSON array stored as string
+  jobTypes: text("job_types"),
   bio: text("bio"),
-  updatedAt: integer("updated_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
 });
 
-export const facilityAccounts = sqliteTable("facility_accounts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const facilityAccounts = pgTable("facility_accounts", {
+  id: serial("id").primaryKey(),
   facilityNumber: text("facility_number").notNull().unique(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   email: text("email"),
   emailVerified: integer("email_verified").notNull().default(0),
   verificationToken: text("verification_token"),
-  verificationExpiry: integer("verification_expiry"),
-  createdAt: integer("created_at").notNull(),
-  // F-01: account lockout parity with job-seeker portal
+  verificationExpiry: ts("verification_expiry"),
+  createdAt: ts("created_at").notNull(),
   failedLoginCount: integer("failed_login_count").notNull().default(0),
 });
 
-export const facilityOverrides = sqliteTable("facility_overrides", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const facilityOverrides = pgTable("facility_overrides", {
+  id: serial("id").primaryKey(),
   facilityNumber: text("facility_number").notNull().unique(),
   phone: text("phone"),
   description: text("description"),
   website: text("website"),
   email: text("email"),
-  updatedAt: integer("updated_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
 });
 
-export const jobPostingsTable = sqliteTable("job_postings", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const jobPostingsTable = pgTable("job_postings", {
+  id: serial("id").primaryKey(),
   facilityNumber: text("facility_number").notNull(),
   title: text("title").notNull(),
   type: text("type").notNull(),
   salary: text("salary").notNull(),
   description: text("description").notNull(),
-  requirements: text("requirements").notNull(), // JSON array stored as string
-  postedAt: integer("posted_at").notNull(),
+  requirements: text("requirements").notNull(),
+  postedAt: ts("posted_at").notNull(),
 });
 
 // Persistent store for all California CCLD facilities (all types, all counties)
-export const facilitiesTable = sqliteTable("facilities", {
+export const facilitiesTable = pgTable("facilities", {
   number: text("number").primaryKey(),
   name: text("name").notNull(),
   facilityType: text("facility_type").notNull().default(""),
@@ -100,22 +98,22 @@ export const facilitiesTable = sqliteTable("facilities", {
   totalVisits: integer("total_visits").default(0),
   totalTypeB: integer("total_type_b").default(0),
   citations: integer("citations").default(0),
-  lat: real("lat"),
-  lng: real("lng"),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
   geocodeQuality: text("geocode_quality").default(""),
-  updatedAt: integer("updated_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+  enrichedAt: ts("enriched_at"),
 });
 
-// NEW: expression-of-interest — links a job seeker to a facility with status tracking
-export const applicantInterests = sqliteTable("applicant_interests", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const applicantInterests = pgTable("applicant_interests", {
+  id: serial("id").primaryKey(),
   jobSeekerId: integer("job_seeker_id").notNull(),
   facilityNumber: text("facility_number").notNull(),
   roleInterest: text("role_interest"),
   message: text("message"),
-  status: text("status").notNull().default("pending"), // pending | viewed | shortlisted
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
+  status: text("status").notNull().default("pending"),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
 });
 
 // ============ DRIZZLE TYPES ============

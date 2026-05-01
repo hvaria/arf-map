@@ -7,7 +7,6 @@ import { storage } from "./storage";
 import { authRateLimiter } from "./middleware/rateLimiter";
 import { hashPassword } from "./auth";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
-import { sqlite } from "./db/index";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { adminEtlRouter } from "./routes/adminEtl";
 import { interestsRouter } from "./routes/interests"; // NEW: expression-of-interest
@@ -19,15 +18,12 @@ import {
   typeToGroup,
 } from "./services/facilitiesService";
 import {
-  queryFacilitiesAll,
   queryFacilitiesAllAsync,
-  searchFacilitiesAutocomplete,
   searchFacilitiesAutocompleteAsync,
-  getFacilitiesMeta,
   getFacilitiesMetaAsync,
   type FacilityDbRow,
 } from "./storage";
-import { usingPostgres, pool } from "./db/index";
+import { pool } from "./db/index";
 
 const facilityOtpStore = new Map<string, { otp: string; expiry: number }>();
 
@@ -133,24 +129,12 @@ export async function registerRoutes(server: Server, app: Express) {
         FROM facilities
       `;
 
-      let total = 0, geocoded = 0, pending = 0, failed = 0;
-
-      if (usingPostgres) {
-        const result = await pool!.query(STATUS_SQL);
-        const row = result.rows[0];
-        total    = parseInt(row.total,    10) || 0;
-        geocoded = parseInt(row.geocoded, 10) || 0;
-        pending  = parseInt(row.pending,  10) || 0;
-        failed   = parseInt(row.failed,   10) || 0;
-      } else {
-        const row = sqlite!.prepare(STATUS_SQL).get() as {
-          total: number; geocoded: number; pending: number; failed: number;
-        };
-        total    = row?.total    ?? 0;
-        geocoded = row?.geocoded ?? 0;
-        pending  = row?.pending  ?? 0;
-        failed   = row?.failed   ?? 0;
-      }
+      const result = await pool.query(STATUS_SQL);
+      const row = result.rows[0];
+      const total    = parseInt(row.total,    10) || 0;
+      const geocoded = parseInt(row.geocoded, 10) || 0;
+      const pending  = parseInt(row.pending,  10) || 0;
+      const failed   = parseInt(row.failed,   10) || 0;
 
       const pct = total > 0 ? ((geocoded / total) * 100).toFixed(1) + "%" : "0.0%";
       res.json({ total, geocoded, pending, failed, pctComplete: pct });
@@ -601,18 +585,10 @@ export async function registerRoutes(server: Server, app: Express) {
         verificationExpiry: null,
       });
 
-      // Invalidate all active sessions for this facility account.
-      if (usingPostgres) {
-        const { pool } = await import("./db/index");
-        await pool!.query(
-          "DELETE FROM session WHERE sess->>'passport'->>'user' = $1",
-          [String(account.id)]
-        );
-      } else {
-        sqlite
-          .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.passport.user') = ?")
-          .run(account.id);
-      }
+      await pool.query(
+        "DELETE FROM session WHERE sess->'passport'->>'user' = $1",
+        [String(account.id)]
+      );
 
       return res.json({ ok: true });
     } catch (err) {

@@ -17,7 +17,7 @@ import {
   bulkUpsertFacilities,
   updateFacilityCoords,
 } from "../storage";
-import { sqlite, pool, usingPostgres } from "../db/index";
+import { pool } from "../db/index";
 import { typeToGroup, formatPhone } from "@shared/etl-types";
 
 // Re-export so existing callers keep working without change.
@@ -53,19 +53,14 @@ let _seeding = false;
  */
 export async function autoSeedIfEmpty(): Promise<void> {
   if (_seeding) return;
-  if (usingPostgres) {
-    // In Postgres mode, check the DB count asynchronously
-    try {
-      const count = await getFacilityDbCountAsync();
-      if (count > 0) {
-        _isDatabaseSeededCache = true;
-        return;
-      }
-    } catch {
-      // DB not ready yet — proceed with seeding
+  try {
+    const count = await getFacilityDbCountAsync();
+    if (count > 0) {
+      _isDatabaseSeededCache = true;
+      return;
     }
-  } else {
-    if (isDatabaseSeeded()) return;
+  } catch {
+    // DB not ready yet — proceed with seeding
   }
   setImmediate(() => seedFromCCL().catch((err) => console.error("[facilitiesService] seed error:", err)));
 }
@@ -99,20 +94,7 @@ export function invalidateFacilitiesCache(): void {
  * anyway. See agents/05-blockers.md.
  */
 export function isDatabaseSeeded(): boolean {
-  if (usingPostgres) {
-    // Cannot do a synchronous Postgres query.
-    // Return false to fall back to the in-memory live-fetch path.
-    // This is safe: the async seedFromCCL() path still populates Postgres,
-    // and _isDatabaseSeededCache is updated after successful seeding.
-    return _isDatabaseSeededCache;
-  }
-  try {
-    // Synchronous SQLite path — safe because better-sqlite3 is synchronous
-    const row = sqlite!.prepare("SELECT COUNT(*) as n FROM facilities").get() as { n: number };
-    return row.n > 0;
-  } catch {
-    return false;
-  }
+  return _isDatabaseSeededCache;
 }
 
 // Cache for Postgres mode: updated after successful seedFromCCL()
@@ -239,7 +221,7 @@ async function seedFromCCL(): Promise<void> {
 
     // Update the Postgres-mode seeded cache so isDatabaseSeeded() returns true
     _isDatabaseSeededCache = true;
-    console.log(`[facilitiesService] seeded ${facilities.length} facilities into ${usingPostgres ? "PostgreSQL" : "SQLite"}`);
+    console.log(`[facilitiesService] seeded ${facilities.length} facilities into PostgreSQL`);
   } finally {
     _seeding = false;
   }
@@ -519,14 +501,8 @@ async function geocodeMissingCoords(): Promise<void> {
   while (true) {
     let batch: { number: string; name: string; address: string; city: string; zip: string }[];
 
-    if (usingPostgres) {
-      const result = await pool!.query(GEOCODER_SQL);
-      batch = result.rows as typeof batch;
-    } else {
-      batch = sqlite!
-        .prepare(GEOCODER_SQL)
-        .all() as typeof batch;
-    }
+    const result = await pool.query(GEOCODER_SQL);
+    batch = result.rows as typeof batch;
 
     if (batch.length === 0) {
       console.log(

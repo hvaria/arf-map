@@ -8,13 +8,12 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { storage } from "./storage";
 import { comparePassword } from "./auth";
-import { sqlite, pool, usingPostgres } from "./db/index";
-import { SqliteSessionStore } from "./session/sqliteSessionStore";
+import { pool } from "./db/index";
 import connectPgSimple from "connect-pg-simple";
 import { getCachedFacilities, autoSeedIfEmpty } from "./services/facilitiesService";
-import { startEtlScheduler } from "./etlScheduler";
 import { opsRouter } from "./ops/opsRouter";
 import { bootstrapOpsSchema } from "./ops/opsStorage";
+import { bootstrapMainSchema } from "./db/bootstrap";
 import type { FacilityAccount } from "@shared/schema";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
@@ -50,21 +49,21 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// ── Session store: dual-mode ──────────────────────────────────────────────────
-// PostgreSQL mode: connect-pg-simple creates the "session" table automatically.
-// SQLite mode: SqliteSessionStore (custom, using better-sqlite3).
+// ── Session store: PostgreSQL via connect-pg-simple ───────────────────────────
 const PgSessionStore = connectPgSimple(session);
-const sessionStore = usingPostgres
-  ? new PgSessionStore({
-      pool: pool!,
-      tableName: "session",       // connect-pg-simple default
-      createTableIfMissing: true, // auto-creates "session" table in Postgres
-    })
-  : new SqliteSessionStore(sqlite!);
+const sessionStore = new PgSessionStore({
+  pool,
+  tableName: "session",
+  createTableIfMissing: true,
+});
+
+if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET environment variable is required in production");
+}
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "arf-map-facility-portal-secret",
+    secret: process.env.SESSION_SECRET || "arf-map-facility-portal-secret-dev-only",
     resave: false,
     saveUninitialized: false,
     store: sessionStore,
@@ -185,7 +184,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Create ops tables in PostgreSQL on startup (no-op in SQLite mode)
+  await bootstrapMainSchema();
   await bootstrapOpsSchema();
 
   // Mount the Facility Operations Module router before existing routes
@@ -238,9 +237,5 @@ app.use((req, res, next) => {
         .catch(() => { /* silently skip — autoSeedIfEmpty handles the empty-DB case */ });
     }
 
-    // Start the nightly CCLD enrichment scheduler (production only)
-    if (process.env.NODE_ENV === "production") {
-      startEtlScheduler();
-    }
   });
 })();

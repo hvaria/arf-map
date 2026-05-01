@@ -1,7 +1,10 @@
-# fly.toml app configuration file generated for ncu on 2026-04-08T14:22:28-07:00
+# fly.toml app configuration file
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+# DATABASE_URL must be set via `fly secrets set DATABASE_URL=postgres://...`
+# SESSION_SECRET must be set via `fly secrets set SESSION_SECRET=$(openssl rand -hex 32)`
+# RESEND_API_KEY must be set via `fly secrets set RESEND_API_KEY=...`
 #
+# See https://fly.io/docs/reference/configuration/
 
 app = 'ncu'
 primary_region = 'lax'
@@ -9,10 +12,12 @@ primary_region = 'lax'
 [build]
 
 [env]
-  DATA_DIR = '/data'
   NODE_ENV = 'production'
   PORT = '8080'
 
+# Legacy volume from the SQLite era. Kept mounted (but unused by the app)
+# so existing machines don't fail the deploy reconciliation. Safe to remove
+# along with the volume itself in a follow-up: `fly volumes destroy arf_data`.
 [[mounts]]
   source = 'arf_data'
   destination = '/data'

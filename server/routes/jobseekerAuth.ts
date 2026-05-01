@@ -1,16 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
 import { AuthService } from "../services/authService";
-import { SqliteJobSeekerRepository } from "../repositories/sqlite/sqliteJobSeekerRepository";
+import { PgJobSeekerRepository } from "../repositories/postgres/pgJobSeekerRepository";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
 import { sendPasswordResetEmail } from "../email";
-import { sqlite, usingPostgres } from "../db/index";
+import { pool } from "../db/index";
 import { authRateLimiter } from "../middleware/rateLimiter";
 
 // ── Dependency wiring ────────────────────────────────────────────────────────
 // To replace SQLite with Postgres or an external IdP, swap the repository or
 // service here.  Nothing else in the codebase needs to change.
-const repo = new SqliteJobSeekerRepository();
+const repo = new PgJobSeekerRepository();
 const authService = new AuthService(repo);
 
 // ── Validation schemas ───────────────────────────────────────────────────────
@@ -215,15 +215,10 @@ jobseekerAuthRouter.post("/reset-password", authRateLimiter, async (req, res, ne
     }
 
     // Invalidate all active sessions for this account.
-    // In Postgres mode, connect-pg-simple manages its own "session" table and
-    // does not use json_extract — session deletion is handled by the store's
-    // TTL expiry. Manual session invalidation is a blocker for Postgres mode.
-    // See agents/05-blockers.md.
-    if (!usingPostgres) {
-      sqlite!
-        .prepare("DELETE FROM sessions WHERE json_extract(sess, '$.jobSeekerId') = ?")
-        .run(result.accountId);
-    }
+    await pool.query(
+      "DELETE FROM session WHERE sess->>'jobSeekerId' = $1",
+      [String(result.accountId)]
+    );
 
     return res.json({ ok: true });
   } catch (err) {

@@ -8,12 +8,8 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { sqlite as _sqlite, pool, usingPostgres } from "../db/index";
+import { pool } from "../db/index";
 import * as ops from "./opsStorage";
-
-// `sqlite` is defined only in SQLite mode; undefined in Postgres mode.
-// All raw sqlite calls below are inside `else` branches guarded by `!usingPostgres`.
-const sqlite = _sqlite;
 
 export const opsRouter = Router();
 
@@ -30,6 +26,17 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
 
 // Apply to all ops routes
 opsRouter.use(requireFacilityAuth);
+
+// ── IDOR guard: any route with `:facilityNumber` in the path must match the
+// authenticated user's facility. Without this, facility A could read facility
+// B's residents, medications, billing, etc. by changing the URL.
+opsRouter.param("facilityNumber", (req: Request, res: Response, next: NextFunction, fnParam: string) => {
+  const user = req.user as { facilityNumber?: string } | undefined;
+  if (user?.facilityNumber !== fnParam) {
+    return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+  next();
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -1216,18 +1223,11 @@ opsRouter.get("/incidents/:id/lic624", async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
 
-    let incident: Record<string, unknown> | undefined;
-    if (usingPostgres) {
-      const r = await pool!.query<Record<string, unknown>>(
-        `SELECT * FROM ops_incidents WHERE id = $1 AND facility_number = $2`,
-        [id, facilityNumber]
-      );
-      incident = r.rows[0];
-    } else {
-      incident = sqlite!
-        .prepare(`SELECT * FROM ops_incidents WHERE id = ? AND facility_number = ?`)
-        .get(id, facilityNumber) as Record<string, unknown> | undefined;
-    }
+    const r = await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ops_incidents WHERE id = $1 AND facility_number = $2`,
+      [id, facilityNumber]
+    );
+    const incident = r.rows[0];
 
     if (!incident) return res.status(404).json({ success: false, error: "Not found" });
     res.json({
@@ -1406,31 +1406,21 @@ opsRouter.get("/facilities/:facilityNumber/leads/:leadId/admissions", async (req
     if (!lead) return res.status(404).json({ success: false, error: "Lead not found" });
 
     let admission: Record<string, unknown> | undefined;
-    if (usingPostgres) {
-      const r = await pool!.query<Record<string, unknown>>(
+    {
+      const r = await pool.query<Record<string, unknown>>(
         `SELECT * FROM ops_admissions WHERE lead_id = $1 LIMIT 1`,
         [leadId]
       );
       admission = r.rows[0];
-    } else {
-      admission = sqlite!
-        .prepare(`SELECT * FROM ops_admissions WHERE lead_id = ? LIMIT 1`)
-        .get(leadId) as Record<string, unknown> | undefined;
     }
 
     if (!admission) {
       const created = await ops.startAdmission({ leadId, facilityNumber, createdAt: Date.now(), updatedAt: Date.now() });
-      if (usingPostgres) {
-        const r = await pool!.query<Record<string, unknown>>(
-          `SELECT * FROM ops_admissions WHERE id = $1`,
-          [created.id]
-        );
-        admission = r.rows[0] as Record<string, unknown>;
-      } else {
-        admission = sqlite!
-          .prepare(`SELECT * FROM ops_admissions WHERE id = ?`)
-          .get(created.id) as Record<string, unknown>;
-      }
+      const r = await pool.query<Record<string, unknown>>(
+        `SELECT * FROM ops_admissions WHERE id = $1`,
+        [created.id]
+      );
+      admission = r.rows[0] as Record<string, unknown>;
     }
 
     const FORM_DEFS = [
@@ -1485,18 +1475,11 @@ opsRouter.put("/leads/:leadId/lic/:form", async (req, res) => {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
 
-    let row: { id: number } | undefined;
-    if (usingPostgres) {
-      const r = await pool!.query<{ id: number }>(
-        `SELECT id FROM ops_admissions WHERE lead_id = $1 LIMIT 1`,
-        [leadId]
-      );
-      row = r.rows[0];
-    } else {
-      row = sqlite!
-        .prepare(`SELECT id FROM ops_admissions WHERE lead_id = ? LIMIT 1`)
-        .get(leadId) as { id: number } | undefined;
-    }
+    const r = await pool.query<{ id: number }>(
+      `SELECT id FROM ops_admissions WHERE lead_id = $1 LIMIT 1`,
+      [leadId]
+    );
+    const row = r.rows[0];
     if (!row) return res.status(404).json({ success: false, error: "Admission not found for this lead" });
 
     // Normalize frontend formId to storage column key: lic601 → lic_601, lic602a → lic_602a
@@ -1517,18 +1500,11 @@ opsRouter.post("/leads/:leadId/convert", async (req, res) => {
     const leadId = parseInt(req.params.leadId, 10);
     if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid leadId" });
 
-    let row: { id: number } | undefined;
-    if (usingPostgres) {
-      const r = await pool!.query<{ id: number }>(
-        `SELECT id FROM ops_admissions WHERE lead_id = $1 LIMIT 1`,
-        [leadId]
-      );
-      row = r.rows[0];
-    } else {
-      row = sqlite!
-        .prepare(`SELECT id FROM ops_admissions WHERE lead_id = ? LIMIT 1`)
-        .get(leadId) as { id: number } | undefined;
-    }
+    const r = await pool.query<{ id: number }>(
+      `SELECT id FROM ops_admissions WHERE lead_id = $1 LIMIT 1`,
+      [leadId]
+    );
+    const row = r.rows[0];
     if (!row) return res.status(404).json({ success: false, error: "Admission not found for this lead" });
 
     const resident = await ops.convertAdmissionToResident(row.id);
@@ -1545,18 +1521,11 @@ opsRouter.get("/admissions/:id/lic-checklist", async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
 
-    let admission: Record<string, unknown> | undefined;
-    if (usingPostgres) {
-      const r = await pool!.query<Record<string, unknown>>(
-        `SELECT * FROM ops_admissions WHERE id = $1`,
-        [id]
-      );
-      admission = r.rows[0];
-    } else {
-      admission = sqlite!
-        .prepare(`SELECT * FROM ops_admissions WHERE id = ?`)
-        .get(id) as Record<string, unknown> | undefined;
-    }
+    const r = await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ops_admissions WHERE id = $1`,
+      [id]
+    );
+    const admission = r.rows[0];
 
     if (!admission) return res.status(404).json({ success: false, error: "Not found" });
     res.json({
@@ -1625,18 +1594,11 @@ opsRouter.get("/facilities/:facilityNumber/crm-pipeline", async (req, res) => {
   try {
     const { facilityNumber } = req.params;
 
-    let rows: Array<{ stage: string; count: number }>;
-    if (usingPostgres) {
-      const r = await pool!.query<{ stage: string; count: number }>(
-        `SELECT stage, COUNT(*)::int as count FROM ops_leads WHERE facility_number = $1 GROUP BY stage`,
-        [facilityNumber]
-      );
-      rows = r.rows;
-    } else {
-      rows = sqlite!
-        .prepare(`SELECT stage, COUNT(*) as count FROM ops_leads WHERE facility_number = ? GROUP BY stage`)
-        .all(facilityNumber) as Array<{ stage: string; count: number }>;
-    }
+    const r = await pool.query<{ stage: string; count: number }>(
+      `SELECT stage, COUNT(*)::int as count FROM ops_leads WHERE facility_number = $1 GROUP BY stage`,
+      [facilityNumber]
+    );
+    const rows = r.rows;
 
     const pipeline: Record<string, number> = {};
     for (const row of rows) {
@@ -1660,18 +1622,11 @@ opsRouter.get("/residents/:id/billing", async (req, res) => {
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const charges = await ops.listCharges(facilityNumber, residentId);
 
-    let invoices: unknown[];
-    if (usingPostgres) {
-      const r = await pool!.query(
-        `SELECT * FROM ops_invoices WHERE facility_number = $1 AND resident_id = $2 ORDER BY created_at DESC`,
-        [facilityNumber, residentId]
-      );
-      invoices = r.rows;
-    } else {
-      invoices = sqlite!
-        .prepare(`SELECT * FROM ops_invoices WHERE facility_number = ? AND resident_id = ? ORDER BY created_at DESC`)
-        .all(facilityNumber, residentId);
-    }
+    const r = await pool.query(
+      `SELECT * FROM ops_invoices WHERE facility_number = $1 AND resident_id = $2 ORDER BY created_at DESC`,
+      [facilityNumber, residentId]
+    );
+    const invoices = r.rows;
 
     res.json({ success: true, data: { charges, invoices } });
   } catch (e) {
@@ -1705,61 +1660,32 @@ opsRouter.put("/billing/charges/:id", async (req, res) => {
     }
 
     const d = parsed.data;
-    if (usingPostgres) {
-      const existing = (await pool!.query<Record<string, unknown>>(
-        `SELECT * FROM ops_billing_charges WHERE id = $1 AND facility_number = $2`,
-        [id, facilityNumber]
-      )).rows[0];
-      if (!existing) return res.status(404).json({ success: false, error: "Not found" });
+    const existing = (await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ops_billing_charges WHERE id = $1 AND facility_number = $2`,
+      [id, facilityNumber]
+    )).rows[0];
+    if (!existing) return res.status(404).json({ success: false, error: "Not found" });
 
-      await pool!.query(
-        `UPDATE ops_billing_charges SET charge_type=$1, description=$2, amount=$3, unit=$4, quantity=$5, billing_period_start=$6, billing_period_end=$7, is_recurring=$8, recurrence_interval=$9, prorated=$10, prorate_from=$11, prorate_to=$12, source=$13, clinical_ref_id=$14 WHERE id=$15`,
-        [
-          d.chargeType         ?? existing["charge_type"],
-          d.description        ?? existing["description"],
-          d.amount             ?? existing["amount"],
-          d.unit               ?? existing["unit"],
-          d.quantity           ?? existing["quantity"],
-          d.billingPeriodStart ?? existing["billing_period_start"],
-          d.billingPeriodEnd   ?? existing["billing_period_end"],
-          d.isRecurring        ?? existing["is_recurring"],
-          d.recurrenceInterval ?? existing["recurrence_interval"],
-          d.prorated           ?? existing["prorated"],
-          d.prorateFrom        ?? existing["prorate_from"],
-          d.prorateTo          ?? existing["prorate_to"],
-          d.source             ?? existing["source"],
-          d.clinicalRefId      ?? existing["clinical_ref_id"],
-          id,
-        ]
-      );
-    } else {
-      const existing = sqlite!
-        .prepare(`SELECT * FROM ops_billing_charges WHERE id = ? AND facility_number = ?`)
-        .get(id, facilityNumber) as Record<string, unknown> | undefined;
-      if (!existing) return res.status(404).json({ success: false, error: "Not found" });
-
-      sqlite!
-        .prepare(
-          `UPDATE ops_billing_charges SET charge_type=?, description=?, amount=?, unit=?, quantity=?, billing_period_start=?, billing_period_end=?, is_recurring=?, recurrence_interval=?, prorated=?, prorate_from=?, prorate_to=?, source=?, clinical_ref_id=? WHERE id=?`
-        )
-        .run(
-          d.chargeType         ?? existing["charge_type"],
-          d.description        ?? existing["description"],
-          d.amount             ?? existing["amount"],
-          d.unit               ?? existing["unit"],
-          d.quantity           ?? existing["quantity"],
-          d.billingPeriodStart ?? existing["billing_period_start"],
-          d.billingPeriodEnd   ?? existing["billing_period_end"],
-          d.isRecurring        ?? existing["is_recurring"],
-          d.recurrenceInterval ?? existing["recurrence_interval"],
-          d.prorated           ?? existing["prorated"],
-          d.prorateFrom        ?? existing["prorate_from"],
-          d.prorateTo          ?? existing["prorate_to"],
-          d.source             ?? existing["source"],
-          d.clinicalRefId      ?? existing["clinical_ref_id"],
-          id
-        );
-    }
+    await pool.query(
+      `UPDATE ops_billing_charges SET charge_type=$1, description=$2, amount=$3, unit=$4, quantity=$5, billing_period_start=$6, billing_period_end=$7, is_recurring=$8, recurrence_interval=$9, prorated=$10, prorate_from=$11, prorate_to=$12, source=$13, clinical_ref_id=$14 WHERE id=$15`,
+      [
+        d.chargeType         ?? existing["charge_type"],
+        d.description        ?? existing["description"],
+        d.amount             ?? existing["amount"],
+        d.unit               ?? existing["unit"],
+        d.quantity           ?? existing["quantity"],
+        d.billingPeriodStart ?? existing["billing_period_start"],
+        d.billingPeriodEnd   ?? existing["billing_period_end"],
+        d.isRecurring        ?? existing["is_recurring"],
+        d.recurrenceInterval ?? existing["recurrence_interval"],
+        d.prorated           ?? existing["prorated"],
+        d.prorateFrom        ?? existing["prorate_from"],
+        d.prorateTo          ?? existing["prorate_to"],
+        d.source             ?? existing["source"],
+        d.clinicalRefId      ?? existing["clinical_ref_id"],
+        id,
+      ]
+    );
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });

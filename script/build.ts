@@ -59,15 +59,6 @@ async function buildAll() {
     entryPoints: ["server/index.ts"],
     outfile: "dist/index.cjs",
   });
-
-  // Compile the enrichment script so it can be run as `node dist/enrich.cjs`
-  // in production without needing tsx or the raw TypeScript source files.
-  console.log("building enrichment worker...");
-  await esbuild({
-    ...sharedEsbuildOptions,
-    entryPoints: ["scripts/enrich-facilities.ts"],
-    outfile: "dist/enrich.cjs",
-  });
 }
 
 buildAll().catch((err) => {
