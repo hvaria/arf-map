@@ -1165,7 +1165,9 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </TabsContent>
 
         <TabsContent value="operations" className="mt-6">
-          <OperationsTab facilityNumber={user.facilityNumber} />
+          <div style={{ width: '100vw', position: 'relative', left: '50%', marginLeft: '-50vw', paddingLeft: '1rem', paddingRight: '1rem' }}>
+            <OperationsTab facilityNumber={user.facilityNumber} />
+          </div>
         </TabsContent>
       </Tabs>
       </div>

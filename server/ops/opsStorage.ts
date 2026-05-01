@@ -351,10 +351,10 @@ export async function generateDailyMedPassEntries(facilityNumber: string, date: 
         dt.setHours(h, m, 0, 0);
         const scheduledDatetime = dt.getTime();
         await pool!.query(
-          `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status)
-           SELECT $1, $2, $3, $4, 'pending'
+          `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status, created_at)
+           SELECT $1, $2, $3, $4, 'pending', $5
            WHERE NOT EXISTS (SELECT 1 FROM ops_med_passes WHERE medication_id = $1 AND scheduled_datetime = $4)`,
-          [med.medication_id, med.resident_id, facilityNumber, scheduledDatetime]
+          [med.medication_id, med.resident_id, facilityNumber, scheduledDatetime, Date.now()]
         );
       }
     }
@@ -375,8 +375,8 @@ export async function generateDailyMedPassEntries(facilityNumber: string, date: 
   }>;
 
   const insert = sqlite!.prepare(
-    `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status)
-     SELECT ?, ?, ?, ?, 'pending'
+    `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status, created_at)
+     SELECT ?, ?, ?, ?, 'pending', ?
      WHERE NOT EXISTS (SELECT 1 FROM ops_med_passes WHERE medication_id = ? AND scheduled_datetime = ?)`
   );
 
@@ -391,45 +391,60 @@ export async function generateDailyMedPassEntries(facilityNumber: string, date: 
       const dt = new Date(date);
       dt.setHours(h, m, 0, 0);
       const scheduledDatetime = dt.getTime();
-      insert.run(med.medication_id, med.resident_id, facilityNumber, scheduledDatetime, med.medication_id, scheduledDatetime);
+      insert.run(med.medication_id, med.resident_id, facilityNumber, scheduledDatetime, Date.now(), med.medication_id, scheduledDatetime);
     }
   }
+}
+
+export interface MedPassRawRow {
+  id: number;
+  medication_id: number;
+  resident_id: number;
+  facility_number: string;
+  scheduled_datetime: number;
+  administered_datetime: number | null;
+  administered_by: string | null;
+  status: string;
+  refusal_reason: string | null;
+  hold_reason: string | null;
+  notes: string | null;
+  drug_name: string;
+  dosage: string;
+  route: string;
+  prescriber_name: string | null;
+  resident_first_name: string;
+  resident_last_name: string;
+  room_number: string | null;
 }
 
 export async function getFacilityMedPassQueue(
   facilityNumber: string,
   date: number
-): Promise<Array<OpsMedPass & { drug_name: string; resident_first_name: string; resident_last_name: string; room_number: string | null }>> {
+): Promise<MedPassRawRow[]> {
   const dayStart = date;
   const dayEnd = date + 86400000;
 
-  if (usingPostgres) {
-    const result = await pool!.query(
-      `SELECT mp.*, m.drug_name, r.first_name AS resident_first_name, r.last_name AS resident_last_name, r.room_number
+  const pgSql = `SELECT mp.id, mp.medication_id, mp.resident_id, mp.facility_number,
+       mp.scheduled_datetime, mp.administered_datetime, mp.administered_by,
+       mp.status, mp.refusal_reason, mp.hold_reason, mp.notes,
+       m.drug_name, m.dosage, m.route, m.prescriber_name,
+       r.first_name AS resident_first_name, r.last_name AS resident_last_name, r.room_number
        FROM ops_med_passes mp
        JOIN ops_medications m ON mp.medication_id = m.id
        JOIN ops_residents r ON mp.resident_id = r.id
        WHERE mp.facility_number = $1
          AND mp.scheduled_datetime >= $2
          AND mp.scheduled_datetime < $3
-       ORDER BY mp.scheduled_datetime ASC`,
-      [facilityNumber, dayStart, dayEnd]
-    );
-    return result.rows;
+       ORDER BY mp.scheduled_datetime ASC`;
+
+  const sqliteSql = pgSql.replace("$1", "?").replace("$2", "?").replace("$3", "?");
+
+  if (usingPostgres) {
+    const result = await pool!.query(pgSql, [facilityNumber, dayStart, dayEnd]);
+    return result.rows as MedPassRawRow[];
   }
 
-  return sqlite!
-    .prepare(
-      `SELECT mp.*, m.drug_name, r.first_name AS resident_first_name, r.last_name AS resident_last_name, r.room_number
-       FROM ops_med_passes mp
-       JOIN ops_medications m ON mp.medication_id = m.id
-       JOIN ops_residents r ON mp.resident_id = r.id
-       WHERE mp.facility_number = ?
-         AND mp.scheduled_datetime >= ?
-         AND mp.scheduled_datetime < ?
-       ORDER BY mp.scheduled_datetime ASC`
-    )
-    .all(facilityNumber, dayStart, dayEnd) as Array<OpsMedPass & { drug_name: string; resident_first_name: string; resident_last_name: string; room_number: string | null }>;
+  return sqlite!.prepare(sqliteSql).all(facilityNumber, dayStart, dayEnd) as MedPassRawRow[];
 }
 
 export async function getResidentMedPassQueue(
@@ -478,6 +493,37 @@ export async function recordMedPass(data: InsertOpsMedPass): Promise<OpsMedPass>
   return db.insert(opsMedPasses).values({ ...data, createdAt: now }).returning().get();
 }
 
+export async function updateMedPassRecord(
+  id: number,
+  data: Partial<{
+    status: string;
+    administeredDatetime: number;
+    administeredBy: string;
+    notes: string;
+    refusalReason: string;
+    holdReason: string;
+    rightResident: number;
+    rightMedication: number;
+    rightDose: number;
+    rightRoute: number;
+    rightTime: number;
+    rightReason: number;
+    rightDocumentation: number;
+    rightToRefuse: number;
+  }>
+): Promise<boolean> {
+  if (usingPostgres) {
+    const rows = await db
+      .update(opsMedPasses)
+      .set(data)
+      .where(eq(opsMedPasses.id, id))
+      .returning({ id: opsMedPasses.id });
+    return rows.length > 0;
+  }
+  const result = db.update(opsMedPasses).set(data).where(eq(opsMedPasses.id, id)).run();
+  return result.changes > 0;
+}
+
 export async function updatePrnFollowup(id: number, effectivenessNotes: string, notedAt: number): Promise<boolean> {
   const updateData = { prnEffectivenessNotes: effectivenessNotes, prnEffectivenessNotedAt: notedAt };
   if (usingPostgres) {
@@ -486,6 +532,134 @@ export async function updatePrnFollowup(id: number, effectivenessNotes: string, 
   }
   const result = db.update(opsMedPasses).set(updateData).where(eq(opsMedPasses.id, id)).run();
   return result.changes > 0;
+}
+
+// Med-pass calendar summary
+
+export interface DaySummary {
+  date: string;   // YYYY-MM-DD
+  total: number;
+  given: number;
+  pending: number;
+  late: number;
+  missed: number;
+  refused: number;
+  held: number;
+}
+
+export async function getMedPassSummary(
+  facilityNumber: string,
+  fromMs: number,  // inclusive, epoch ms at 00:00 UTC of from-date
+  toMs: number,    // exclusive, epoch ms at 00:00 UTC of day-after to-date
+): Promise<DaySummary[]> {
+  if (usingPostgres) {
+    const res = await pool!.query<DaySummary>(
+      `SELECT
+         TO_CHAR(TO_TIMESTAMP(scheduled_datetime / 1000.0), 'YYYY-MM-DD') AS date,
+         COUNT(*)::int                                                     AS total,
+         SUM(CASE WHEN status='given'   THEN 1 ELSE 0 END)::int           AS given,
+         SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)::int           AS pending,
+         SUM(CASE WHEN status='late'    THEN 1 ELSE 0 END)::int           AS late,
+         SUM(CASE WHEN status='missed'  THEN 1 ELSE 0 END)::int           AS missed,
+         SUM(CASE WHEN status='refused' THEN 1 ELSE 0 END)::int           AS refused,
+         SUM(CASE WHEN status='held'    THEN 1 ELSE 0 END)::int           AS held
+       FROM ops_med_passes
+       WHERE facility_number = $1
+         AND scheduled_datetime >= $2
+         AND scheduled_datetime <  $3
+       GROUP BY 1 ORDER BY 1`,
+      [facilityNumber, fromMs, toMs],
+    );
+    return res.rows;
+  }
+  return (sqlite!
+    .prepare(
+      `SELECT
+         date(scheduled_datetime / 1000, 'unixepoch', 'localtime') AS date,
+         COUNT(*)                                      AS total,
+         SUM(CASE WHEN status='given'   THEN 1 ELSE 0 END) AS given,
+         SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN status='late'    THEN 1 ELSE 0 END) AS late,
+         SUM(CASE WHEN status='missed'  THEN 1 ELSE 0 END) AS missed,
+         SUM(CASE WHEN status='refused' THEN 1 ELSE 0 END) AS refused,
+         SUM(CASE WHEN status='held'    THEN 1 ELSE 0 END) AS held
+       FROM ops_med_passes
+       WHERE facility_number = ?
+         AND scheduled_datetime >= ?
+         AND scheduled_datetime <  ?
+       GROUP BY date(scheduled_datetime / 1000, 'unixepoch', 'localtime')
+       ORDER BY 1`,
+    )
+    .all(facilityNumber, fromMs, toMs) as DaySummary[]);
+}
+
+// Unified operations calendar summary
+
+export interface DayOpsEvent {
+  date: string;
+  medsTotal:      number;
+  medsGiven:      number;
+  medsPending:    number;
+  medsLate:       number;
+  medsMissed:     number;
+  tasksTotal:     number;
+  tasksCompleted: number;
+  tasksOverdue:   number;
+  incidentsTotal: number;
+  incidentsOpen:  number;
+  leadsFollowups: number;
+  billingDue:     number;
+  complianceDue:  number;
+}
+
+export async function getCalendarSummary(
+  facilityNumber: string,
+  fromMs: number,
+  toMs: number,
+): Promise<DayOpsEvent[]> {
+  type MedRow  = { date: string; total: number; given: number; pending: number; late: number; missed: number };
+  type TaskRow = { date: string; total: number; completed: number; overdue: number };
+  type IncRow  = { date: string; total: number; open: number };
+  type LRow    = { date: string; followups: number };
+  type BRow    = { date: string; due: number };
+  type CRow    = { date: string; due: number };
+
+  let medRows: MedRow[], taskRows: TaskRow[], incRows: IncRow[], leadRows: LRow[], billRows: BRow[], compRows: CRow[];
+
+  if (usingPostgres) {
+    const pg = (col: string) => `TO_CHAR(TO_TIMESTAMP(${col}/1000.0),'YYYY-MM-DD')`;
+    const [r1, r2, r3, r4, r5, r6] = await Promise.all([
+      pool!.query<MedRow>(`SELECT ${pg('scheduled_datetime')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='given' THEN 1 ELSE 0 END)::int AS given,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)::int AS pending,SUM(CASE WHEN status='late' THEN 1 ELSE 0 END)::int AS late,SUM(CASE WHEN status='missed' THEN 1 ELSE 0 END)::int AS missed FROM ops_med_passes WHERE facility_number=$1 AND scheduled_datetime>=$2 AND scheduled_datetime<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+      pool!.query<TaskRow>(`SELECT ${pg('task_date')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END)::int AS completed,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)::int AS overdue FROM ops_daily_tasks WHERE facility_number=$1 AND task_date>=$2 AND task_date<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+      pool!.query<IncRow>(`SELECT ${pg('incident_date')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='open' THEN 1 ELSE 0 END)::int AS open FROM ops_incidents WHERE facility_number=$1 AND incident_date>=$2 AND incident_date<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+      pool!.query<LRow>(`SELECT ${pg('next_follow_up_date')} AS date,COUNT(*)::int AS followups FROM ops_leads WHERE facility_number=$1 AND next_follow_up_date IS NOT NULL AND next_follow_up_date>=$2 AND next_follow_up_date<$3 AND stage NOT IN ('admitted','lost') GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+      pool!.query<BRow>(`SELECT ${pg('due_date')} AS date,COUNT(*)::int AS due FROM ops_invoices WHERE facility_number=$1 AND due_date>=$2 AND due_date<$3 AND status NOT IN ('paid','void') AND balance_due>0 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+      pool!.query<CRow>(`SELECT ${pg('due_date')} AS date,COUNT(*)::int AS due FROM ops_compliance_calendar WHERE facility_number=$1 AND due_date>=$2 AND due_date<$3 AND status='pending' GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+    ]);
+    medRows = r1.rows; taskRows = r2.rows; incRows = r3.rows; leadRows = r4.rows; billRows = r5.rows; compRows = r6.rows;
+  } else {
+    const dt = (col: string) => `date(${col}/1000,'unixepoch','localtime')`;
+    const q = (sql: string, ...p: unknown[]) => sqlite!.prepare(sql).all(...p) as any[];
+    medRows  = q(`SELECT ${dt('scheduled_datetime')} AS date,COUNT(*) AS total,SUM(CASE WHEN status='given' THEN 1 ELSE 0 END) AS given,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='late' THEN 1 ELSE 0 END) AS late,SUM(CASE WHEN status='missed' THEN 1 ELSE 0 END) AS missed FROM ops_med_passes WHERE facility_number=? AND scheduled_datetime>=? AND scheduled_datetime<? GROUP BY 1`, facilityNumber, fromMs, toMs);
+    taskRows = q(`SELECT ${dt('task_date')} AS date,COUNT(*) AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS overdue FROM ops_daily_tasks WHERE facility_number=? AND task_date>=? AND task_date<? GROUP BY 1`, facilityNumber, fromMs, toMs);
+    incRows  = q(`SELECT ${dt('incident_date')} AS date,COUNT(*) AS total,SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) AS open FROM ops_incidents WHERE facility_number=? AND incident_date>=? AND incident_date<? GROUP BY 1`, facilityNumber, fromMs, toMs);
+    leadRows = q(`SELECT ${dt('next_follow_up_date')} AS date,COUNT(*) AS followups FROM ops_leads WHERE facility_number=? AND next_follow_up_date IS NOT NULL AND next_follow_up_date>=? AND next_follow_up_date<? AND stage NOT IN ('admitted','lost') GROUP BY 1`, facilityNumber, fromMs, toMs);
+    billRows = q(`SELECT ${dt('due_date')} AS date,COUNT(*) AS due FROM ops_invoices WHERE facility_number=? AND due_date>=? AND due_date<? AND status NOT IN ('paid','void') AND balance_due>0 GROUP BY 1`, facilityNumber, fromMs, toMs);
+    compRows = q(`SELECT ${dt('due_date')} AS date,COUNT(*) AS due FROM ops_compliance_calendar WHERE facility_number=? AND due_date>=? AND due_date<? AND status='pending' GROUP BY 1`, facilityNumber, fromMs, toMs);
+  }
+
+  const map = new Map<string, DayOpsEvent>();
+  const get = (d: string): DayOpsEvent => {
+    if (!map.has(d)) map.set(d, { date: d, medsTotal:0, medsGiven:0, medsPending:0, medsLate:0, medsMissed:0, tasksTotal:0, tasksCompleted:0, tasksOverdue:0, incidentsTotal:0, incidentsOpen:0, leadsFollowups:0, billingDue:0, complianceDue:0 });
+    return map.get(d)!;
+  };
+  for (const r of medRows)  { const e = get(r.date); e.medsTotal=r.total; e.medsGiven=r.given; e.medsPending=r.pending; e.medsLate=r.late; e.medsMissed=r.missed; }
+  for (const r of taskRows) { const e = get(r.date); e.tasksTotal=r.total; e.tasksCompleted=r.completed; e.tasksOverdue=r.overdue; }
+  for (const r of incRows)  { const e = get(r.date); e.incidentsTotal=r.total; e.incidentsOpen=r.open; }
+  for (const r of leadRows) { get(r.date).leadsFollowups = r.followups; }
+  for (const r of billRows) { get(r.date).billingDue = r.due; }
+  for (const r of compRows) { get(r.date).complianceDue = r.due; }
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 // Controlled substances

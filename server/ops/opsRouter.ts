@@ -874,6 +874,80 @@ opsRouter.delete("/medications/:id", async (req, res) => {
   }
 });
 
+function medPassShift(scheduledDatetime: number): "AM" | "PM" | "NOC" {
+  const hour = new Date(scheduledDatetime).getHours();
+  if (hour >= 6 && hour < 14) return "AM";
+  if (hour >= 14 && hour < 22) return "PM";
+  return "NOC";
+}
+
+function formatScheduledTime(scheduledDatetime: number): string {
+  const d = new Date(scheduledDatetime);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// GET /facilities/:facilityNumber/med-pass/summary?from=YYYY-MM-DD&to=YYYY-MM-DD
+opsRouter.get("/facilities/:facilityNumber/med-pass/summary", async (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    if (getFacilityNumber(req) !== facilityNumber) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    const { from, to } = req.query as { from?: string; to?: string };
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to)) {
+      return res.status(400).json({ success: false, error: "from and to (YYYY-MM-DD) are required" });
+    }
+
+    // Use local-midnight timestamps to match how generateDailyMedPassEntries stores records
+    const localMidnight = (iso: string) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const fromMs = localMidnight(from);
+    const toMs   = localMidnight(to) + 86_400_000; // exclusive: start of day after 'to'
+
+    // Generate scheduled med-pass rows for every day in the range (idempotent WHERE NOT EXISTS).
+    // Cap at 366 days so year view is covered; parallel for small ranges, sequential for large.
+    const diffDays = Math.round((toMs - fromMs) / 86_400_000);
+    const dayTimestamps = Array.from({ length: Math.min(diffDays, 366) }, (_, i) =>
+      fromMs + i * 86_400_000
+    );
+    if (dayTimestamps.length <= 42) {
+      await Promise.all(dayTimestamps.map((d) => ops.generateDailyMedPassEntries(facilityNumber, d)));
+    } else {
+      for (const d of dayTimestamps) await ops.generateDailyMedPassEntries(facilityNumber, d);
+    }
+
+    const data = await ops.getMedPassSummary(facilityNumber, fromMs, toMs);
+    return res.json({ success: true, data });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /facilities/:facilityNumber/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD
+opsRouter.get("/facilities/:facilityNumber/calendar", async (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    if (getFacilityNumber(req) !== facilityNumber) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    const { from, to } = req.query as { from?: string; to?: string };
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to)) {
+      return res.status(400).json({ success: false, error: "from and to (YYYY-MM-DD) are required" });
+    }
+    const localMidnight = (iso: string) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const fromMs = localMidnight(from);
+    const toMs   = localMidnight(to) + 86_400_000;
+    const diffDays = Math.min(Math.round((toMs - fromMs) / 86_400_000), 42);
+    const days = Array.from({ length: diffDays }, (_, i) => fromMs + i * 86_400_000);
+    await Promise.all(days.map((d) => ops.generateDailyMedPassEntries(facilityNumber, d)));
+    const data = await ops.getCalendarSummary(facilityNumber, fromMs, toMs);
+    return res.json({ success: true, data });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
 // GET /facilities/:facilityNumber/med-pass
 opsRouter.get("/facilities/:facilityNumber/med-pass", async (req, res) => {
   try {
@@ -883,7 +957,22 @@ opsRouter.get("/facilities/:facilityNumber/med-pass", async (req, res) => {
       : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
     await ops.generateDailyMedPassEntries(facilityNumber, date);
     const queue = await ops.getFacilityMedPassQueue(facilityNumber, date);
-    res.json({ success: true, data: queue });
+    const data = queue.map((row: ops.MedPassRawRow) => ({
+      id: row.id,
+      residentId: row.resident_id,
+      residentName: `${row.resident_first_name} ${row.resident_last_name}`,
+      roomNumber: row.room_number ?? "",
+      medicationId: row.medication_id,
+      drugName: row.drug_name,
+      dosage: row.dosage ?? "",
+      route: row.route ?? "",
+      scheduledTime: formatScheduledTime(row.scheduled_datetime),
+      prescriber: row.prescriber_name ?? "",
+      status: row.status as "pending" | "given" | "late" | "missed" | "refused" | "held",
+      shift: medPassShift(row.scheduled_datetime),
+      notes: row.notes ?? undefined,
+    }));
+    res.json({ success: true, data });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
@@ -914,6 +1003,39 @@ opsRouter.post("/med-passes", async (req, res) => {
     }
     const medPass = await ops.recordMedPass({ ...parsed.data, createdAt: Date.now() });
     res.status(201).json({ success: true, data: medPass });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// PUT /med-passes/:id — chart (update) an existing med-pass row
+const chartMedPassSchema = z.object({
+  status: z.enum(["given", "refused", "held"]),
+  administeredDatetime: z.number().int().optional(),
+  notes: z.string().optional(),
+  refusalReason: z.string().optional(),
+  holdReason: z.string().optional(),
+  rightResident: z.number().int().optional(),
+  rightMedication: z.number().int().optional(),
+  rightDose: z.number().int().optional(),
+  rightRoute: z.number().int().optional(),
+  rightTime: z.number().int().optional(),
+  rightReason: z.number().int().optional(),
+  rightDocumentation: z.number().int().optional(),
+  rightToRefuse: z.number().int().optional(),
+});
+
+opsRouter.put("/med-passes/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const parsed = chartMedPassSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    }
+    const ok = await ops.updateMedPassRecord(id, parsed.data);
+    if (!ok) return res.status(404).json({ success: false, error: "Not found" });
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
