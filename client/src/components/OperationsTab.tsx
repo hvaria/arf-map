@@ -10,18 +10,11 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
-  Users,
-  Pill,
-  ClipboardList,
-  AlertTriangle,
-  UserPlus,
-  Receipt,
-  ShieldCheck,
-  LayoutDashboard,
+  Users, Pill, ClipboardList, AlertTriangle,
+  UserPlus, Receipt, ShieldCheck, LayoutDashboard,
 } from "lucide-react";
 import { ResidentsContent } from "@/pages/portal/ResidentsPage";
 import { EmarContent } from "@/pages/portal/EmarPage";
@@ -30,6 +23,7 @@ import { CrmContent } from "@/pages/portal/CrmPage";
 import { BillingContent } from "@/pages/portal/BillingPage";
 import { StaffContent } from "@/pages/portal/StaffPage";
 import { ComplianceContent } from "@/pages/portal/CompliancePage";
+import OpsCalendar from "@/components/OpsCalendar";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,9 +92,7 @@ class SubViewErrorBoundary extends React.Component<
     super(props);
     this.state = { hasError: false };
   }
-  static getDerivedStateFromError(): SubViewEBState {
-    return { hasError: true };
-  }
+  static getDerivedStateFromError(): SubViewEBState { return { hasError: true }; }
   render() {
     if (this.state.hasError) {
       return (
@@ -135,7 +127,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
 
   const data: DashboardData | null = envelope?.data ?? null;
 
-  // Sub-view routing — render inline content instead of navigating
+  // Sub-view routing
   if (subView) {
     const back = () => setSubView(null);
     const content =
@@ -156,69 +148,18 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
     }
   }
 
-  const kpiCards: KpiCardProps[] = data
-    ? [
-        {
-          label: "Active Residents",
-          count: data.activeResidents,
-          icon: Users,
-          colorClass: "bg-green-100 text-green-700",
-          borderClass: "border-l-green-500",
-          onClick: () => setSubView("residents"),
-        },
-        {
-          label: "Pending Med Passes",
-          count: data.pendingMedPasses,
-          icon: Pill,
-          colorClass: data.pendingMedPasses > 0 ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700",
-          borderClass: data.pendingMedPasses > 0 ? "border-l-yellow-500" : "border-l-green-500",
-          onClick: () => setSubView("emar"),
-        },
-        {
-          label: "Overdue Tasks",
-          count: data.overdueTasks,
-          icon: ClipboardList,
-          colorClass: data.overdueTasks > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700",
-          borderClass: data.overdueTasks > 0 ? "border-l-red-500" : "border-l-green-500",
-          onClick: () => setSubView("residents"),
-        },
-        {
-          label: "Open Incidents",
-          count: data.openIncidents,
-          icon: AlertTriangle,
-          colorClass: data.openIncidents > 0 ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700",
-          borderClass: data.openIncidents > 0 ? "border-l-orange-500" : "border-l-green-500",
-          onClick: () => setSubView("incidents"),
-        },
-        {
-          label: "Pending Leads",
-          count: data.pendingLeads,
-          icon: UserPlus,
-          colorClass: "bg-blue-100 text-blue-700",
-          borderClass: "border-l-blue-500",
-          onClick: () => setSubView("crm"),
-        },
-        {
-          label: "Overdue Invoices",
-          count: data.overdueInvoices,
-          icon: Receipt,
-          colorClass: data.overdueInvoices > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700",
-          borderClass: data.overdueInvoices > 0 ? "border-l-red-500" : "border-l-green-500",
-          onClick: () => setSubView("billing"),
-        },
-        {
-          label: "Overdue Compliance",
-          count: data.overdueCompliance,
-          icon: ShieldCheck,
-          colorClass: data.overdueCompliance > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700",
-          borderClass: data.overdueCompliance > 0 ? "border-l-red-500" : "border-l-green-500",
-          onClick: () => setSubView("compliance"),
-        },
-      ]
-    : [];
+  const kpiCards: KpiCardProps[] = data ? [
+    { label: "Active Residents",   count: data.activeResidents,   icon: Users,        colorClass: "bg-green-100 text-green-700",                                                        borderClass: "border-l-green-500",                                                       onClick: () => setSubView("residents")  },
+    { label: "Pending Med Passes", count: data.pendingMedPasses,  icon: Pill,         colorClass: data.pendingMedPasses  > 0 ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700", borderClass: data.pendingMedPasses  > 0 ? "border-l-yellow-500" : "border-l-green-500", onClick: () => setSubView("emar")       },
+    { label: "Overdue Tasks",      count: data.overdueTasks,      icon: ClipboardList,colorClass: data.overdueTasks      > 0 ? "bg-red-100 text-red-700"       : "bg-green-100 text-green-700", borderClass: data.overdueTasks      > 0 ? "border-l-red-500"    : "border-l-green-500", onClick: () => setSubView("residents")  },
+    { label: "Open Incidents",     count: data.openIncidents,     icon: AlertTriangle,colorClass: data.openIncidents     > 0 ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700", borderClass: data.openIncidents     > 0 ? "border-l-orange-500" : "border-l-green-500", onClick: () => setSubView("incidents") },
+    { label: "Pending Leads",      count: data.pendingLeads,      icon: UserPlus,     colorClass: "bg-blue-100 text-blue-700",                                                          borderClass: "border-l-blue-500",                                                        onClick: () => setSubView("crm")        },
+    { label: "Overdue Invoices",   count: data.overdueInvoices,   icon: Receipt,      colorClass: data.overdueInvoices   > 0 ? "bg-red-100 text-red-700"       : "bg-green-100 text-green-700", borderClass: data.overdueInvoices   > 0 ? "border-l-red-500"    : "border-l-green-500", onClick: () => setSubView("billing")   },
+    { label: "Overdue Compliance", count: data.overdueCompliance, icon: ShieldCheck,  colorClass: data.overdueCompliance > 0 ? "bg-red-100 text-red-700"       : "bg-green-100 text-green-700", borderClass: data.overdueCompliance > 0 ? "border-l-red-500"    : "border-l-green-500", onClick: () => setSubView("compliance")},
+  ] : [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div
         className="flex items-center gap-2 px-4 py-3 rounded-xl"
@@ -231,7 +172,6 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
         </div>
       </div>
 
-      {/* Error state */}
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
           Failed to load dashboard data. Please try again.
@@ -239,7 +179,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       )}
 
       {/* KPI grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-8">
         {isLoading
           ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
           : kpiCards.length > 0
@@ -253,29 +193,13 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
             )}
       </div>
 
-      {/* Quick Actions */}
-      <div>
-        <h3 className="text-sm font-medium mb-3">Quick Actions</h3>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            onClick={() => setSubView("emar")}
-            className="text-white border-0"
-            style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-          >
-            <Pill className="h-4 w-4 mr-1.5" />
-            Chart Medication
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setSubView("incidents")}>
-            <AlertTriangle className="h-4 w-4 mr-1.5" />
-            Add Incident
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setSubView("crm")}>
-            <UserPlus className="h-4 w-4 mr-1.5" />
-            Add Lead
-          </Button>
-        </div>
-      </div>
+      {/* Operations calendar — visible when on the overview */}
+      {facilityNumber && (
+        <OpsCalendar
+          facilityNumber={facilityNumber}
+          onNavigate={(sv) => setSubView(sv)}
+        />
+      )}
     </div>
   );
 }

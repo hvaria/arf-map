@@ -659,7 +659,7 @@ export async function getCalendarSummary(
   for (const r of leadRows) { get(r.date).leadsFollowups = r.followups; }
   for (const r of billRows) { get(r.date).billingDue = r.due; }
   for (const r of compRows) { get(r.date).complianceDue = r.due; }
-  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+  return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 // Controlled substances
