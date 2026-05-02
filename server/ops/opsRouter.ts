@@ -11,6 +11,17 @@ import { z } from "zod";
 import { pool } from "../db/index";
 import * as ops from "./opsStorage";
 import { notesRouter } from "./notesRouter";
+import {
+  MedicationCreateInput,
+  MedicationUpdateInput,
+  MEDICATION_DISCONTINUE_REASONS,
+  joinScheduledTimes,
+  normalizeMedicationRow,
+  validateFrequencyTimesConsistency,
+  parseLegacyFrequency,
+  parseLegacyScheduledTimes,
+  type MedicationFrequency,
+} from "@shared/medication-constants";
 
 export const opsRouter = Router();
 
@@ -138,36 +149,36 @@ const refuseTaskSchema = z.object({
   reason: z.string().min(1),
 });
 
-const medicationSchema = z.object({
-  drugName: z.string().min(1),
-  genericName: z.string().optional(),
-  dosage: z.string().min(1),
-  route: z.string().min(1),
-  frequency: z.string().min(1),
-  scheduledTimes: z.string().optional(),
-  prescriberName: z.string().optional(),
-  prescriberNpi: z.string().optional(),
-  rxNumber: z.string().optional(),
-  pharmacyName: z.string().optional(),
-  startDate: z.number().int().optional(),
-  endDate: z.number().int().optional(),
-  isPrn: z.number().int().optional(),
-  prnIndication: z.string().optional(),
-  isControlled: z.number().int().optional(),
-  isPsychotropic: z.number().int().optional(),
-  isHazardous: z.number().int().optional(),
-  classification: z.string().optional(),
-  requiresVitalsBefore: z.number().int().optional(),
-  vitalType: z.string().optional(),
-  refillThresholdDays: z.number().int().optional(),
-  autoRefillRequest: z.number().int().optional(),
-  status: z.string().optional(),
+// Medication create/update Zod schemas live in @shared/medication-constants so
+// the FE form and BE route share one contract. Both schemas accept legacy
+// shapes (free-text frequency, comma-joined scheduledTimes) for back-compat.
+
+// Frontend may send a canonical reason code from MEDICATION_DISCONTINUE_REASONS,
+// or legacy free text from older clients. Reason and discontinuedBy are
+// optional — if discontinuedBy is omitted we derive it from the session.
+const discontinueMedSchema = z.object({
+  reason: z
+    .union([z.enum(MEDICATION_DISCONTINUE_REASONS), z.string().min(1)])
+    .transform((v) => String(v))
+    .optional(),
+  reasonNote: z.string().optional(),
+  discontinuedBy: z.string().min(1).optional(),
 });
 
-const discontinueMedSchema = z.object({
-  reason: z.string().min(1),
-  discontinuedBy: z.string().min(1),
-});
+/**
+ * Convert the validated form payload (scheduledTimes: string[]) to the storage
+ * shape (scheduledTimes: string | null, frequency: string). Storage column
+ * types are unchanged.
+ */
+function toStorageShape<T extends { frequency?: MedicationFrequency; scheduledTimes?: string[] }>(input: T) {
+  const { frequency, scheduledTimes, ...rest } = input;
+  const out: Record<string, unknown> = { ...rest };
+  if (frequency !== undefined) out.frequency = frequency;
+  if (scheduledTimes !== undefined) out.scheduledTimes = joinScheduledTimes(scheduledTimes);
+  return out as T extends { frequency: MedicationFrequency }
+    ? Omit<T, "frequency" | "scheduledTimes"> & { frequency: string; scheduledTimes: string | null }
+    : Omit<T, "frequency" | "scheduledTimes"> & { frequency?: string; scheduledTimes?: string | null };
+}
 
 const medPassSchema = z.object({
   medicationId: z.number().int(),
@@ -492,7 +503,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", async (re
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const status = req.query.status ? String(req.query.status) : undefined;
     const meds = await ops.listMedications(residentId, facilityNumber, status);
-    res.json({ success: true, data: meds });
+    res.json({ success: true, data: meds.map(normalizeMedicationRow) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
@@ -504,13 +515,14 @@ opsRouter.post("/facilities/:facilityNumber/residents/:id/medications", async (r
     const { facilityNumber } = req.params;
     const residentId = parseInt(req.params.id, 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
-    const parsed = medicationSchema.safeParse(req.body);
+    const parsed = MedicationCreateInput.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
     const now = Date.now();
-    const med = await ops.createMedication({ ...parsed.data, residentId, facilityNumber, createdAt: now, updatedAt: now });
-    res.status(201).json({ success: true, data: med });
+    const storagePayload = toStorageShape(parsed.data);
+    const med = await ops.createMedication({ ...storagePayload, residentId, facilityNumber, createdAt: now, updatedAt: now });
+    res.status(201).json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
@@ -820,7 +832,7 @@ opsRouter.get("/residents/:id/medications", async (req, res) => {
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const status = req.query.status ? String(req.query.status) : undefined;
     const meds = await ops.listMedications(residentId, facilityNumber, status);
-    res.json({ success: true, data: meds });
+    res.json({ success: true, data: meds.map(normalizeMedicationRow) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
@@ -832,19 +844,20 @@ opsRouter.post("/residents/:id/medications", async (req, res) => {
     const facilityNumber = getFacilityNumber(req);
     const residentId = parseInt(req.params.id, 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
-    const parsed = medicationSchema.safeParse(req.body);
+    const parsed = MedicationCreateInput.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
     const now = Date.now();
+    const storagePayload = toStorageShape(parsed.data);
     const med = await ops.createMedication({
-      ...parsed.data,
+      ...storagePayload,
       residentId,
       facilityNumber,
       createdAt: now,
       updatedAt: now,
     });
-    res.status(201).json({ success: true, data: med });
+    res.status(201).json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
@@ -856,13 +869,32 @@ opsRouter.put("/medications/:id", async (req, res) => {
     const facilityNumber = getFacilityNumber(req);
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
-    const parsed = medicationSchema.partial().safeParse(req.body);
+    const parsed = MedicationUpdateInput.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const med = await ops.updateMedication(id, facilityNumber, parsed.data);
+
+    // Cross-field rule (PRN ⇔ no scheduled times) does not survive .partial(),
+    // so we evaluate it on the merged post-update state. Skips the load when
+    // neither field is in the patch.
+    const patch = parsed.data;
+    if (patch.frequency !== undefined || patch.scheduledTimes !== undefined) {
+      const existing = await ops.getMedication(id, facilityNumber);
+      if (!existing) return res.status(404).json({ success: false, error: "Not found" });
+      const mergedFrequency: MedicationFrequency =
+        patch.frequency ?? parseLegacyFrequency(existing.frequency);
+      const mergedTimes: string[] =
+        patch.scheduledTimes ?? parseLegacyScheduledTimes(existing.scheduledTimes);
+      const consistency = validateFrequencyTimesConsistency(mergedFrequency, mergedTimes);
+      if (!consistency.ok) {
+        return res.status(400).json({ success: false, error: consistency.message });
+      }
+    }
+
+    const storagePayload = toStorageShape(patch);
+    const med = await ops.updateMedication(id, facilityNumber, storagePayload);
     if (!med) return res.status(404).json({ success: false, error: "Not found" });
-    res.json({ success: true, data: med });
+    res.json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
@@ -874,11 +906,16 @@ opsRouter.delete("/medications/:id", async (req, res) => {
     const facilityNumber = getFacilityNumber(req);
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
-    const parsed = discontinueMedSchema.safeParse(req.body);
+    const parsed = discontinueMedSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const ok = await ops.discontinueMedication(id, facilityNumber, parsed.data.reason, parsed.data.discontinuedBy);
+    const sessionUser = req.user as { username?: string } | undefined;
+    const reason = parsed.data.reasonNote
+      ? `${parsed.data.reason ?? "other"}: ${parsed.data.reasonNote}`
+      : (parsed.data.reason ?? "");
+    const by = parsed.data.discontinuedBy ?? sessionUser?.username ?? "unknown";
+    const ok = await ops.discontinueMedication(id, facilityNumber, reason, by);
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
@@ -1116,11 +1153,16 @@ opsRouter.post("/medications/:id/request-refill", async (req, res) => {
     const facilityNumber = getFacilityNumber(req);
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const existing = await ops.getMedication(id, facilityNumber);
+    if (!existing) return res.status(404).json({ success: false, error: "Not found" });
+    if (existing.status === "discontinued") {
+      return res.status(409).json({ success: false, error: "Cannot request refill for a discontinued medication." });
+    }
     const med = await ops.updateMedication(id, facilityNumber, {
       autoRefillRequest: 1,
     });
     if (!med) return res.status(404).json({ success: false, error: "Not found" });
-    res.json({ success: true, data: med });
+    res.json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }

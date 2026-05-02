@@ -12,8 +12,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Pencil, Plus, Check, X } from "lucide-react";
+import { MedicationFormDialog, type MedicationFormValue } from "@/components/medications/MedicationFormDialog";
+import {
+  DISCONTINUE_REASON_LABELS,
+  MEDICATION_DISCONTINUE_REASONS,
+  type MedicationDiscontinueReason,
+} from "@shared/medication-constants";
 
 interface SessionUser {
   id: number;
@@ -75,8 +91,11 @@ interface Medication {
   drugName: string;
   dosage: string;
   route: string;
-  frequency: string;
-  scheduledTimes: string | null;
+  frequency: string;             // canonical enum value (server-normalized)
+  frequencyLabel: string;        // human-readable label
+  frequencyRaw: string | null;   // legacy text if non-canonical, else null
+  scheduledTimes: string | null; // legacy comma-joined display field
+  scheduledTimesArray: string[]; // structured form-friendly field
   status: string;
   prescriberName: string | null;
 }
@@ -246,113 +265,76 @@ function AssessmentDialog({
   );
 }
 
-function AddMedDialog({
+function DiscontinueMedDialog({
   open,
   onOpenChange,
-  residentId,
-  facilityNumber,
+  medication,
+  onConfirm,
+  pending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  residentId: string;
-  facilityNumber: string;
+  medication: Medication | null;
+  onConfirm: (input: { reason: MedicationDiscontinueReason; reasonNote?: string }) => void;
+  pending: boolean;
 }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [form, setForm] = useState({
-    drugName: "",
-    dosage: "",
-    route: "",
-    frequency: "",
-    scheduledTimes: "",
-    prescriber: "",
-  });
+  const [reason, setReason] = useState<MedicationDiscontinueReason>("completed_course");
+  const [note, setNote] = useState("");
 
-  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  useEffect(() => {
+    if (open) {
+      setReason("completed_course");
+      setNote("");
+    }
+  }, [open]);
 
-  const mutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest(
-        "POST",
-        `/api/ops/facilities/${facilityNumber}/residents/${residentId}/medications`,
-        {
-          drugName: form.drugName,
-          dosage: form.dosage,
-          route: form.route,
-          frequency: form.frequency,
-          scheduledTimes: form.scheduledTimes,
-          prescriberName: form.prescriber,
-        }
-      );
-      return res.json();
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/medications`] });
-      toast({ title: "Medication added" });
-      onOpenChange(false);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
+  if (!medication) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Add Medication</DialogTitle>
-        </DialogHeader>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Discontinue {medication.drugName}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This medication will no longer appear in the active list. Past administrations and refill history are kept.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label>Drug Name</Label>
-            <Input value={form.drugName} onChange={(e) => set("drugName", e.target.value)} placeholder="e.g. Lisinopril" />
+            <Label>Reason</Label>
+            <Select value={reason} onValueChange={(v) => setReason(v as MedicationDiscontinueReason)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MEDICATION_DISCONTINUE_REASONS.map((r) => (
+                  <SelectItem key={r} value={r}>{DISCONTINUE_REASON_LABELS[r]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          {reason === "other" && (
             <div className="space-y-1.5">
-              <Label>Dosage</Label>
-              <Input value={form.dosage} onChange={(e) => set("dosage", e.target.value)} placeholder="e.g. 10mg" />
+              <Label>Notes</Label>
+              <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a brief note" />
             </div>
-            <div className="space-y-1.5">
-              <Label>Route</Label>
-              <Select value={form.route} onValueChange={(v) => set("route", v)}>
-                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="oral">Oral</SelectItem>
-                  <SelectItem value="topical">Topical</SelectItem>
-                  <SelectItem value="sublingual">Sublingual</SelectItem>
-                  <SelectItem value="injectable">Injectable</SelectItem>
-                  <SelectItem value="inhaled">Inhaled</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Frequency</Label>
-            <Input value={form.frequency} onChange={(e) => set("frequency", e.target.value)} placeholder="e.g. Once daily" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Scheduled Times (comma-separated)</Label>
-            <Input value={form.scheduledTimes} onChange={(e) => set("scheduledTimes", e.target.value)} placeholder="e.g. 08:00, 20:00" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Prescriber</Label>
-            <Input value={form.prescriber} onChange={(e) => set("prescriber", e.target.value)} placeholder="Dr. Smith" />
-          </div>
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
-              {mutation.isPending ? "Adding..." : "Add Medication"}
-            </Button>
-          </div>
+          )}
         </div>
-      </DialogContent>
-    </Dialog>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={pending}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm({ reason, reasonNote: reason === "other" ? note.trim() || undefined : undefined });
+            }}
+          >
+            {pending ? "Discontinuing..." : "Discontinue"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -539,7 +521,10 @@ export function ResidentProfileContent({
   const { toast } = useToast();
   const qc = useQueryClient();
   const [assessmentOpen, setAssessmentOpen] = useState(false);
-  const [addMedOpen, setAddMedOpen] = useState(false);
+  const [medFormOpen, setMedFormOpen] = useState(false);
+  const [medFormMode, setMedFormMode] = useState<"create" | "edit">("create");
+  const [medFormInitial, setMedFormInitial] = useState<MedicationFormValue | undefined>(undefined);
+  const [discontinueTarget, setDiscontinueTarget] = useState<Medication | null>(null);
   const [createCarePlanOpen, setCreateCarePlanOpen] = useState(false);
   const [reportIncidentOpen, setReportIncidentOpen] = useState(false);
   const residentIdStr = String(residentId);
@@ -602,17 +587,20 @@ export function ResidentProfileContent({
   });
 
   const discontinueMedMutation = useMutation({
-    mutationFn: async (medId: number) => {
+    mutationFn: async (input: { medId: number; reason: MedicationDiscontinueReason; reasonNote?: string }) => {
       const res = await apiRequest(
-        "PATCH",
-        `/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/medications/${medId}`,
-        { status: "discontinued" }
+        "DELETE",
+        `/api/ops/medications/${input.medId}`,
+        { reason: input.reason, reasonNote: input.reasonNote }
       );
       return res.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/medications`] });
       toast({ title: "Medication discontinued" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not discontinue", description: err.message, variant: "destructive" });
     },
   });
 
@@ -858,7 +846,15 @@ export function ResidentProfileContent({
         <TabsContent value="medications" className="mt-4 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium">Active Medications</h2>
-            <Button size="sm" variant="outline" onClick={() => setAddMedOpen(true)}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setMedFormMode("create");
+                setMedFormInitial(undefined);
+                setMedFormOpen(true);
+              }}
+            >
               <Plus className="h-4 w-4 mr-1.5" />
               Add Medication
             </Button>
@@ -873,20 +869,44 @@ export function ResidentProfileContent({
                   <div key={m.id} className="rounded-lg p-3" style={{ border: '1px solid #E0E7FF', background: '#F0F4FF' }}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium text-sm">{m.drugName}</span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive text-xs"
-                        onClick={() => discontinueMedMutation.mutate(m.id)}
-                        disabled={discontinueMedMutation.isPending}
-                      >
-                        Discontinue
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-xs h-7 px-2"
+                          onClick={() => {
+                            setMedFormMode("edit");
+                            setMedFormInitial({
+                              id: m.id,
+                              drugName: m.drugName,
+                              dosage: m.dosage,
+                              route: m.route,
+                              frequency: (m.frequency as MedicationFormValue["frequency"]) ?? "",
+                              frequencyRaw: m.frequencyRaw,
+                              scheduledTimes: m.scheduledTimesArray ?? [],
+                              prescriberName: m.prescriberName ?? "",
+                            });
+                            setMedFormOpen(true);
+                          }}
+                          aria-label={`Edit ${m.drugName}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive text-xs"
+                          onClick={() => setDiscontinueTarget(m)}
+                          disabled={discontinueMedMutation.isPending}
+                        >
+                          Discontinue
+                        </Button>
+                      </div>
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
                       <span>{m.dosage}</span>
                       <span>via {m.route}</span>
-                      <span>{m.frequency}</span>
+                      <span>{m.frequencyLabel || m.frequency}</span>
                       {m.scheduledTimes && (
                         <span>at {m.scheduledTimes}</span>
                       )}
@@ -898,11 +918,26 @@ export function ResidentProfileContent({
                 ))}
             </div>
           )}
-          <AddMedDialog
-            open={addMedOpen}
-            onOpenChange={setAddMedOpen}
+          <MedicationFormDialog
+            open={medFormOpen}
+            onOpenChange={setMedFormOpen}
+            mode={medFormMode}
             residentId={residentIdStr}
             facilityNumber={facilityNumber}
+            initialValue={medFormInitial}
+          />
+          <DiscontinueMedDialog
+            open={!!discontinueTarget}
+            onOpenChange={(v) => !v && setDiscontinueTarget(null)}
+            medication={discontinueTarget}
+            pending={discontinueMedMutation.isPending}
+            onConfirm={({ reason, reasonNote }) => {
+              if (!discontinueTarget) return;
+              discontinueMedMutation.mutate(
+                { medId: discontinueTarget.id, reason, reasonNote },
+                { onSettled: () => setDiscontinueTarget(null) },
+              );
+            }}
           />
         </TabsContent>
 

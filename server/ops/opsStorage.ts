@@ -229,6 +229,15 @@ export async function listMedications(residentId: number, facilityNumber: string
   return db.select().from(opsMedications).where(conditions);
 }
 
+export async function getMedication(id: number, facilityNumber: string): Promise<OpsMedication | undefined> {
+  const rows = await db
+    .select()
+    .from(opsMedications)
+    .where(and(eq(opsMedications.id, id), eq(opsMedications.facilityNumber, facilityNumber)))
+    .limit(1);
+  return rows[0];
+}
+
 export async function createMedication(data: InsertOpsMedication): Promise<OpsMedication> {
   const now = Date.now();
   const rows = await db.insert(opsMedications).values({ ...data, createdAt: now, updatedAt: now }).returning();
