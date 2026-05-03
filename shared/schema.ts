@@ -267,3 +267,64 @@ export {
   type InsertOpsFacilitySetting,
   type InsertOpsComplianceItem,
 } from "../server/ops/opsSchema";
+
+// ============ NOTES MODULE TABLES (re-exported from server/ops/notesSchema) ============
+// Drizzle table definitions, inferred types, and Zod input schemas for the
+// Operations > Notes module. SQL bootstrap lives in server/ops/notesSchema.ts
+// (NOTES_PG_SCHEMA_SQL) and is executed from server/ops/notesStorage.ts at
+// startup.
+
+export {
+  // Table objects
+  opsNotes,
+  opsNoteVersions,
+  opsNoteAttachments,
+  opsNoteMentions,
+  opsNoteAcknowledgments,
+  opsNoteTags,
+  opsNoteAuditLog,
+  // Select types
+  type OpsNote,
+  type OpsNoteVersion,
+  type OpsNoteAttachment,
+  type OpsNoteMention,
+  type OpsNoteAcknowledgment,
+  type OpsNoteTag,
+  type OpsNoteAuditEntry,
+  // Insert types
+  type InsertOpsNote,
+  type InsertOpsNoteVersion,
+  type InsertOpsNoteAttachment,
+  type InsertOpsNoteMention,
+  type InsertOpsNoteAcknowledgment,
+  type InsertOpsNoteTag,
+  type InsertOpsNoteAuditEntry,
+  // Zod enums
+  noteCategorySchema,
+  noteVisibilitySchema,
+  notePrioritySchema,
+  noteStatusSchema,
+  ackRequiredRoleSchema,
+  attachmentScanStatusSchema,
+  noteTagSchema,
+  noteAuditActionSchema,
+  // Zod input schemas
+  createNoteInputSchema,
+  updateNoteInputSchema,
+  replyNoteInputSchema,
+  acknowledgeNoteInputSchema,
+  listNotesQuerySchema,
+  // Inferred input types
+  type NoteCategory,
+  type NoteVisibility,
+  type NotePriority,
+  type NoteStatus,
+  type AckRequiredRole,
+  type AttachmentScanStatus,
+  type NoteAuditAction,
+  type CreateNoteInput,
+  type UpdateNoteInput,
+  type ReplyNoteInput,
+  type AcknowledgeNoteInput,
+  type ListNotesQuery,
+} from "../server/ops/notesSchema";

@@ -13,6 +13,7 @@ import connectPgSimple from "connect-pg-simple";
 import { getCachedFacilities, autoSeedIfEmpty } from "./services/facilitiesService";
 import { opsRouter } from "./ops/opsRouter";
 import { bootstrapOpsSchema } from "./ops/opsStorage";
+import { bootstrapNotesSchema } from "./ops/notesStorage";
 import { bootstrapMainSchema } from "./db/bootstrap";
 import type { FacilityAccount } from "@shared/schema";
 
@@ -186,6 +187,7 @@ app.use((req, res, next) => {
 (async () => {
   await bootstrapMainSchema();
   await bootstrapOpsSchema();
+  await bootstrapNotesSchema();
 
   // Mount the Facility Operations Module router before existing routes
   app.use("/api/ops", opsRouter);
