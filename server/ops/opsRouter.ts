@@ -10,6 +10,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { z } from "zod";
 import { pool } from "../db/index";
 import * as ops from "./opsStorage";
+import { notesRouter } from "./notesRouter";
 
 export const opsRouter = Router();
 
@@ -26,6 +27,10 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
 
 // Apply to all ops routes
 opsRouter.use(requireFacilityAuth);
+
+// Notes module — mounted under the auth middleware so handlers can rely on
+// req.isAuthenticated() and req.user being populated.
+opsRouter.use("/notes", notesRouter);
 
 // ── IDOR guard: any route with `:facilityNumber` in the path must match the
 // authenticated user's facility. Without this, facility A could read facility
