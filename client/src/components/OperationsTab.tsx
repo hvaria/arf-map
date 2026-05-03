@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import {
   Users, Pill, ClipboardList, AlertTriangle,
   UserPlus, Receipt, ShieldCheck, LayoutDashboard,
+  MessageSquare,
 } from "lucide-react";
 import { ResidentsContent } from "@/pages/portal/ResidentsPage";
 import { EmarContent } from "@/pages/portal/EmarPage";
@@ -23,6 +24,7 @@ import { CrmContent } from "@/pages/portal/CrmPage";
 import { BillingContent } from "@/pages/portal/BillingPage";
 import { StaffContent } from "@/pages/portal/StaffPage";
 import { ComplianceContent } from "@/pages/portal/CompliancePage";
+import { NotesContent } from "@/pages/portal/NotesPage";
 import OpsCalendar from "@/components/OpsCalendar";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -125,6 +127,17 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
     staleTime: 60_000,
   });
 
+  // Notes KPI: count of open (non-archived, non-deleted) notes. Capped at
+  // 100 since we reuse the list endpoint; displayed as "99+" once we hit
+  // the cap. A dedicated count endpoint can replace this in a later slice.
+  const { data: notesEnvelope } = useQuery<{ success: boolean; data: { items: unknown[] } } | null>({
+    queryKey: ["/api/ops/notes?status=open&limit=100"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber,
+    staleTime: 30_000,
+  });
+  const notesCount = notesEnvelope?.data?.items?.length ?? 0;
+
   const data: DashboardData | null = envelope?.data ?? null;
 
   // Sub-view routing
@@ -138,6 +151,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={back} /> :
       subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={back} /> :
       subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={back} /> :
+      subView === "notes"      ? <NotesContent      facilityNumber={facilityNumber} onBack={back} /> :
       null;
     if (content) {
       return (
@@ -156,6 +170,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
     { label: "Pending Leads",      count: data.pendingLeads,      icon: UserPlus,     colorClass: "bg-blue-100 text-blue-700",                                                          borderClass: "border-l-blue-500",                                                        onClick: () => setSubView("crm")        },
     { label: "Overdue Invoices",   count: data.overdueInvoices,   icon: Receipt,      colorClass: data.overdueInvoices   > 0 ? "bg-red-100 text-red-700"       : "bg-green-100 text-green-700", borderClass: data.overdueInvoices   > 0 ? "border-l-red-500"    : "border-l-green-500", onClick: () => setSubView("billing")   },
     { label: "Overdue Compliance", count: data.overdueCompliance, icon: ShieldCheck,  colorClass: data.overdueCompliance > 0 ? "bg-red-100 text-red-700"       : "bg-green-100 text-green-700", borderClass: data.overdueCompliance > 0 ? "border-l-red-500"    : "border-l-green-500", onClick: () => setSubView("compliance")},
+    { label: "Notes",              count: notesCount,             icon: MessageSquare,colorClass: "bg-indigo-100 text-indigo-700",                                                       borderClass: "border-l-indigo-500",                                                      onClick: () => setSubView("notes")      },
   ] : [];
 
   return (
