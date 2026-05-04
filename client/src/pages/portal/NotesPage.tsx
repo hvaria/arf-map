@@ -100,9 +100,15 @@ type FilterKey = "all" | "urgent" | "archived";
 export function NotesContent({
   facilityNumber,
   onBack,
+  embedded = false,
 }: {
   facilityNumber: string;
   onBack?: () => void;
+  /**
+   * When true, renders without the gradient page header and back link.
+   * Used by OperationsTab to inline the notes feed inside the overview.
+   */
+  embedded?: boolean;
 }) {
   const [filter, setFilter] = useState<FilterKey>("all");
 
@@ -122,9 +128,9 @@ export function NotesContent({
   const items = envelope?.data?.items ?? [];
 
   return (
-    <div className="space-y-4 max-w-3xl mx-auto pb-12">
+    <div className={cn("space-y-4", !embedded && "max-w-3xl mx-auto pb-12")}>
       {/* ── Header ───────────────────────────────────────────────── */}
-      {onBack && (
+      {!embedded && onBack && (
         <button
           onClick={onBack}
           className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -134,26 +140,28 @@ export function NotesContent({
         </button>
       )}
 
-      <div
-        className="flex items-center gap-2 px-4 py-3 rounded-xl"
-        style={{
-          background: "linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%)",
-          border: "1px solid #E0E7FF",
-        }}
-      >
-        <MessageSquare className="h-5 w-5" style={{ color: "#818CF8" }} />
-        <div>
-          <h2
-            className="text-base font-semibold leading-tight"
-            style={{ color: "#1E1B4B" }}
-          >
-            Notes
-          </h2>
-          <p className="text-xs" style={{ color: "#6B7280" }}>
-            Operational communication for Facility #{facilityNumber}
-          </p>
+      {!embedded && (
+        <div
+          className="flex items-center gap-2 px-4 py-3 rounded-xl"
+          style={{
+            background: "linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%)",
+            border: "1px solid #E0E7FF",
+          }}
+        >
+          <MessageSquare className="h-5 w-5" style={{ color: "#818CF8" }} />
+          <div>
+            <h2
+              className="text-base font-semibold leading-tight"
+              style={{ color: "#1E1B4B" }}
+            >
+              Notes
+            </h2>
+            <p className="text-xs" style={{ color: "#6B7280" }}>
+              Operational communication for Facility #{facilityNumber}
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Composer (always visible) ────────────────────────────── */}
       <Composer />

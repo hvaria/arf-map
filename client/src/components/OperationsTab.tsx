@@ -11,11 +11,19 @@ import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
   Users, Pill, ClipboardList, AlertTriangle,
   UserPlus, Receipt, ShieldCheck, LayoutDashboard,
-  MessageSquare,
+  MessageSquare, ChevronRight, AlertCircle,
 } from "lucide-react";
 import { ResidentsContent } from "@/pages/portal/ResidentsPage";
 import { EmarContent } from "@/pages/portal/EmarPage";
@@ -119,6 +127,7 @@ class SubViewErrorBoundary extends React.Component<
 
 export default function OperationsTab({ facilityNumber }: { facilityNumber: string }) {
   const [subView, setSubView] = useState<string | null>(null);
+  const [notesOpen, setNotesOpen] = useState(false);
 
   const { data: envelope, isLoading, error } = useQuery<{ success: boolean; data: DashboardData } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/dashboard`],
@@ -127,16 +136,19 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
     staleTime: 60_000,
   });
 
-  // Notes KPI: count of open (non-archived, non-deleted) notes. Capped at
-  // 100 since we reuse the list endpoint; displayed as "99+" once we hit
-  // the cap. A dedicated count endpoint can replace this in a later slice.
-  const { data: notesEnvelope } = useQuery<{ success: boolean; data: { items: unknown[] } } | null>({
-    queryKey: ["/api/ops/notes?status=open&limit=100"],
+  // Shared query key with FacilityPortal Dashboard + NotesContent (filter=all)
+  // → React Query dedupes; this is effectively free.
+  const { data: notesEnvelope } = useQuery<
+    { success: boolean; data: { items: Array<{ priority: "normal" | "urgent" }> } } | null
+  >({
+    queryKey: ["/api/ops/notes?status=open&limit=50"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber,
     staleTime: 30_000,
   });
-  const notesCount = notesEnvelope?.data?.items?.length ?? 0;
+  const notesItems = notesEnvelope?.data?.items ?? [];
+  const notesCount = notesItems.length;
+  const hasUrgentNote = notesItems.some((n) => n.priority === "urgent");
 
   const data: DashboardData | null = envelope?.data ?? null;
 
@@ -151,7 +163,6 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={back} /> :
       subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={back} /> :
       subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={back} /> :
-      subView === "notes"      ? <NotesContent      facilityNumber={facilityNumber} onBack={back} /> :
       null;
     if (content) {
       return (
@@ -170,7 +181,6 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
     { label: "Pending Leads",      count: data.pendingLeads,      icon: UserPlus,     colorClass: "bg-blue-100 text-blue-700",                                                          borderClass: "border-l-blue-500",                                                        onClick: () => setSubView("crm")        },
     { label: "Overdue Invoices",   count: data.overdueInvoices,   icon: Receipt,      colorClass: data.overdueInvoices   > 0 ? "bg-red-100 text-red-700"       : "bg-green-100 text-green-700", borderClass: data.overdueInvoices   > 0 ? "border-l-red-500"    : "border-l-green-500", onClick: () => setSubView("billing")   },
     { label: "Overdue Compliance", count: data.overdueCompliance, icon: ShieldCheck,  colorClass: data.overdueCompliance > 0 ? "bg-red-100 text-red-700"       : "bg-green-100 text-green-700", borderClass: data.overdueCompliance > 0 ? "border-l-red-500"    : "border-l-green-500", onClick: () => setSubView("compliance")},
-    { label: "Notes",              count: notesCount,             icon: MessageSquare,colorClass: "bg-indigo-100 text-indigo-700",                                                       borderClass: "border-l-indigo-500",                                                      onClick: () => setSubView("notes")      },
   ] : [];
 
   return (
@@ -191,6 +201,80 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
         <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
           Failed to load dashboard data. Please try again.
         </div>
+      )}
+
+      {/* Notes — compact trigger card; full feed opens in a side sheet */}
+      {facilityNumber && (
+        <Sheet open={notesOpen} onOpenChange={setNotesOpen}>
+          <SheetTrigger asChild>
+            <button
+              type="button"
+              aria-label={
+                notesCount > 0
+                  ? `Open team notes — ${notesCount}${hasUrgentNote ? ", contains urgent" : ""}`
+                  : "Open team notes"
+              }
+              className="w-full text-left rounded-xl border border-border bg-card p-3 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-shadow flex items-center gap-3"
+            >
+              <div
+                className={cn(
+                  "h-9 w-9 rounded-full flex items-center justify-center shrink-0",
+                  hasUrgentNote
+                    ? "bg-red-100 text-red-600"
+                    : "bg-indigo-100 text-indigo-700",
+                )}
+              >
+                <MessageSquare className="h-4 w-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold">Team Notes</p>
+                  {notesCount > 0 && (
+                    <span
+                      className={cn(
+                        "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold",
+                        hasUrgentNote
+                          ? "bg-red-500 text-white"
+                          : "bg-muted text-foreground/80 border border-border",
+                      )}
+                    >
+                      {notesCount > 99 ? "99+" : notesCount}
+                    </span>
+                  )}
+                  {hasUrgentNote && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-700">
+                      <AlertCircle className="h-3 w-3" />
+                      Urgent
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground truncate">
+                  {notesCount === 0
+                    ? "No notes yet — open to post one."
+                    : "View, post, or reply to team messages."}
+                </p>
+              </div>
+              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            </button>
+          </SheetTrigger>
+          <SheetContent
+            side="right"
+            className="w-full sm:max-w-lg p-0 flex flex-col gap-0"
+          >
+            <SheetHeader className="px-6 py-4 border-b text-left space-y-1">
+              <SheetTitle className="flex items-center gap-2 text-base">
+                <MessageSquare className="h-4 w-4" />
+                Team Notes
+              </SheetTitle>
+              <SheetDescription className="text-xs">
+                Operational communication for Facility #{facilityNumber}
+              </SheetDescription>
+            </SheetHeader>
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              <NotesContent facilityNumber={facilityNumber} embedded />
+            </div>
+          </SheetContent>
+        </Sheet>
       )}
 
       {/* KPI grid */}

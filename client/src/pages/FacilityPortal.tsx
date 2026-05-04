@@ -1012,6 +1012,20 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
     queryFn: getQueryFn({ on401: "throw" }),
   });
 
+  // Open notes drive the indicator on the Operations tab. Same query key as
+  // OperationsTab → NotesContent uses, so React Query dedupes.
+  const { data: notesEnvelope } = useQuery<
+    { success: boolean; data: { items: Array<{ priority: "normal" | "urgent" }> } } | null
+  >({
+    queryKey: ["/api/ops/notes?status=open&limit=50"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!user.facilityNumber,
+    staleTime: 30_000,
+  });
+  const notesItems = notesEnvelope?.data?.items ?? [];
+  const notesCount = notesItems.length;
+  const hasUrgentNote = notesItems.some((n) => n.priority === "urgent");
+
   const logoutMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/facility/logout"),
     // UI-05: clear auth cache synchronously so the UI transitions to the login
@@ -1030,24 +1044,57 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   );
 
   return (
-    <div className="space-y-6">
-      {/* Profile card */}
-      <Card className="portal-facility-card border-0">
-        <CardContent className="pt-5 pb-4">
-          <div className="flex items-start gap-4">
-            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <Building2 className="h-6 w-6 text-primary" />
+    <Tabs defaultValue="details" className="min-h-screen flex flex-col bg-white">
+      <header
+        className="facility-header sticky top-0 z-30 bg-white"
+        style={{ borderBottom: "1px solid var(--brand-border)" }}
+      >
+        {/* Utility row: brand + back link on the left, log out on the right */}
+        <div
+          className="px-4 lg:px-6 py-3 flex items-center gap-3 border-b"
+          style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}
+        >
+          {/* DO NOT MODIFY - Brand Lock */}
+          <BrandLogo />
+          <Separator orientation="vertical" className="h-8" />
+          <Link href="/">
+            <Button variant="ghost" size="sm" className="-ml-2">
+              <ArrowLeft className="h-4 w-4 mr-1.5" />
+              Back to Map
+            </Button>
+          </Link>
+          <div className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => logoutMutation.mutate()}
+            disabled={logoutMutation.isPending}
+          >
+            <LogOut className="h-4 w-4 sm:mr-1.5" />
+            <span className="hidden sm:inline">
+              {logoutMutation.isPending ? "Logging out…" : "Log Out"}
+            </span>
+          </Button>
+        </div>
+
+        {/* Identity + section tabs */}
+        <div className="facility-header-top px-4 lg:px-6 py-4 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div className="facility-header-left flex items-start gap-3 min-w-0">
+            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <Building2 className="h-5 w-5 text-primary" />
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-base font-semibold leading-tight">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Facility Portal
+              </p>
+              <h1 className="text-base font-semibold leading-tight truncate">
                 {facility?.name ?? `Facility #${user.facilityNumber}`}
-              </h2>
-              <p className="text-sm text-muted-foreground mt-0.5">License #{user.facilityNumber}</p>
-              {facility && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {facility.address}, {facility.city}
-                </p>
-              )}
+              </h1>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                License #{user.facilityNumber}
+                {facility ? ` · ${facility.address}, ${facility.city}` : ""}
+              </p>
               <div className="mt-2">
                 {isListingComplete ? (
                   <Badge variant="secondary" className="text-xs gap-1">
@@ -1055,7 +1102,10 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
                     Listing complete
                   </Badge>
                 ) : (
-                  <Badge variant="secondary" className="text-xs gap-1 text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400">
+                  <Badge
+                    variant="secondary"
+                    className="text-xs gap-1 text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400"
+                  >
                     <AlertCircle className="h-3 w-3" />
                     Listing incomplete
                   </Badge>
@@ -1063,32 +1113,52 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
               </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      <div className="portal-tabs">
-      <Tabs defaultValue="details">
-        <TabsList className="w-full">
-          <TabsTrigger value="details" className="flex-1">
-            <Building2 className="h-4 w-4 mr-1.5" />
-            My Details
-          </TabsTrigger>
-          <TabsTrigger value="jobs" className="flex-1">
-            <Briefcase className="h-4 w-4 mr-1.5" />
-            Job Postings
-          </TabsTrigger>
-          {/* NEW: expression-of-interest */}
-          <TabsTrigger value="applicants" className="flex-1">
-            <Users className="h-4 w-4 mr-1.5" />
-            Applicants
-          </TabsTrigger>
-          <TabsTrigger value="operations" className="flex-1">
-            <LayoutDashboard className="h-4 w-4 mr-1.5" />
-            Operations
-          </TabsTrigger>
-        </TabsList>
+          <nav
+            aria-label="Facility portal sections"
+            className="portal-tabs facility-header-tabs w-full lg:w-auto -mx-4 lg:mx-0 px-4 lg:px-0 overflow-x-auto"
+          >
+            <TabsList className="inline-flex w-auto">
+              <TabsTrigger value="details">
+                <Building2 className="h-4 w-4 mr-1.5" />
+                My Details
+              </TabsTrigger>
+              <TabsTrigger value="jobs">
+                <Briefcase className="h-4 w-4 mr-1.5" />
+                Job Postings
+              </TabsTrigger>
+              <TabsTrigger value="applicants">
+                <Users className="h-4 w-4 mr-1.5" />
+                Applicants
+              </TabsTrigger>
+              <TabsTrigger value="operations">
+                <LayoutDashboard className="h-4 w-4 mr-1.5" />
+                Operations
+                {notesCount > 0 && (
+                  <span
+                    aria-label={
+                      hasUrgentNote
+                        ? `${notesCount} open notes, contains urgent`
+                        : `${notesCount} open notes`
+                    }
+                    className={
+                      "ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold " +
+                      (hasUrgentNote
+                        ? "bg-red-500 text-white"
+                        : "bg-muted text-foreground/80 border border-border")
+                    }
+                  >
+                    {notesCount > 99 ? "99+" : notesCount}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </nav>
+        </div>
+      </header>
 
-        <TabsContent value="details" className="mt-6">
+      <main className="flex-1 w-full max-w-xl mx-auto px-4 py-6">
+        <TabsContent value="details" className="mt-0">
           {editingDetails ? (
             <>
               <p className="text-sm text-muted-foreground mb-4">
@@ -1149,7 +1219,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
           )}
         </TabsContent>
 
-        <TabsContent value="jobs" className="mt-6">
+        <TabsContent value="jobs" className="mt-0">
           <p className="text-sm text-muted-foreground mb-4">
             Manage your job openings. Active postings will show your facility in the "Hiring" filter on the map.
           </p>
@@ -1157,36 +1227,20 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </TabsContent>
 
         {/* NEW: expression-of-interest */}
-        <TabsContent value="applicants" className="mt-6">
+        <TabsContent value="applicants" className="mt-0">
           <p className="text-sm text-muted-foreground mb-4">
             Job seekers who expressed interest in your facility. Update their status as you review profiles.
           </p>
           <ApplicantsTab />
         </TabsContent>
 
-        <TabsContent value="operations" className="mt-6">
+        <TabsContent value="operations" className="mt-0">
           <div style={{ width: '100vw', position: 'relative', left: '50%', marginLeft: '-50vw', paddingLeft: '1rem', paddingRight: '1rem' }}>
             <OperationsTab facilityNumber={user.facilityNumber} />
           </div>
         </TabsContent>
-      </Tabs>
-      </div>
-
-      <Separator />
-
-      <div className="flex justify-center pb-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => logoutMutation.mutate()}
-          disabled={logoutMutation.isPending}
-        >
-          <LogOut className="h-4 w-4 mr-1.5" />
-          {logoutMutation.isPending ? "Logging out…" : "Log Out"}
-        </Button>
-      </div>
-    </div>
+      </main>
+    </Tabs>
   );
 }
 
@@ -1228,6 +1282,10 @@ export default function FacilityPortal() {
     qc.setQueryData(["/api/facility/me"], null);
   };
 
+  if (me) {
+    return <Dashboard user={me} onLogout={handleLogout} />;
+  }
+
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
@@ -1248,8 +1306,6 @@ export default function FacilityPortal() {
       <main className="max-w-xl mx-auto px-4 py-8">
         {isLoading ? (
           <div className="text-center text-muted-foreground py-12">Loading...</div>
-        ) : me ? (
-          <Dashboard user={me} onLogout={handleLogout} />
         ) : (
           <div className="space-y-6">
             <div className="text-center">
