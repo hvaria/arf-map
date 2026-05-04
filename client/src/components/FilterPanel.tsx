@@ -9,15 +9,30 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { FacilitiesMeta } from "@shared/schema";
+import {
+  DOMAINS,
+  groupsForDomain,
+  typesForGroup,
+  normalizeRawType,
+  getByCode,
+  type FacilityDomain,
+  type TaxonomyEntry,
+} from "@shared/taxonomy";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type QuickFilterId = "ARF" | "RCFE" | "DAYCARE" | "GROUP_HOME" | "";
+/**
+ * Quick-filter ids correspond to taxonomy `code` values. We narrow the type
+ * union to a curated subset that's surfaced as chips at the top of the panel.
+ */
+export type QuickFilterId = "ARF" | "RCFE" | "CCC" | "GH" | "FCCH" | "HCO" | "";
 
 export interface FacilityFilters {
   search: string;
   county: string;
+  /** Domain (top of hierarchy). Stored as the canonical CCLD domain name. */
   facilityGroup: string;
+  /** Single facility type (the API contract is single-valued). Canonical official label. */
   facilityType: string;
   statuses: Set<string>;
   hiringOnly: boolean;
@@ -61,53 +76,79 @@ export function countActiveFilters(f: FacilityFilters): number {
   return n;
 }
 
-// ── Quick filters ─────────────────────────────────────────────────────────────
+// ── Quick filters (curated taxonomy subset) ───────────────────────────────────
 
-// Colors are spelled out fully as string literals so Tailwind JIT detects them.
-const QUICK_FILTERS: Array<{
+interface QuickFilterChip {
   id: QuickFilterId;
+  /** Taxonomy code this chip resolves to. */
+  code: string;
+  /** Short label shown on the chip. */
   label: string;
+  /** Sub-line description. */
   description: string;
-  group: string;
-  type: string; // exact facility_type value, or "" for group-only (Daycare)
   colorActive: string;
   colorBorder: string;
-}> = [
+}
+
+/**
+ * Curated set of quick-filter chips. Each one resolves to a single taxonomy
+ * entry — so the chip's `code` drives `facilityGroup` (the entry's domain)
+ * AND `facilityType` (the entry's officialLabel) when activated.
+ *
+ * Selection criteria: highest-volume / most-recognizable types in each
+ * of the four CCLD domains — ARF + RCFE for Adult & Senior Care, GH for
+ * Children's Residential, CCC + FCCH for Child Care, HCO for Home Care.
+ *
+ * Tailwind JIT requires fully-spelled class strings — do not concatenate.
+ */
+const QUICK_FILTER_CHIPS: QuickFilterChip[] = [
   {
     id: "ARF",
+    code: "ARF",
     label: "ARF",
     description: "Adult Residential",
-    group: "Adult & Senior Care",
-    type: "Adult Residential Facility",
     colorActive: "bg-teal-600 text-white border-teal-600",
     colorBorder: "border-teal-400 text-teal-700 dark:text-teal-400",
   },
   {
     id: "RCFE",
+    code: "RCFE",
     label: "RCFE",
-    description: "Senior Care",
-    group: "Adult & Senior Care",
-    type: "Residential Care Facility for the Elderly",
+    description: "Senior Living",
     colorActive: "bg-blue-600 text-white border-blue-600",
     colorBorder: "border-blue-400 text-blue-700 dark:text-blue-400",
   },
   {
-    id: "DAYCARE",
-    label: "Daycare",
-    description: "Child Day Care",
-    group: "Child Care",
-    type: "", // group-only — no facilityType filter
+    id: "CCC",
+    code: "CCC",
+    label: "Day Care Center",
+    description: "Child Care",
     colorActive: "bg-green-600 text-white border-green-600",
     colorBorder: "border-green-400 text-green-700 dark:text-green-400",
   },
   {
-    id: "GROUP_HOME",
-    label: "Group Home",
+    id: "GH",
+    code: "GH",
+    label: "Group Home (Children's)",
     description: "Children's Residential",
-    group: "Children's Residential",
-    type: "Group Home",
     colorActive: "bg-purple-600 text-white border-purple-600",
     colorBorder: "border-purple-400 text-purple-700 dark:text-purple-400",
+  },
+  {
+    id: "FCCH",
+    code: "FCCH",
+    label: "Family Child Care",
+    description: "Home-based",
+    colorActive: "bg-emerald-600 text-white border-emerald-600",
+    colorBorder: "border-emerald-400 text-emerald-700 dark:text-emerald-400",
+  },
+  {
+    id: "HCO",
+    code: "HCO",
+    label: "Home Care",
+    description: "In-home services",
+    colorActive: "bg-orange-600 text-white border-orange-600",
+    colorBorder: "border-orange-400 text-orange-700 dark:text-orange-400",
   },
 ];
 
@@ -121,14 +162,35 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   REVOKED: { label: "Revoked", color: "bg-red-800" },
 };
 
-// ── Group colors ──────────────────────────────────────────────────────────────
+// ── Domain colors (derived once) ──────────────────────────────────────────────
 
-const GROUP_COLORS: Record<string, string> = {
-  "Adult & Senior Care": "text-teal-600 dark:text-teal-400",
-  "Child Care": "text-green-600 dark:text-green-400",
-  "Children's Residential": "text-purple-600 dark:text-purple-400",
-  "Home Care": "text-orange-600 dark:text-orange-400",
+/**
+ * Domain colour palette — kept in sync with the StatsPage swatches and with
+ * `client/src/components/MapView.tsx` pin colours (data shape unchanged).
+ * Tailwind JIT requires literal class strings, so we map domain → utility set.
+ */
+const DOMAIN_COLORS: Record<FacilityDomain, { text: string; dot: string }> = {
+  "Adult & Senior Care": {
+    text: "text-teal-600 dark:text-teal-400",
+    dot: "bg-teal-500",
+  },
+  "Children's Residential": {
+    text: "text-purple-600 dark:text-purple-400",
+    dot: "bg-purple-500",
+  },
+  "Child Care": {
+    text: "text-green-600 dark:text-green-400",
+    dot: "bg-green-500",
+  },
+  "Home Care": {
+    text: "text-orange-600 dark:text-orange-400",
+    dot: "bg-orange-500",
+  },
 };
+
+function isDomain(value: string): value is FacilityDomain {
+  return (DOMAINS as readonly string[]).includes(value);
+}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -157,19 +219,20 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
     return meta.counties.filter((c) => c.toLowerCase().includes(q));
   }, [meta?.counties, countySearch]);
 
-  // Group types by their group for the collapsible tree.
-  // Uses inferGroup() directly — avoids the find()+fallback bug where every type
-  // could match "Adult & Senior Care" before specific groups are checked.
+  /**
+   * Taxonomy entries available under the currently selected domain, grouped
+   * by their search-group. When no domain is selected we don't render the
+   * type list at all — the user must pick a domain first to avoid an
+   * unwieldy 30+ checkbox flat list.
+   */
   const typesByGroup = useMemo(() => {
-    if (!meta) return {};
-    const map: Record<string, string[]> = {};
-    for (const t of meta.facilityTypes) {
-      const group = inferGroup(t);
-      if (!map[group]) map[group] = [];
-      map[group].push(t);
-    }
-    return map;
-  }, [meta]);
+    if (!filters.facilityGroup || !isDomain(filters.facilityGroup)) return null;
+    const groups = groupsForDomain(filters.facilityGroup);
+    return groups.map((g) => ({
+      group: g,
+      entries: typesForGroup(g),
+    }));
+  }, [filters.facilityGroup]);
 
   const update = (patch: Partial<FacilityFilters>) =>
     onChange({ ...filters, ...patch });
@@ -189,6 +252,8 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
       {/* Toggle button */}
       <button
         onClick={() => setOpen((o) => !o)}
+        aria-label={open ? "Close filters" : "Open filters"}
+        aria-expanded={open}
         className={cn(
           "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm",
           open || activeCount > 0
@@ -225,7 +290,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                   Reset
                 </Button>
               )}
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOpen(false)}>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOpen(false)} aria-label="Close filters">
                 <X className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -244,6 +309,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                 />
                 {filters.search && (
                   <button
+                    aria-label="Clear search"
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     onClick={() => update({ search: "" })}
                   >
@@ -253,74 +319,80 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
               </div>
             </FilterSection>
 
-            {/* Quick Filters — rendered above the Facility Group & Type section */}
+            {/* Quick Filters */}
             <div className="px-4 py-3 border-b">
               <QuickFilterBar filters={filters} meta={meta} onChange={onChange} />
             </div>
 
-            {/* Facility Group & Type */}
+            {/* Domain → Facility Type hierarchy */}
             <FilterSection icon={Building2} title="Facility Type">
-              {/* Group pills — clearing quickFilter on manual selection */}
-              <div className="flex flex-wrap gap-1 mb-2">
-                <Pill
-                  active={!filters.facilityGroup}
-                  onClick={() => update({ facilityGroup: "", facilityType: "", quickFilter: "" })}
-                >
-                  All Groups
-                </Pill>
-                {(meta?.facilityGroups ?? []).map((g) => (
-                  <Pill
-                    key={g}
-                    active={filters.facilityGroup === g}
-                    onClick={() => update({
-                      facilityGroup: filters.facilityGroup === g ? "" : g,
-                      facilityType: "",
-                      quickFilter: "",
-                    })}
-                    className={GROUP_COLORS[g]}
-                  >
-                    {g}
-                    {meta?.countByGroup[g] && (
-                      <span className="opacity-60 ml-0.5">({meta.countByGroup[g].toLocaleString()})</span>
-                    )}
-                  </Pill>
-                ))}
-              </div>
-
-              {/* Individual types (when group selected) */}
-              {filters.facilityGroup && typesByGroup[filters.facilityGroup] && (
-                <div className="space-y-0.5 mt-1">
-                  <Pill
-                    active={!filters.facilityType}
-                    onClick={() => update({ facilityType: "", quickFilter: "" })}
-                    className="mb-1"
-                  >
-                    All in {filters.facilityGroup}
-                  </Pill>
-                  {typesByGroup[filters.facilityGroup].map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => update({
-                        facilityType: filters.facilityType === t ? "" : t,
-                        quickFilter: "",
-                      })}
-                      className={cn(
-                        "w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all",
-                        filters.facilityType === t
-                          ? "bg-primary/10 text-primary font-medium"
-                          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                      )}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <ChevronRight className="h-3 w-3 opacity-40" />
-                        {t}
-                      </span>
-                      {meta?.countByType[t] && (
-                        <span className="text-[10px] opacity-60">{meta.countByType[t].toLocaleString()}</span>
-                      )}
-                    </button>
-                  ))}
+              {/* Domain radio group */}
+              <fieldset>
+                <legend className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                  Domain
+                </legend>
+                <div className="space-y-0.5 mb-2">
+                  <DomainRadio
+                    label="All domains"
+                    active={!filters.facilityGroup}
+                    onClick={() => update({ facilityGroup: "", facilityType: "", quickFilter: "" })}
+                  />
+                  {DOMAINS.map((d) => {
+                    const colors = DOMAIN_COLORS[d];
+                    const count = meta?.countByGroup?.[d];
+                    return (
+                      <DomainRadio
+                        key={d}
+                        label={d}
+                        active={filters.facilityGroup === d}
+                        dotClass={colors.dot}
+                        textClass={colors.text}
+                        count={count}
+                        onClick={() => update({
+                          facilityGroup: filters.facilityGroup === d ? "" : d,
+                          facilityType: "",
+                          quickFilter: "",
+                        })}
+                      />
+                    );
+                  })}
                 </div>
+              </fieldset>
+
+              {/* Type checklist (only when a domain is selected) */}
+              {typesByGroup && typesByGroup.length > 0 && (
+                <fieldset className="mt-2 pt-2 border-t">
+                  <legend className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                    Type ({filters.facilityGroup})
+                  </legend>
+                  <div className="space-y-2">
+                    {typesByGroup.map(({ group, entries }) => (
+                      <div key={group}>
+                        <div className="text-[10px] font-medium text-muted-foreground/80 uppercase mb-0.5 px-1">
+                          {group}
+                        </div>
+                        <div className="space-y-0.5">
+                          {entries.map((entry) => {
+                            const active = filters.facilityType === entry.officialLabel;
+                            const count = meta?.countByType?.[entry.officialLabel];
+                            return (
+                              <TypeCheckbox
+                                key={entry.code}
+                                entry={entry}
+                                active={active}
+                                count={count}
+                                onClick={() => update({
+                                  facilityType: active ? "" : entry.officialLabel,
+                                  quickFilter: "",
+                                })}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </fieldset>
               )}
             </FilterSection>
 
@@ -331,12 +403,13 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                 onChange={(e) => setCountySearch(e.target.value)}
                 placeholder="Search counties…"
                 className="h-7 text-xs mb-2"
+                aria-label="Search counties"
               />
               {filters.county && (
                 <div className="flex items-center gap-1 mb-1.5">
                   <Badge variant="secondary" className="text-xs gap-1">
                     {filters.county}
-                    <button onClick={() => update({ county: "" })}>
+                    <button onClick={() => update({ county: "" })} aria-label={`Clear county filter ${filters.county}`}>
                       <X className="h-3 w-3" />
                     </button>
                   </Badge>
@@ -372,6 +445,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                     <button
                       key={key}
                       onClick={() => toggleStatus(key)}
+                      aria-pressed={active}
                       className={cn(
                         "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all",
                         active
@@ -394,6 +468,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                   type="number"
                   min={0}
                   placeholder="Min"
+                  aria-label="Minimum capacity"
                   value={filters.minCapacity ?? ""}
                   onChange={(e) => update({ minCapacity: e.target.value ? parseInt(e.target.value, 10) : null })}
                   className="h-8 text-xs"
@@ -403,6 +478,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                   type="number"
                   min={0}
                   placeholder="Max"
+                  aria-label="Maximum capacity"
                   value={filters.maxCapacity ?? ""}
                   onChange={(e) => update({ maxCapacity: e.target.value ? parseInt(e.target.value, 10) : null })}
                   className="h-8 text-xs"
@@ -435,6 +511,7 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
             <FilterSection icon={Briefcase} title="Job Openings">
               <button
                 onClick={() => update({ hiringOnly: !filters.hiringOnly })}
+                aria-pressed={filters.hiringOnly}
                 className={cn(
                   "flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-all w-full",
                   filters.hiringOnly
@@ -475,6 +552,7 @@ function FilterSection({
       <button
         className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-muted/30 transition-colors"
         onClick={() => setExpanded((e) => !e)}
+        aria-expanded={expanded}
       >
         <div className="flex items-center gap-2">
           <Icon className="h-3.5 w-3.5 text-muted-foreground" />
@@ -491,29 +569,95 @@ function FilterSection({
   );
 }
 
-function Pill({
+function DomainRadio({
+  label,
   active,
   onClick,
-  children,
-  className,
+  count,
+  dotClass,
+  textClass,
 }: {
+  label: string;
   active: boolean;
   onClick: () => void;
-  children: React.ReactNode;
-  className?: string;
+  count?: number;
+  dotClass?: string;
+  textClass?: string;
+}) {
+  return (
+    <button
+      role="radio"
+      aria-checked={active}
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-all",
+        active
+          ? "bg-primary/10 text-primary font-medium"
+          : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
+      )}
+    >
+      <span className="flex items-center gap-2">
+        <span
+          className={cn(
+            "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
+            active ? "border-primary" : "border-muted-foreground/40"
+          )}
+        >
+          {active && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
+        </span>
+        {dotClass && <span className={cn("w-2 h-2 rounded-full shrink-0", dotClass)} />}
+        <span className={cn(!active && textClass)}>{label}</span>
+      </span>
+      {count != null && count > 0 && (
+        <span className="text-[10px] opacity-60 tabular-nums">
+          {count.toLocaleString()}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function TypeCheckbox({
+  entry,
+  active,
+  count,
+  onClick,
+}: {
+  entry: TaxonomyEntry;
+  active: boolean;
+  count?: number;
+  onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
+      role="checkbox"
+      aria-checked={active}
+      title={entry.officialLabel}
       className={cn(
-        "px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all",
+        "w-full flex items-center justify-between px-2 py-1 rounded-lg text-xs transition-all",
         active
-          ? "bg-primary text-primary-foreground border-primary"
-          : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
-        className
+          ? "bg-primary/10 text-primary font-medium"
+          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
       )}
     >
-      {children}
+      <span className="flex items-center gap-2 min-w-0">
+        <span
+          className={cn(
+            "w-3 h-3 rounded-sm border flex items-center justify-center shrink-0 transition-all",
+            active ? "bg-primary border-primary" : "border-muted-foreground/40"
+          )}
+        >
+          {active && <span className="block w-1 h-1 bg-primary-foreground rounded-[1px]" />}
+        </span>
+        <span className="truncate">{entry.displayLabel}</span>
+        <span className="text-[10px] opacity-60 shrink-0">({entry.acronym})</span>
+      </span>
+      {count != null && count > 0 && (
+        <span className="text-[10px] opacity-60 shrink-0 ml-1 tabular-nums">
+          {count.toLocaleString()}
+        </span>
+      )}
     </button>
   );
 }
@@ -535,36 +679,42 @@ export function QuickFilterBar({
       onChange({ ...filters, quickFilter: "", facilityGroup: "", facilityType: "" });
       return;
     }
-    const qf = QUICK_FILTERS.find((q) => q.id === id)!;
+    const chip = QUICK_FILTER_CHIPS.find((q) => q.id === id);
+    if (!chip) return;
+    const entry = getByCode(chip.code);
+    if (!entry) {
+      // Taxonomy out of sync — fall back to id-only update
+      onChange({ ...filters, quickFilter: id });
+      return;
+    }
     onChange({
       ...filters,
       quickFilter: id,
-      facilityGroup: qf.group,
-      facilityType: qf.type, // "" for Daycare (group-only), specific string otherwise
+      facilityGroup: entry.domain,
+      facilityType: entry.officialLabel,
     });
   };
 
   return (
     <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
-      {QUICK_FILTERS.map((qf) => {
-        const isActive = filters.quickFilter === qf.id;
-        // type="" means Daycare → use group count; otherwise use per-type count
-        const count = qf.type
-          ? meta?.countByType?.[qf.type]
-          : meta?.countByGroup?.[qf.group];
+      {QUICK_FILTER_CHIPS.map((chip) => {
+        const isActive = filters.quickFilter === chip.id;
+        const entry = getByCode(chip.code);
+        const count = entry ? meta?.countByType?.[entry.officialLabel] : undefined;
 
         return (
           <button
-            key={qf.id}
-            onClick={() => handleQuickFilter(qf.id)}
+            key={chip.id}
+            onClick={() => handleQuickFilter(chip.id)}
+            aria-pressed={isActive}
             className={cn(
               "flex-shrink-0 flex flex-col items-center px-3 py-1.5 rounded-full border text-xs font-semibold transition-all",
-              isActive ? qf.colorActive : qf.colorBorder + " bg-background"
+              isActive ? chip.colorActive : chip.colorBorder + " bg-background"
             )}
           >
-            <span>{qf.label}</span>
+            <span>{chip.label}</span>
             <span className={cn("text-[10px] font-normal", isActive ? "opacity-80" : "opacity-60")}>
-              {qf.description}
+              {chip.description}
               {count ? ` · ${count.toLocaleString()}` : ""}
             </span>
           </button>
@@ -577,28 +727,12 @@ export function QuickFilterBar({
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Infer the facility group from a type name string.
- * Checks specific groups first; Adult & Senior Care is the catch-all last.
- * Mirrors server-side typeToGroup() in facilitiesService.ts.
+ * Resolve a stored `facility_type` string to a taxonomy entry. The DB now
+ * stores the canonical official label, so `normalizeRawType` (which checks
+ * both raw CCL strings and official labels) is the right helper.
  *
- * Previous implementation used find()+typeMatchesGroup() which had a bug:
- * if "Adult & Senior Care" appeared before "Child Care" in the groups array,
- * its `return true` catch-all would claim every type before Child Care could match.
+ * Exposed so other components can keep label/acronym rendering consistent.
  */
-function inferGroup(type: string): string {
-  const t = type.toLowerCase();
-  if (t.includes("child care") || t.includes("family child"))
-    return "Child Care";
-  if (
-    t.includes("group home") ||
-    t.includes("short-term") ||
-    t.includes("community treatment") ||
-    t.includes("foster family") ||
-    t.includes("strtp") ||
-    t.includes("enhanced behavioral")
-  )
-    return "Children's Residential";
-  if (t.includes("home care"))
-    return "Home Care";
-  return "Adult & Senior Care"; // catch-all last
+export function lookupFacilityType(facilityType: string | null | undefined) {
+  return normalizeRawType(facilityType);
 }

@@ -444,11 +444,13 @@ export const TAXONOMY: TaxonomyEntry[] = [
 // ── Lookup tables (built once at module load) ────────────────────────────────
 
 const RAW_NAME_INDEX = new Map<string, TaxonomyEntry>();
+const OFFICIAL_LABEL_INDEX = new Map<string, TaxonomyEntry>();
 const GEO_CODE_INDEX = new Map<string, TaxonomyEntry>();
 const CODE_INDEX = new Map<string, TaxonomyEntry>();
 
 for (const entry of TAXONOMY) {
   CODE_INDEX.set(entry.code, entry);
+  OFFICIAL_LABEL_INDEX.set(entry.officialLabel.toUpperCase(), entry);
   for (const raw of entry.ccldRawNames) {
     RAW_NAME_INDEX.set(raw.toUpperCase(), entry);
   }
@@ -460,16 +462,18 @@ for (const entry of TAXONOMY) {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Normalize a raw `facility_type` string from a CHHS CCL feed to a
- * canonical taxonomy entry. Returns null if the raw string is not recognized.
+ * Normalize a `facility_type` string to a canonical taxonomy entry. Returns
+ * null if the string is not recognized.
  *
- * Matching is case-insensitive on the trimmed raw string against
- * `ccldRawNames` registered in the taxonomy.
+ * Matching is case-insensitive on the trimmed input against `ccldRawNames`
+ * and `officialLabel` registered in the taxonomy. This makes the helper safe
+ * to use against rows where the DB now stores the canonical official label
+ * (e.g. "Adult Residential Facility") rather than the legacy raw feed string.
  */
 export function normalizeRawType(raw: string | null | undefined): TaxonomyEntry | null {
   if (!raw) return null;
   const key = raw.trim().toUpperCase();
-  return RAW_NAME_INDEX.get(key) ?? null;
+  return RAW_NAME_INDEX.get(key) ?? OFFICIAL_LABEL_INDEX.get(key) ?? null;
 }
 
 /**

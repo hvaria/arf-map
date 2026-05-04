@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import type { Facility, JobPosting } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { normalizeRawType } from "@shared/taxonomy";
 import { ExpressInterestButton } from "@/components/ExpressInterestButton"; // NEW: expression-of-interest
 
 function haversineDistanceMiles(
@@ -216,11 +217,21 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
             <span className="w-1.5 h-1.5 rounded-full mr-1 inline-block" style={{ backgroundColor: statusConfig.color }} />
             {facility.status}
           </Badge>
-          {facility.facilityType && facility.facilityType !== "Adult Residential Facility" && (
-            <Badge variant="outline" className="text-xs px-2 py-0.5 text-muted-foreground">
-              {facility.facilityType}
-            </Badge>
-          )}
+          {facility.facilityType && (() => {
+            // Resolve to taxonomy entry for a friendlier display label; fall
+            // back to the raw stored type when no match (legacy rows).
+            const entry = normalizeRawType(facility.facilityType);
+            const label = entry?.displayLabel ?? facility.facilityType;
+            return (
+              <Badge
+                variant="outline"
+                className="text-xs px-2 py-0.5 text-muted-foreground"
+                title={entry?.officialLabel ?? facility.facilityType}
+              >
+                {label}
+              </Badge>
+            );
+          })()}
           {facility.capacity > 0 && (
             <Badge variant="secondary" className="text-xs px-2 py-0.5">
               {facility.capacity} beds

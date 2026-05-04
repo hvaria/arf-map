@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import type { FacilitiesMeta } from "@shared/schema";
+import { normalizeRawType } from "@shared/taxonomy";
 
 const GROUP_COLORS: Record<string, string> = {
   "Adult & Senior Care": "#0ea5e9",
@@ -333,20 +334,15 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
+/**
+ * Resolve a stored `facility_type` to a short label suitable for chart axes.
+ * Prefers the canonical taxonomy acronym; falls back to truncation when the
+ * type isn't recognized (e.g., legacy rows still pending re-seed).
+ */
 function shortenType(type: string): string {
-  const map: Record<string, string> = {
-    "Residential Care Facility for the Elderly": "RCFE",
-    "Adult Residential Facility": "ARF",
-    "Adult Residential Facility for Persons with Special Health Care Needs": "ARF-PSHCN",
-    "Short-Term Residential Therapeutic Program": "STRTP",
-    "Congregate Living Health Facility": "CLHF",
-    "Residential Care Facility for the Chronically Ill": "RCFCI",
-    "Family Child Care Home - Large": "FCCH (Large)",
-    "Family Child Care Home - Small": "FCCH (Small)",
-    "Enhanced Behavioral Supports Home": "EBSH",
-    "Community Treatment Facility": "CTF",
-  };
-  return map[type] ?? (type.length > 25 ? `${type.slice(0, 23)}…` : type);
+  const entry = normalizeRawType(type);
+  if (entry) return entry.acronym;
+  return type.length > 25 ? `${type.slice(0, 23)}…` : type;
 }
 
 function BarChart2Icon({ className }: { className?: string }) {
