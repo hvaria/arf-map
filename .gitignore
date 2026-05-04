@@ -8,5 +8,8 @@ vite.config.ts.*
 *.db
 *.db-shm
 *.db-wal
-"claude.exe" 
+"claude.exe"
 .claude/worktrees/
+
+# Local debug artifacts from ETL scripts (raw API dumps, sample probes)
+data/_*
