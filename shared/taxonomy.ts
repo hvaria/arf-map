@@ -496,11 +496,11 @@ export const DOMAINS: FacilityDomain[] = [
 
 /** All distinct search groups under a given domain, in canonical order. */
 export function groupsForDomain(domain: FacilityDomain): SearchGroup[] {
-  const seen = new Set<SearchGroup>();
+  const seen: SearchGroup[] = [];
   for (const e of TAXONOMY) {
-    if (e.domain === domain) seen.add(e.group);
+    if (e.domain === domain && seen.indexOf(e.group) === -1) seen.push(e.group);
   }
-  return [...seen];
+  return seen;
 }
 
 /** All taxonomy entries within a given search group. */

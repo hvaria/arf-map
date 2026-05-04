@@ -5,9 +5,20 @@
  * the ETL scripts. No side-effects, no imports from server/ or scripts/.
  *
  * This file is the single source of truth for:
- *  - FacilityDbRow interface (the SQLite table shape)
- *  - CCLD lookup tables (GEO_STATUS, TYPE_TO_NAME)
- *  - Pure utility functions (typeToGroup, formatPhone)
+ *  - FacilityDbRow interface (the SQLite/Postgres table shape)
+ *  - GEO_STATUS lookup (CCLD GeoJSON STATUS code → label)
+ *  - typeToGroup() legacy substring-based domain heuristic
+ *  - formatPhone() utility
+ *
+ * NOTE: The canonical facility taxonomy (domain/group/type → official label,
+ * acronym, raw-name normalization, GEO TYPE codes) lives in
+ * `shared/taxonomy.ts`. New code should call `normalizeRawType()` /
+ * `resolveGeoTypeCode()` from there instead of `typeToGroup()`. The previous
+ * `TYPE_TO_NAME` lookup (broken codes — see commit 4c70f4e) has been removed.
+ *
+ * `typeToGroup()` is retained only because legacy live-fetch code paths in
+ * `server/services/facilitiesService.ts` still call it. New audits and ETL
+ * code must validate against the canonical taxonomy.
  *
  * Keeping these here breaks the import cycle that would otherwise require
  * ETL scripts to import from server/storage.ts or server/services/.
@@ -54,29 +65,15 @@ export const GEO_STATUS: Record<string, string> = {
   "6": "REVOKED",
 };
 
-/** CCLD GeoJSON TYPE numeric code → human-readable facility type name */
-export const TYPE_TO_NAME: Record<string, string> = {
-  "140": "Foster Family Agency",
-  "180": "Group Home",
-  "192": "Enhanced Behavioral Supports Home",
-  "193": "Community Treatment Facility",
-  "194": "Short-Term Residential Therapeutic Program",
-  "250": "Family Child Care Home - Small",
-  "255": "Family Child Care Home - Large",
-  "310": "Child Care Center",
-  "385": "Residential Care Facility for the Elderly",
-  "400": "Adult Day Program",
-  "410": "Social Rehabilitation Facility",
-  "425": "Congregate Living Health Facility",
-  "500": "Residential Care Facility for the Chronically Ill",
-  "735": "Adult Residential Facility",
-  "740": "Adult Residential Facility for Persons with Special Health Care Needs",
-  "800": "Home Care Organization",
-};
-
 // ── Pure utility functions ────────────────────────────────────────────────────
 
-/** Map a facility type name to its top-level facility group. */
+/**
+ * Legacy substring-based domain heuristic. Retained for live-fetch fallback
+ * in `server/services/facilitiesService.ts`. New code should use
+ * `normalizeRawType().domain` from `shared/taxonomy.ts` instead.
+ *
+ * @deprecated Use `normalizeRawType()` from `shared/taxonomy.ts`.
+ */
 export function typeToGroup(facilityType: string): string {
   const t = facilityType.toLowerCase();
   if (

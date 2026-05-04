@@ -11,7 +11,22 @@ import "dotenv/config";
 import * as fs from "fs";
 import * as path from "path";
 import { Pool } from "pg";
-import { TYPE_TO_NAME, typeToGroup } from "../shared/etl-types";
+import { TAXONOMY, normalizeRawType, type TaxonomyEntry } from "../shared/taxonomy";
+
+/**
+ * Resolve a stored `facility_type` string to a taxonomy entry. ETL writes
+ * facilities with the taxonomy's `officialLabel` (not the raw CCL feed string),
+ * so the audit must match against `officialLabel` as well as `ccldRawNames`.
+ */
+function resolveStoredFacilityType(stored: string): TaxonomyEntry | null {
+  if (!stored) return null;
+  // First try the raw-name index (matches CCL feed strings).
+  const viaRaw = normalizeRawType(stored);
+  if (viaRaw) return viaRaw;
+  // Then try matching against officialLabel (what the ETL writes back).
+  const target = stored.trim().toLowerCase();
+  return TAXONOMY.find((e) => e.officialLabel.toLowerCase() === target) ?? null;
+}
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL not set — check .env");
@@ -148,53 +163,38 @@ async function main() {
     ? `_(none — every type maps to one group)_\n`
     : mdTable(inconsistent as unknown as Row[], ["facility_type", "groups"]));
 
-  // Recompute typeToGroup() and compare to stored facility_group
-  out.push(`\n### 4a. Stored group vs. recomputed typeToGroup()\n`);
-  const recomputeRows = typeRows.map((r) => {
-    const t = String(r.facility_type ?? "");
-    return { facility_type: t, recomputed_group: typeToGroup(t), n: Number(r.n) };
-  });
-  // Find types whose recomputed group differs from any stored group
-  const drift: Row[] = [];
-  for (const r of recomputeRows) {
-    const stored = splitTypes.get(r.facility_type)?.map((s) => String(s.facility_group)) ?? [];
-    const mismatch = stored.find((g) => g !== r.recomputed_group);
-    if (mismatch) {
-      drift.push({
-        facility_type: r.facility_type,
-        stored_group: stored.join(" | "),
-        recomputed_group: r.recomputed_group,
-        n: r.n,
-      });
+  // ── Section 4a: stored facility_type values that don't resolve to any taxonomy entry
+  out.push(`\n### 4a. facility_type values not recognized by the canonical taxonomy\n`);
+  out.push(`Stored \`facility_type\` strings that cannot be resolved against \`shared/taxonomy.ts\` (matched against either \`ccldRawNames\` or \`officialLabel\`). These are real coverage gaps — the taxonomy is missing an entry, or the row was written with a non-canonical label.\n`);
+  const unrecognized = typeRows
+    .map((r) => ({ facility_type: String(r.facility_type ?? ""), n: Number(r.n) }))
+    .filter((r) => r.facility_type && resolveStoredFacilityType(r.facility_type) === null);
+  out.push(unrecognized.length === 0
+    ? `_(none — every stored facility_type resolves to a taxonomy entry)_\n`
+    : mdTable(unrecognized as unknown as Row[], ["facility_type", "n"]));
+
+  // ── Section 4b: stored facility_group disagrees with taxonomy.domain
+  out.push(`\n### 4b. Stored facility_group disagrees with taxonomy domain\n`);
+  out.push(`Rows whose stored \`facility_group\` does not match the \`domain\` of the taxonomy entry resolved from \`facility_type\`. This is real drift — the row was written with a stale group label.\n`);
+  const groupDrift: Row[] = [];
+  for (const [t, rows] of splitTypes) {
+    const tax = resolveStoredFacilityType(t);
+    if (!tax) continue; // covered by section 4a
+    for (const r of rows) {
+      const storedGroup = String(r.facility_group ?? "");
+      if (storedGroup !== tax.domain) {
+        groupDrift.push({
+          facility_type: t,
+          stored_group: storedGroup,
+          taxonomy_domain: tax.domain,
+          n: Number(r.n),
+        });
+      }
     }
   }
-  out.push(drift.length === 0
-    ? `_(none — stored groups match the typeToGroup() function)_\n`
-    : mdTable(drift, ["facility_type", "stored_group", "recomputed_group", "n"]));
-
-  // Types that fell through to default "Adult & Senior Care" (no explicit match)
-  const fallthroughTypes = recomputeRows.filter((r) => {
-    const lower = r.facility_type.toLowerCase();
-    const explicit =
-      lower.includes("child care center") ||
-      lower.includes("family child care") ||
-      lower.includes("group home") ||
-      lower.includes("short-term residential") ||
-      lower.includes("strtp") ||
-      lower.includes("community treatment") ||
-      lower.includes("foster family") ||
-      lower.includes("home care organization") ||
-      lower.includes("adult residential") ||
-      lower.includes("residential care facility for the elderly") ||
-      lower.includes("social rehabilitation") ||
-      lower.includes("adult day");
-    return !explicit;
-  });
-  out.push(`\n### 4b. Types that fell through typeToGroup() default\n`);
-  out.push(`These types matched no explicit branch and were classified as "${typeToGroup("__no_match__")}".\n`);
-  out.push(fallthroughTypes.length === 0
-    ? `_(none)_\n`
-    : mdTable(fallthroughTypes as unknown as Row[], ["facility_type", "recomputed_group", "n"]));
+  out.push(groupDrift.length === 0
+    ? `_(none — every stored group matches the taxonomy domain)_\n`
+    : mdTable(groupDrift, ["facility_type", "stored_group", "taxonomy_domain", "n"]));
 
   // ── Section 5: status distribution ────────────────────────────────────
   const statusRows = await q(`
@@ -333,29 +333,28 @@ async function main() {
     ["field", "populated", "pct"],
   ));
 
-  // ── Section 11: TYPE_TO_NAME coverage ─────────────────────────────────
-  out.push(`\n## 11. TYPE_TO_NAME coverage\n`);
-  const knownNames = new Set(Object.values(TYPE_TO_NAME).map((s) => s.toLowerCase()));
-  const unmapped = typeRows
+  // ── Section 11: taxonomy coverage ─────────────────────────────────────
+  out.push(`\n## 11. Taxonomy coverage\n`);
+  const missingFromTaxonomy = typeRows
     .map((r) => ({ facility_type: String(r.facility_type ?? ""), n: Number(r.n) }))
-    .filter((r) => r.facility_type && !knownNames.has(r.facility_type.toLowerCase()));
-  out.push(`Types in DB that are NOT in the \`TYPE_TO_NAME\` lookup (${Object.keys(TYPE_TO_NAME).length} known codes):\n`);
-  out.push(unmapped.length === 0
-    ? `_(none — every DB type is in the known lookup)_\n`
-    : mdTable(unmapped as unknown as Row[], ["facility_type", "n"]));
+    .filter((r) => r.facility_type && resolveStoredFacilityType(r.facility_type) === null);
+  out.push(`Stored \`facility_type\` values absent from \`TAXONOMY\` in \`shared/taxonomy.ts\` (${TAXONOMY.length} taxonomy entries). Matching is case-insensitive against both \`ccldRawNames\` and \`officialLabel\`.\n`);
+  out.push(missingFromTaxonomy.length === 0
+    ? `_(none — every stored facility_type matches a taxonomy entry)_\n`
+    : mdTable(missingFromTaxonomy as unknown as Row[], ["facility_type", "n"]));
 
   // ── Section 12: status filter chips ───────────────────────────────────
   out.push(`\n## 12. Recommended findings (auto-summary)\n`);
   const findings: string[] = [];
   if (variants.length > 0) findings.push(`- **${variants.length}** facility_type spelling/casing variants need normalization.`);
-  if (emptyTypeN > 0) findings.push(`- **${emptyTypeN}** rows have empty facility_type — currently masked by the default fallback.`);
+  if (emptyTypeN > 0) findings.push(`- **${emptyTypeN}** rows have empty facility_type.`);
   if (inconsistent.length > 0) findings.push(`- **${inconsistent.length}** facility types are split across multiple facility_groups (data drift).`);
-  if (drift.length > 0) findings.push(`- **${drift.length}** types where stored group disagrees with the \`typeToGroup()\` function.`);
-  if (fallthroughTypes.length > 0) findings.push(`- **${fallthroughTypes.length}** types fell through \`typeToGroup()\` default and may be misclassified as Adult & Senior Care.`);
+  if (unrecognized.length > 0) findings.push(`- **${unrecognized.length}** distinct facility_type values are not recognized by the canonical taxonomy (\`normalizeRawType()\` returns null).`);
+  if (groupDrift.length > 0) findings.push(`- **${groupDrift.length}** (facility_type, facility_group) pairs disagree with the taxonomy domain.`);
   if (countyVariants.length > 0) findings.push(`- **${countyVariants.length}** county names have casing/spelling variants.`);
   if (Number(cap.zero_cap ?? 0) > 0) findings.push(`- **${cap.zero_cap}** rows have capacity=0 (cannot distinguish "unknown" from "actually zero").`);
   if (Number(ph.non_canonical ?? 0) > 0) findings.push(`- **${ph.non_canonical}** phone numbers do not match canonical format.`);
-  if (unmapped.length > 0) findings.push(`- **${unmapped.length}** distinct facility types are absent from the \`TYPE_TO_NAME\` lookup.`);
+  if (missingFromTaxonomy.length > 0) findings.push(`- **${missingFromTaxonomy.length}** distinct facility types are absent from \`TAXONOMY.ccldRawNames\` in \`shared/taxonomy.ts\`.`);
   if (Number(en.has_inspection ?? 0) / total < 0.5) findings.push(`- last_inspection_date populated on only ${pct(Number(en.has_inspection ?? 0), total)} of rows — enrichment is incomplete.`);
   if (Number(noGeo[0]?.n ?? 0) > 0) findings.push(`- **${noGeo[0]?.n}** rows have no geocoded coordinates.`);
 

@@ -19,7 +19,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { Pool } from "pg";
 import { normalizeRawType, resolveGeoTypeCode } from "../shared/taxonomy";
-import { formatPhone, GEO_STATUS } from "../shared/etl-types";
+import { formatPhone } from "../shared/etl-types";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL not set — check .env");
