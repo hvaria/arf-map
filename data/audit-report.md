@@ -1,6 +1,6 @@
 # Facilities Data Audit
 
-_Generated: 2026-05-04T20:56:31.737Z_
+_Generated: 2026-05-04T21:07:34.250Z_
 
 ## 1. Row counts
 
@@ -189,10 +189,12 @@ _(none)_
 
 | geocode_quality | n |
 | --- | --- |
-| _empty_ | 41660 |
 | chhs_geo | 26866 |
+| _empty_ | 21717 |
+| census_batch | 19102 |
+| census_no_match | 841 |
 
-- Rows with NULL lat or lng: **41660** (60.8%)
+- Rows with NULL lat or lng: **22558** (32.9%)
 
 
 ## 9. phone formatting
@@ -261,4 +263,4 @@ Types in DB that are NOT in the `TYPE_TO_NAME` lookup (16 known codes):
 - **1** phone numbers do not match canonical format.
 - **20** distinct facility types are absent from the `TYPE_TO_NAME` lookup.
 - last_inspection_date populated on only 0.0% of rows — enrichment is incomplete.
-- **41660** rows have no geocoded coordinates.
+- **22558** rows have no geocoded coordinates.
