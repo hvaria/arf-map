@@ -44,6 +44,7 @@ const MAIN_PG_SCHEMA_SQL = `
     facility_number      TEXT NOT NULL UNIQUE,
     username             TEXT NOT NULL UNIQUE,
     password             TEXT NOT NULL,
+    role                 TEXT NOT NULL DEFAULT 'facility_admin',
     email                TEXT,
     email_verified       INTEGER NOT NULL DEFAULT 0,
     verification_token   TEXT,
@@ -51,6 +52,9 @@ const MAIN_PG_SCHEMA_SQL = `
     created_at           BIGINT NOT NULL,
     failed_login_count   INTEGER NOT NULL DEFAULT 0
   );
+  -- Idempotent backfill for deployments where the table predates this column.
+  ALTER TABLE facility_accounts
+    ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'facility_admin';
 
   CREATE TABLE IF NOT EXISTS facility_overrides (
     id              SERIAL PRIMARY KEY,

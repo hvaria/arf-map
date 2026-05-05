@@ -22,6 +22,7 @@ import AdmissionsPage from "./pages/portal/AdmissionsPage";
 import BillingPage from "./pages/portal/BillingPage";
 import StaffPage from "./pages/portal/StaffPage";
 import CompliancePage from "./pages/portal/CompliancePage";
+import NotesPortalPage from "./pages/portal/NotesPortalPage";
 
 function AppRouter() {
   return (
@@ -46,6 +47,7 @@ function AppRouter() {
         <Route path="/portal/billing" component={BillingPage} />
         <Route path="/portal/staff" component={StaffPage} />
         <Route path="/portal/compliance" component={CompliancePage} />
+        <Route path="/portal/notes" component={NotesPortalPage} />
         <Route component={NotFound} />
       </Switch>
     </Router>

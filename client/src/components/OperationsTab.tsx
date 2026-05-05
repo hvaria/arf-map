@@ -22,7 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   Users, Pill, ClipboardList, AlertTriangle,
-  UserPlus, Receipt, ShieldCheck, LayoutDashboard,
+  UserPlus, Receipt, ShieldCheck,
   MessageSquare, ChevronRight, AlertCircle,
 } from "lucide-react";
 import { ResidentsContent } from "@/pages/portal/ResidentsPage";
@@ -193,18 +193,6 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div
-        className="flex items-center gap-2 px-4 py-3 rounded-xl"
-        style={{ background: 'linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%)', border: '1px solid #E0E7FF' }}
-      >
-        <LayoutDashboard className="h-5 w-5" style={{ color: '#818CF8' }} />
-        <div>
-          <h2 className="text-base font-semibold leading-tight" style={{ color: '#1E1B4B' }}>Operations Overview</h2>
-          <p className="text-xs" style={{ color: '#6B7280' }}>Facility #{facilityNumber}</p>
-        </div>
-      </div>
-
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
           Failed to load dashboard data. Please try again.

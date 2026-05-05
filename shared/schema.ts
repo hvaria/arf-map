@@ -48,6 +48,10 @@ export const facilityAccounts = pgTable("facility_accounts", {
   facilityNumber: text("facility_number").notNull().unique(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  // Aligns with NoteRole in server/ops/notePolicy.ts. Default keeps existing
+  // accounts working with full admin permissions; new accounts can be created
+  // with a narrower role once a UI for that lands.
+  role: text("role").notNull().default("facility_admin"),
   email: text("email"),
   emailVerified: integer("email_verified").notNull().default(0),
   verificationToken: text("verification_token"),
@@ -328,3 +332,41 @@ export {
   type AcknowledgeNoteInput,
   type ListNotesQuery,
 } from "../server/ops/notesSchema";
+
+// ============ TRACKERS MODULE TABLES (re-exported from server/trackers/trackerSchema) ============
+// Drizzle table definitions, inferred row types, and Zod enums for the
+// Operations > Trackers foundation slice. SQL bootstrap lives in
+// server/trackers/trackerSchema.ts (TRACKERS_PG_SCHEMA_SQL) and is executed
+// from server/trackers/trackerStorage.ts at startup.
+//
+// NB: row types are suffixed `Row` to avoid colliding with the
+// `TrackerDefinition` *config object* type that lives in
+// shared/tracker-schemas/tracker-types.ts (Phase B).
+
+export {
+  // Table objects
+  trackerDefinitions,
+  trackerEntries,
+  trackerEntryVersions,
+  trackerAuditLog,
+  // Select types (DB rows)
+  type TrackerDefinitionRow,
+  type TrackerEntryRow,
+  type TrackerEntryVersionRow,
+  type TrackerAuditLogRow,
+  // Insert types
+  type NewTrackerDefinitionRow,
+  type NewTrackerEntryRow,
+  type NewTrackerEntryVersionRow,
+  type NewTrackerAuditLogRow,
+  // Zod enums
+  trackerEntryStatusSchema,
+  trackerShiftSchema,
+  trackerAuditActionSchema,
+  trackerAuditEntityTypeSchema,
+  // Inferred enum types
+  type TrackerEntryStatus,
+  type TrackerShift,
+  type TrackerAuditAction,
+  type TrackerAuditEntityType,
+} from "../server/trackers/trackerSchema";

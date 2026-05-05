@@ -54,17 +54,33 @@ export const notesRouter = Router();
 // Context helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+const VALID_NOTE_ROLES: ReadonlySet<NoteRole> = new Set<NoteRole>([
+  "super_admin",
+  "facility_admin",
+  "supervisor",
+  "med_tech",
+  "caregiver",
+  "wellness_staff",
+  "provider",
+  "compliance_reviewer",
+]);
+
+function toNoteRole(raw: string | null | undefined): NoteRole {
+  // Anything unknown falls back to facility_admin so a stale DB value or a
+  // mid-deploy state doesn't lock the user out of the portal.
+  return raw && VALID_NOTE_ROLES.has(raw as NoteRole)
+    ? (raw as NoteRole)
+    : "facility_admin";
+}
+
 function getViewer(req: Request): NoteViewerContext {
   const user = req.user as FacilityAccount;
-  // Today's only logged-in actor type is FacilityAccount → facility_admin.
-  // When per-staff auth ships, swap this for a staff lookup that fills in
-  // staffId, role, and assignedResidentIds.
   return {
     facilityAccountId: user.id,
     facilityNumber: user.facilityNumber,
     staffId: null,
     displayName: user.username,
-    role: "facility_admin" as NoteRole,
+    role: toNoteRole(user.role),
     assignedResidentIds: [],
   };
 }

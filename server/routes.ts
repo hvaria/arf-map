@@ -616,6 +616,7 @@ export async function registerRoutes(server: Server, app: Express) {
       id: req.user.id,
       facilityNumber: req.user.facilityNumber,
       username: req.user.username,
+      role: req.user.role ?? "facility_admin",
     });
   });
 

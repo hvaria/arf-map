@@ -1013,3 +1013,187 @@ export async function getFacilityDashboard(facilityNumber: string): Promise<{
     overdueCompliance: r7.rows[0]?.c ?? 0,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Demo seed
+//
+// Populates a facility with a small, realistic set of residents +
+// medications + med-pass entries for today, with a deterministic mix of
+// statuses (given / late / missed / refused / held / pending) so the
+// calendar's color states are all visible.
+//
+// Idempotent at the resident layer: skips entirely if the facility already
+// has any resident on file, so it can never overwrite real data.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface DemoResidentSpec {
+  firstName: string;
+  lastName: string;
+  roomNumber: string;
+  meds: Array<{
+    drugName: string;
+    dosage: string;
+    route: string;
+    frequency: string;
+    scheduledTimes: string; // comma-separated HH:MM (24h)
+    prescriberName?: string;
+  }>;
+}
+
+const DEMO_RESIDENTS: DemoResidentSpec[] = [
+  {
+    firstName: "Margaret", lastName: "Chen", roomNumber: "101",
+    meds: [
+      { drugName: "Lisinopril",   dosage: "10 mg",   route: "PO", frequency: "Daily",  scheduledTimes: "08:00",          prescriberName: "Dr. Patel" },
+      { drugName: "Atorvastatin", dosage: "20 mg",   route: "PO", frequency: "Daily",  scheduledTimes: "20:00",          prescriberName: "Dr. Patel" },
+    ],
+  },
+  {
+    firstName: "Robert",   lastName: "Hayes", roomNumber: "102",
+    meds: [
+      { drugName: "Metformin",    dosage: "500 mg",  route: "PO", frequency: "BID",    scheduledTimes: "08:00,18:00",    prescriberName: "Dr. Singh" },
+      { drugName: "Aspirin",      dosage: "81 mg",   route: "PO", frequency: "Daily",  scheduledTimes: "08:00",          prescriberName: "Dr. Singh" },
+    ],
+  },
+  {
+    firstName: "Eleanor",  lastName: "Diaz",  roomNumber: "103",
+    meds: [
+      { drugName: "Sertraline",   dosage: "50 mg",   route: "PO", frequency: "Daily",  scheduledTimes: "09:00",          prescriberName: "Dr. Lee" },
+      { drugName: "Vitamin D3",   dosage: "1000 IU", route: "PO", frequency: "Daily",  scheduledTimes: "08:00",          prescriberName: "Dr. Lee" },
+      { drugName: "Tramadol",     dosage: "50 mg",   route: "PO", frequency: "TID",    scheduledTimes: "08:00,14:00,20:00", prescriberName: "Dr. Lee" },
+    ],
+  },
+  {
+    firstName: "James",    lastName: "Walker", roomNumber: "104",
+    meds: [
+      { drugName: "Donepezil",    dosage: "10 mg",   route: "PO", frequency: "Daily",  scheduledTimes: "21:00",          prescriberName: "Dr. Patel" },
+      { drugName: "Furosemide",   dosage: "40 mg",   route: "PO", frequency: "Daily",  scheduledTimes: "09:00",          prescriberName: "Dr. Patel" },
+    ],
+  },
+  {
+    firstName: "Helen",    lastName: "Brooks", roomNumber: "105",
+    meds: [
+      { drugName: "Levothyroxine", dosage: "50 mcg", route: "PO", frequency: "Daily",  scheduledTimes: "07:00",          prescriberName: "Dr. Singh" },
+      { drugName: "Omeprazole",    dosage: "20 mg",  route: "PO", frequency: "Daily",  scheduledTimes: "07:30",          prescriberName: "Dr. Singh" },
+    ],
+  },
+];
+
+// Status assignment for already-passed scheduled times. The order is
+// deterministic so reseeding a fresh facility produces the same color mix.
+// Picked to ensure all six status colors appear on a typical day.
+const PAST_STATUSES: Array<"given" | "late" | "missed" | "refused" | "held" | "pending"> = [
+  "given", "given", "given", "given",
+  "late",
+  "given", "given", "given",
+  "missed",
+  "given", "given",
+  "refused",
+  "given",
+  "held",
+  "given", "given", "pending",
+];
+
+export interface DemoSeedResult {
+  skipped: boolean;
+  reason?: string;
+  residentsCreated: number;
+  medicationsCreated: number;
+  medPassesGenerated: number;
+  medPassesUpdated: number;
+}
+
+export async function seedFacilityDemoData(facilityNumber: string): Promise<DemoSeedResult> {
+  // Skip if any resident already exists for this facility — never clobber
+  // real data.
+  const existing = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c FROM ops_residents WHERE facility_number = $1`,
+    [facilityNumber],
+  );
+  if ((Number(existing.rows[0]?.c ?? 0)) > 0) {
+    return {
+      skipped: true,
+      reason: "Facility already has resident data",
+      residentsCreated: 0,
+      medicationsCreated: 0,
+      medPassesGenerated: 0,
+      medPassesUpdated: 0,
+    };
+  }
+
+  const now = Date.now();
+  let residentsCreated = 0;
+  let medicationsCreated = 0;
+
+  for (const r of DEMO_RESIDENTS) {
+    const ins = await pool.query<{ id: number }>(
+      `INSERT INTO ops_residents (facility_number, first_name, last_name, room_number, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'active', $5, $5)
+       RETURNING id`,
+      [facilityNumber, r.firstName, r.lastName, r.roomNumber, now],
+    );
+    const residentId = ins.rows[0].id;
+    residentsCreated += 1;
+
+    for (const m of r.meds) {
+      await pool.query(
+        `INSERT INTO ops_medications (
+           resident_id, facility_number, drug_name, dosage, route, frequency,
+           scheduled_times, prescriber_name, status, created_at, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $9)`,
+        [
+          residentId, facilityNumber, m.drugName, m.dosage, m.route, m.frequency,
+          m.scheduledTimes, m.prescriberName ?? null, now,
+        ],
+      );
+      medicationsCreated += 1;
+    }
+  }
+
+  // Generate today's pending med-pass rows from the seeded medications.
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  await generateDailyMedPassEntries(facilityNumber, dayStart.getTime());
+
+  // Pull what we just generated, sort by scheduled time, then mark
+  // already-past entries with a deterministic status mix.
+  const generated = await pool.query<{ id: number; scheduled_datetime: number }>(
+    `SELECT id, scheduled_datetime
+     FROM ops_med_passes
+     WHERE facility_number = $1
+       AND scheduled_datetime >= $2
+       AND scheduled_datetime <  $3
+     ORDER BY scheduled_datetime ASC, id ASC`,
+    [facilityNumber, dayStart.getTime(), dayStart.getTime() + 86400000],
+  );
+
+  let updated = 0;
+  let pastIdx = 0;
+  for (const row of generated.rows) {
+    if (row.scheduled_datetime > now) continue; // future row → leave as pending
+    const status = PAST_STATUSES[pastIdx % PAST_STATUSES.length];
+    pastIdx += 1;
+    if (status === "pending") continue; // already pending by default
+
+    const administered = status === "given" ? row.scheduled_datetime + 5 * 60_000 : null;
+    await pool.query(
+      `UPDATE ops_med_passes
+       SET status = $1, administered_datetime = $2, administered_by = $3
+       WHERE id = $4`,
+      [
+        status,
+        administered,
+        status === "given" || status === "late" ? "Demo Caregiver" : null,
+        row.id,
+      ],
+    );
+    updated += 1;
+  }
+
+  return {
+    skipped: false,
+    residentsCreated,
+    medicationsCreated,
+    medPassesGenerated: generated.rows.length,
+    medPassesUpdated: updated,
+  };
+}

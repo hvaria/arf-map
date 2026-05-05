@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { NotesNotificationButton } from "@/components/portal/NotesNotificationButton";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -14,6 +15,7 @@ import {
   Receipt,
   CalendarDays,
   ShieldCheck,
+  MessageSquare,
   Menu,
   ArrowLeft,
   Building2,
@@ -30,6 +32,7 @@ const NAV_LINKS = [
   { href: "/portal/residents", label: "Residents", icon: Users },
   { href: "/portal/emar", label: "eMAR", icon: Pill },
   { href: "/portal/incidents", label: "Incidents", icon: AlertTriangle },
+  { href: "/portal/notes", label: "Notes", icon: MessageSquare },
   { href: "/portal/crm", label: "CRM", icon: UserPlus },
   { href: "/portal/billing", label: "Billing", icon: Receipt },
   { href: "/portal/staff", label: "Staff", icon: CalendarDays },
@@ -147,10 +150,11 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
             ))}
           </nav>
 
-          {/* Back to map — desktop */}
-          <div className="hidden md:block ml-auto">
+          {/* Right cluster: notes notification + back to map */}
+          <div className="ml-auto flex items-center gap-1.5">
+            <NotesNotificationButton facilityNumber={me?.facilityNumber ?? ""} />
             <Link href="/">
-              <a className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <a className="hidden md:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
                 <ArrowLeft className="h-4 w-4" />
                 Back to Map
               </a>

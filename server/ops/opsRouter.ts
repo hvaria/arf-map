@@ -2011,3 +2011,22 @@ opsRouter.get("/facilities/:facilityNumber/dashboard", async (req, res) => {
     res.status(500).json({ success: false, error: "Internal error" });
   }
 });
+
+// POST /facilities/:facilityNumber/seed-demo
+// Populates a fresh facility with a small, realistic set of residents +
+// medications + today's med-pass entries (with a deterministic mix of
+// statuses) so the calendar's color states are all visible. No-op if the
+// facility already has any resident on file.
+opsRouter.post("/facilities/:facilityNumber/seed-demo", async (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    if (getFacilityNumber(req) !== facilityNumber) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    const result = await ops.seedFacilityDemoData(facilityNumber);
+    return res.json({ success: true, data: result });
+  } catch (e) {
+    console.error("[ops] seed-demo failed", e);
+    return res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
