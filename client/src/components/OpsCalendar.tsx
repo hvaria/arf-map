@@ -4,7 +4,7 @@
  * aggregated per day. Clicking any event chip navigates to that sub-view.
  */
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -31,12 +31,21 @@ type SubView = "emar" | "residents" | "incidents" | "crm" | "billing" | "complia
 
 interface OpsCalendarProps {
   facilityNumber: string;
-  onNavigate: (subView: SubView) => void;
+  /** date is the ISO day clicked, when navigation comes from a day cell or chip. */
+  onNavigate: (subView: SubView, date?: string) => void;
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
+// Local-date ISO (YYYY-MM-DD). Using toISOString() returns UTC, which means
+// users west of UTC see "tomorrow" highlighted after late afternoon — the
+// Today button + cell highlight then disagree with what the wall clock says.
+function isoDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 function today() { return isoDate(new Date()); }
 
 function addDays(iso: string, n: number) {
@@ -143,7 +152,7 @@ function EventChips({
   event, onNavigate, compact = false,
 }: {
   event: DayOpsEvent;
-  onNavigate: (sv: SubView) => void;
+  onNavigate: (sv: SubView, date?: string) => void;
   compact?: boolean;
 }) {
   const active = CHIPS.filter((c) => c.count(event) > 0);
@@ -160,7 +169,7 @@ function EventChips({
         return (
           <button
             key={c.key}
-            onClick={(e) => { e.stopPropagation(); onNavigate(c.key); }}
+            onClick={(e) => { e.stopPropagation(); onNavigate(c.key, event.date); }}
             className={cn(
               "flex items-center gap-1 w-full rounded border text-left transition-all hover:brightness-95",
               compact ? "px-1 py-0.5" : "px-1.5 py-1",
@@ -187,13 +196,14 @@ function EventChips({
 // ── MonthGrid ─────────────────────────────────────────────────────────────────
 
 function MonthGrid({
-  monthStart, byDate, isLoading, todayIso, onNavigate,
+  monthStart, byDate, isLoading, todayIso, onNavigate, flashTick,
 }: {
   monthStart: string;
   byDate: Map<string, DayOpsEvent>;
   isLoading: boolean;
   todayIso: string;
-  onNavigate: (sv: SubView) => void;
+  onNavigate: (sv: SubView, date?: string) => void;
+  flashTick: number;
 }) {
   const days   = monthGridDays(monthStart);
   const prefix = monthStart.slice(0, 7);
@@ -225,11 +235,13 @@ function MonthGrid({
 
           return (
             <div
-              key={iso}
+              // Re-keying today's cell on every Today-click forces a remount
+              // so the indigo highlight replays even when anchor didn't change.
+              key={isToday ? `${iso}-${flashTick}` : iso}
               className={cn(
                 "min-h-[80px] rounded-xl border p-1.5 flex flex-col transition-all",
                 !inMonth && "opacity-20 bg-gray-50 border-gray-50 pointer-events-none",
-                isToday   ? "border-indigo-300 bg-indigo-50/70 shadow-sm" :
+                isToday   ? "border-indigo-300 bg-indigo-50/70 shadow-sm ring-2 ring-indigo-400 ring-offset-1" :
                 hasUrgent ? "border-amber-300 bg-amber-50/50 hover:shadow-sm" :
                 hasAny    ? "border-indigo-100 bg-white hover:border-indigo-200 hover:shadow-sm" :
                             "bg-white border-gray-100"
@@ -253,13 +265,14 @@ function MonthGrid({
 // ── WeekGrid ──────────────────────────────────────────────────────────────────
 
 function WeekGrid({
-  weekStart, byDate, isLoading, todayIso, onNavigate,
+  weekStart, byDate, isLoading, todayIso, onNavigate, flashTick,
 }: {
   weekStart: string;
   byDate: Map<string, DayOpsEvent>;
   isLoading: boolean;
   todayIso: string;
-  onNavigate: (sv: SubView) => void;
+  onNavigate: (sv: SubView, date?: string) => void;
+  flashTick: number;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
@@ -286,10 +299,10 @@ function WeekGrid({
 
         return (
           <div
-            key={iso}
+            key={isToday ? `${iso}-${flashTick}` : iso}
             className={cn(
               "rounded-xl border p-2 flex flex-col items-center transition-all min-h-[160px]",
-              isToday   ? "border-indigo-300 bg-indigo-50/70 shadow-sm" :
+              isToday   ? "border-indigo-300 bg-indigo-50/70 shadow-sm ring-2 ring-indigo-400 ring-offset-1" :
               hasUrgent ? "border-amber-300 bg-amber-50/50" :
               hasAny    ? "border-indigo-100 bg-white" :
                           "bg-white border-gray-100"
@@ -318,9 +331,11 @@ function WeekGrid({
 // ── OpsCalendar ───────────────────────────────────────────────────────────────
 
 export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarProps) {
+  const queryClient = useQueryClient();
   const todayIso = today();
   const [view, setView]     = useState<CalView>("month");
   const [anchor, setAnchor] = useState(() => startOfMonth(todayIso));
+  const [flashTick, setFlashTick] = useState(0);
 
   const range = useMemo(() => {
     if (view === "month") return { from: startOfMonth(anchor), to: endOfMonth(anchor) };
@@ -370,7 +385,27 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
   }
 
   function goToday() {
-    setAnchor(view === "month" ? startOfMonth(todayIso) : startOfWeek(todayIso));
+    // Recompute fresh in case the tab has been open across midnight.
+    const fresh = today();
+    // Always snap to month view of today — most predictable behavior.
+    setView("month");
+    setAnchor(startOfMonth(fresh));
+    // Bump a flash counter so the "today" cell visibly pulses even when
+    // anchor was already today's month (setAnchor with the same value is
+    // a React no-op, so without this the user sees no feedback).
+    setFlashTick((t) => t + 1);
+    // refetchQueries forces a foreground fetch (isLoading flips), giving
+    // visible loading state in the cells. invalidateQueries only does a
+    // background refetch which is effectively invisible.
+    void queryClient.refetchQueries({
+      predicate: (q) => {
+        const k = q.queryKey[0];
+        return (
+          typeof k === "string" &&
+          k.startsWith(`/api/ops/facilities/${facilityNumber}/calendar`)
+        );
+      },
+    });
   }
 
   return (
@@ -380,12 +415,12 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
         style={{ background: "linear-gradient(120deg,#EEF2FF,#FFF0F6)" }}>
         {/* Left: prev/next + label */}
         <div className="flex items-center gap-1.5">
-          <button onClick={() => navigate(-1)}
+          <button type="button" onClick={() => navigate(-1)}
             className="h-7 w-7 rounded-lg bg-white/70 border border-white flex items-center justify-center hover:bg-white transition-colors"
             aria-label="Previous">
             <ChevronLeft className="h-4 w-4 text-gray-600" />
           </button>
-          <button onClick={() => navigate(1)}
+          <button type="button" onClick={() => navigate(1)}
             className="h-7 w-7 rounded-lg bg-white/70 border border-white flex items-center justify-center hover:bg-white transition-colors"
             aria-label="Next">
             <ChevronRight className="h-4 w-4 text-gray-600" />
@@ -395,13 +430,13 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
 
         {/* Right: Today + view toggle */}
         <div className="flex items-center gap-2">
-          <button onClick={goToday}
+          <button type="button" onClick={goToday}
             className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-white/70 border border-white hover:bg-white transition-colors text-indigo-600">
             Today
           </button>
           <div className="flex items-center gap-0.5 bg-white/60 rounded-lg p-0.5 border border-white">
             {(["month", "week"] as CalView[]).map((v) => (
-              <button key={v} onClick={() => {
+              <button key={v} type="button" onClick={() => {
                 setView(v);
                 setAnchor(v === "month" ? startOfMonth(todayIso) : startOfWeek(todayIso));
               }}
@@ -435,6 +470,7 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
             isLoading={isLoading}
             todayIso={todayIso}
             onNavigate={onNavigate}
+            flashTick={flashTick}
           />
         )}
         {view === "week" && (
@@ -444,6 +480,7 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
             isLoading={isLoading}
             todayIso={todayIso}
             onNavigate={onNavigate}
+            flashTick={flashTick}
           />
         )}
       </div>

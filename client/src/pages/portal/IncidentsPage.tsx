@@ -89,10 +89,19 @@ interface IncidentFormData {
   physicianNotifiedAt: string;
 }
 
-const EMPTY_FORM: IncidentFormData = {
+// Lazy so the date/time reflect "now" each time the form opens, AND use
+// local time (toISOString is UTC and would default to tomorrow's date in
+// the evening for users west of UTC).
+function makeEmptyForm(): IncidentFormData {
+  const d = new Date();
+  const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { ...EMPTY_FORM_STATIC, incidentDate: localDate, incidentTime: d.toTimeString().slice(0, 5) };
+}
+
+const EMPTY_FORM_STATIC: IncidentFormData = {
   incidentType: "",
-  incidentDate: new Date().toISOString().slice(0, 10),
-  incidentTime: new Date().toTimeString().slice(0, 5),
+  incidentDate: "",
+  incidentTime: "",
   residentId: "none",
   location: "",
   description: "",
@@ -119,7 +128,7 @@ function ReportIncidentDialog({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [form, setForm] = useState<IncidentFormData>(EMPTY_FORM);
+  const [form, setForm] = useState<IncidentFormData>(makeEmptyForm);
 
   const set = <K extends keyof IncidentFormData>(key: K, value: IncidentFormData[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -145,7 +154,7 @@ function ReportIncidentDialog({
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`] });
       toast({ title: "Incident reported" });
       onOpenChange(false);
-      setForm({ ...EMPTY_FORM, residentId: "none" });
+      setForm({ ...makeEmptyForm(), residentId: "none" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });

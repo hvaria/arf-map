@@ -182,12 +182,18 @@ function AddShiftDialog({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [form, setForm] = useState({
-    staffId: "",
-    shiftType: "AM" as typeof SHIFT_TYPES[number],
-    shiftDate: new Date().toISOString().slice(0, 10),
-    startTime: "06:00",
-    endTime: "14:00",
+  const [form, setForm] = useState(() => {
+    // Local-date YYYY-MM-DD (toISOString is UTC and rolls forward in the evening
+    // for users west of UTC, so the form would default to tomorrow's date).
+    const d = new Date();
+    const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return {
+      staffId: "",
+      shiftType: "AM" as typeof SHIFT_TYPES[number],
+      shiftDate: localDate,
+      startTime: "06:00",
+      endTime: "14:00",
+    };
   });
 
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((f) => ({ ...f, [k]: v }));
