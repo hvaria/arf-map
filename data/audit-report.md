@@ -1,6 +1,6 @@
 # Facilities Data Audit
 
-_Generated: 2026-05-04T21:07:34.250Z_
+_Generated: 2026-05-05T00:32:50.999Z_
 
 ## 1. Row counts
 
@@ -76,48 +76,18 @@ Types whose rows fall into more than one group:
 _(none — every type maps to one group)_
 
 
-### 4a. Stored group vs. recomputed typeToGroup()
+### 4a. facility_type values not recognized by the canonical taxonomy
 
-| facility_type | stored_group | recomputed_group | n |
-| --- | --- | --- | --- |
-| Infant Center | Child Care | Adult & Senior Care | 3024 |
-| School-Age Day Care Center | Child Care | Adult & Senior Care | 2729 |
-| Small Family Home | Children's Residential | Adult & Senior Care | 458 |
-| Transitional Housing Placement Program | Children's Residential | Adult & Senior Care | 202 |
-| Adoption Agency | Children's Residential | Adult & Senior Care | 164 |
-| Temporary Shelter Care Facility | Children's Residential | Adult & Senior Care | 41 |
-| Enhanced Behavioral Supports Home (GH) | Children's Residential | Adult & Senior Care | 27 |
-| Youth Homelessness Prevention Center (GH) | Children's Residential | Adult & Senior Care | 22 |
-| Transitional Shelter Care Facility | Children's Residential | Adult & Senior Care | 19 |
-| Community Crisis Home (DDS / Children's) | Children's Residential | Adult & Senior Care | 14 |
-| Day Care Center for Mildly Ill Children | Child Care | Adult & Senior Care | 7 |
-| Crisis Nursery | Children's Residential | Adult & Senior Care | 6 |
-| _empty_ | Unknown | Adult & Senior Care | 1 |
+Stored `facility_type` strings that cannot be resolved against `shared/taxonomy.ts` (matched against either `ccldRawNames` or `officialLabel`). These are real coverage gaps — the taxonomy is missing an entry, or the row was written with a non-canonical label.
+
+_(none — every stored facility_type resolves to a taxonomy entry)_
 
 
-### 4b. Types that fell through typeToGroup() default
+### 4b. Stored facility_group disagrees with taxonomy domain
 
-These types matched no explicit branch and were classified as "Adult & Senior Care".
+Rows whose stored `facility_group` does not match the `domain` of the taxonomy entry resolved from `facility_type`. This is real drift — the row was written with a stale group label.
 
-| facility_type | recomputed_group | n |
-| --- | --- | --- |
-| Infant Center | Adult & Senior Care | 3024 |
-| School-Age Day Care Center | Adult & Senior Care | 2729 |
-| Small Family Home | Adult & Senior Care | 458 |
-| Transitional Housing Placement Program | Adult & Senior Care | 202 |
-| Adoption Agency | Adult & Senior Care | 164 |
-| RCFE — Continuing Care Retirement Community | Adult & Senior Care | 132 |
-| Enhanced Behavioral Supports Home (ARF) | Adult & Senior Care | 127 |
-| Temporary Shelter Care Facility | Adult & Senior Care | 41 |
-| Community Crisis Home (ARF) | Adult & Senior Care | 38 |
-| Enhanced Behavioral Supports Home (GH) | Adult & Senior Care | 27 |
-| Youth Homelessness Prevention Center (GH) | Adult & Senior Care | 22 |
-| Transitional Shelter Care Facility | Adult & Senior Care | 19 |
-| Residential Care Facility for the Chronically Ill | Adult & Senior Care | 17 |
-| Community Crisis Home (DDS / Children's) | Adult & Senior Care | 14 |
-| Day Care Center for Mildly Ill Children | Adult & Senior Care | 7 |
-| Crisis Nursery | Adult & Senior Care | 6 |
-| _empty_ | Adult & Senior Care | 1 |
+_(none — every stored group matches the taxonomy domain)_
 
 
 ## 5. status distribution
@@ -192,9 +162,10 @@ _(none)_
 | chhs_geo | 26866 |
 | _empty_ | 21717 |
 | census_batch | 19102 |
-| census_no_match | 841 |
+| nominatim_fallback | 509 |
+| nominatim_no_match | 332 |
 
-- Rows with NULL lat or lng: **22558** (32.9%)
+- Rows with NULL lat or lng: **22049** (32.2%)
 
 
 ## 9. phone formatting
@@ -217,50 +188,26 @@ _(none)_
 
 | field | populated | pct |
 | --- | --- | --- |
-| last_inspection_date | 0 | 0.0% |
+| last_inspection_date | 25 | 0.0% |
 | total_visits > 0 | 0 | 0.0% |
 | citations > 0 | 0 | 0.0% |
 | total_type_b > 0 | 0 | 0.0% |
 | administrator | 68525 | 100.0% |
 | licensee | 68526 | 100.0% |
-| enriched_at | 0 | 0.0% |
+| enriched_at | 25 | 0.0% |
 
 
-## 11. TYPE_TO_NAME coverage
+## 11. Taxonomy coverage
 
-Types in DB that are NOT in the `TYPE_TO_NAME` lookup (16 known codes):
+Stored `facility_type` values absent from `TAXONOMY` in `shared/taxonomy.ts` (32 taxonomy entries). Matching is case-insensitive against both `ccldRawNames` and `officialLabel`.
 
-| facility_type | n |
-| --- | --- |
-| Family Child Care Home | 19758 |
-| Infant Center | 3024 |
-| School-Age Day Care Center | 2729 |
-| Single-Licensed Child Care Center | 1371 |
-| Small Family Home | 458 |
-| Foster Family Agency Sub-Office | 250 |
-| Transitional Housing Placement Program | 202 |
-| Adoption Agency | 164 |
-| RCFE — Continuing Care Retirement Community | 132 |
-| Enhanced Behavioral Supports Home (ARF) | 127 |
-| Temporary Shelter Care Facility | 41 |
-| Community Crisis Home (ARF) | 38 |
-| Enhanced Behavioral Supports Home (GH) | 27 |
-| Youth Homelessness Prevention Center (GH) | 22 |
-| Transitional Shelter Care Facility | 19 |
-| Community Crisis Home (DDS / Children's) | 14 |
-| Day Care Center for Mildly Ill Children | 7 |
-| Group Home — Children with Special Health Care Needs | 6 |
-| Crisis Nursery | 6 |
-| STRTP — Children's Crisis Residential | 3 |
+_(none — every stored facility_type matches a taxonomy entry)_
 
 
 ## 12. Recommended findings (auto-summary)
 
-- **1** rows have empty facility_type — currently masked by the default fallback.
-- **13** types where stored group disagrees with the `typeToGroup()` function.
-- **17** types fell through `typeToGroup()` default and may be misclassified as Adult & Senior Care.
+- **1** rows have empty facility_type.
 - **3949** rows have capacity=0 (cannot distinguish "unknown" from "actually zero").
 - **1** phone numbers do not match canonical format.
-- **20** distinct facility types are absent from the `TYPE_TO_NAME` lookup.
 - last_inspection_date populated on only 0.0% of rows — enrichment is incomplete.
-- **22558** rows have no geocoded coordinates.
+- **22049** rows have no geocoded coordinates.
