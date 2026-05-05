@@ -40,6 +40,19 @@ function daysAgo(ts: number) {
   return `${days}d ago`;
 }
 
+// Defensive filter: hide jobs whose required fields look like placeholder/seed
+// data ("Test", "N/A", short stubs, etc.). Mirrors the server-side Zod refine.
+const PLACEHOLDER_REGEX = /^(test|placeholder|n\/a|na|todo|tbd|sample|asdf|x+|\.+|-+)$/i;
+
+function isJunkJob(j: { title: string; description: string; salary: string }): boolean {
+  const title = (j.title ?? "").trim();
+  const desc = (j.description ?? "").trim();
+  const salary = (j.salary ?? "").trim();
+  if (!title || !salary) return true;
+  if (title.length < 3 || desc.length < 20) return true;
+  return [title, desc, salary].some((v) => PLACEHOLDER_REGEX.test(v));
+}
+
 export function JobsPanel({ selectedFacility, onSelectFacility }: JobsPanelProps) {
   const { facilities, facilityByNumber } = useFacilities();
 
@@ -57,28 +70,32 @@ export function JobsPanel({ selectedFacility, onSelectFacility }: JobsPanelProps
     const embeddedJobs: DisplayJob[] = facilities
       .filter((f) => f.isHiring && f.jobPostings.length > 0 && !dbFacilityNumbers.has(f.number))
       .flatMap((f) =>
-        f.jobPostings.map((jp, i) => ({
-          key: `emb-${f.number}-${i}`,
-          facilityNumber: f.number,
-          title: jp.title,
-          type: jp.type,
-          salary: jp.salary,
-          description: jp.description,
-          requirements: jp.requirements,
-          postedAt: Date.now() - jp.postedDaysAgo * 86_400_000,
-        }))
+        f.jobPostings
+          .filter((jp) => !isJunkJob(jp))
+          .map((jp, i) => ({
+            key: `emb-${f.number}-${i}`,
+            facilityNumber: f.number,
+            title: jp.title,
+            type: jp.type,
+            salary: jp.salary,
+            description: jp.description,
+            requirements: jp.requirements,
+            postedAt: Date.now() - jp.postedDaysAgo * 86_400_000,
+          }))
       );
 
-    const mapped: DisplayJob[] = dbJobs.map((j) => ({
-      key: `db-${j.id}`,
-      facilityNumber: j.facilityNumber,
-      title: j.title,
-      type: j.type,
-      salary: j.salary,
-      description: j.description,
-      requirements: j.requirements,
-      postedAt: j.postedAt,
-    }));
+    const mapped: DisplayJob[] = dbJobs
+      .filter((j) => !isJunkJob(j))
+      .map((j) => ({
+        key: `db-${j.id}`,
+        facilityNumber: j.facilityNumber,
+        title: j.title,
+        type: j.type,
+        salary: j.salary,
+        description: j.description,
+        requirements: j.requirements,
+        postedAt: j.postedAt,
+      }));
 
     return [
       ...mapped.sort((a, b) => b.postedAt - a.postedAt),

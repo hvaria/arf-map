@@ -75,11 +75,22 @@ const detailsSchema = z.object({
   email: z.string().optional(),
 });
 
+// Reject obvious placeholder/test strings so seed data and rushed entries
+// can't surface in the public Open Positions feed.
+const PLACEHOLDER_REGEX = /^(test|placeholder|n\/a|na|todo|tbd|sample|asdf|x+|\.+|-+)$/i;
+const isPlaceholder = (s: string) => PLACEHOLDER_REGEX.test(s.trim());
+
 const jobPostingInputSchema = z.object({
-  title: z.string().min(1, "Title is required"),
+  title: z.string()
+    .min(3, "Title must be at least 3 characters")
+    .refine((s) => !isPlaceholder(s), "Title cannot be placeholder text"),
   type: z.string().min(1, "Type is required"),
-  salary: z.string().min(1, "Salary is required"),
-  description: z.string().min(1, "Description is required"),
+  salary: z.string()
+    .min(1, "Salary is required")
+    .refine((s) => !isPlaceholder(s), "Salary cannot be placeholder text"),
+  description: z.string()
+    .min(20, "Description must be at least 20 characters")
+    .refine((s) => !isPlaceholder(s), "Description cannot be placeholder text"),
   requirements: z.array(z.string()),
 });
 
