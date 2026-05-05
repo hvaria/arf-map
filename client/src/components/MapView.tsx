@@ -69,6 +69,8 @@ export function MapView({
   const hasFlownToUser = useRef(false);
   const prevFacilitiesRef = useRef<Facility[]>([]);
   const userLocationRef = useRef(userLocation);
+  // Donut overlays for clusters: maplibre Marker keyed by cluster_id
+  const clusterMarkersRef = useRef<Map<number, maplibregl.Marker>>(new Map());
   const [showSearchArea, setShowSearchArea] = useState(false);
 
   onSelectRef.current = onSelectFacility;
@@ -119,57 +121,25 @@ export function MapView({
       });
 
       // ── Facilities cluster source ─────────────────────────────────────────
+      // clusterProperties aggregate per-status counts so each cluster knows
+      // how many LICENSED / PENDING / ON PROBATION / CLOSED / other facilities
+      // it contains. Used by the donut overlay below.
       map.addSource("facilities", {
         type: "geojson",
         data: buildGeoJSON(facilitiesRef.current, userLocationRef.current),
         cluster: true,
         clusterMaxZoom: 14,
         clusterRadius: 50,
-      });
-
-      // Cluster circles
-      map.addLayer({
-        id: "clusters",
-        type: "circle",
-        source: "facilities",
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#E8864A",
-            10,
-            "#D4693A",
-            50,
-            "#B8532A",
-          ],
-          "circle-radius": [
-            "step",
-            ["get", "point_count"],
-            18,
-            10,
-            24,
-            50,
-            32,
-          ],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
+        clusterProperties: {
+          licensed:  ["+", ["case", ["==", ["get", "status"], "LICENSED"], 1, 0]],
+          pending:   ["+", ["case", ["==", ["get", "status"], "PENDING"], 1, 0]],
+          probation: ["+", ["case", ["==", ["get", "status"], "ON PROBATION"], 1, 0]],
+          closed:    ["+", ["case", ["==", ["get", "status"], "CLOSED"], 1, 0]],
         },
       });
 
-      // Cluster count text
-      map.addLayer({
-        id: "cluster-count",
-        type: "symbol",
-        source: "facilities",
-        filter: ["has", "point_count"],
-        layout: {
-          "text-field": "{point_count_abbreviated}",
-          "text-font": ["Noto Sans Regular"],
-          "text-size": 13,
-        },
-        paint: { "text-color": "#ffffff" },
-      });
+      // Cluster donut markers are rendered as DOM overlays in the
+      // updateClusterMarkers effect below — no MapLibre layer needed for them.
 
       // Individual facility points — opacity driven by isNearby flag
       map.addLayer({
@@ -255,38 +225,9 @@ export function MapView({
         },
       });
 
-      // Unified click handler
+      // Single-pin click handler — cluster clicks are handled by their own
+      // donut HTML markers, so we only need to detect unclustered points here.
       map.on("click", (e) => {
-        const clusterFeatures = map.queryRenderedFeatures(e.point, {
-          layers: ["clusters"],
-        });
-        if (clusterFeatures.length > 0) {
-          const clusterId = clusterFeatures[0].properties?.cluster_id;
-          const source = map.getSource("facilities") as maplibregl.GeoJSONSource;
-          if (clusterId !== undefined && source.getClusterExpansionZoom) {
-            source
-              .getClusterExpansionZoom(clusterId)
-              .then((zoom) => {
-                const coords = (
-                  clusterFeatures[0].geometry as GeoJSON.Point
-                ).coordinates as [number, number];
-                map.easeTo({ center: coords, zoom: Math.min(zoom, 18), duration: 500 });
-              })
-              .catch(() => {
-                const coords = (
-                  clusterFeatures[0].geometry as GeoJSON.Point
-                ).coordinates as [number, number];
-                map.easeTo({ center: coords, zoom: map.getZoom() + 3, duration: 500 });
-              });
-          } else {
-            const coords = (
-              clusterFeatures[0].geometry as GeoJSON.Point
-            ).coordinates as [number, number];
-            map.easeTo({ center: coords, zoom: map.getZoom() + 3, duration: 500 });
-          }
-          return;
-        }
-
         const pointFeatures = map.queryRenderedFeatures(e.point, {
           layers: ["unclustered-point", "hiring-ring"],
         });
@@ -302,8 +243,6 @@ export function MapView({
       // Cursor styling
       const pointer = () => { map.getCanvas().style.cursor = "pointer"; };
       const noPointer = () => { map.getCanvas().style.cursor = ""; };
-      map.on("mouseenter", "clusters", pointer);
-      map.on("mouseleave", "clusters", noPointer);
       map.on("mouseenter", "unclustered-point", pointer);
       map.on("mouseleave", "unclustered-point", noPointer);
       map.on("mouseenter", "hiring-ring", pointer);
@@ -423,6 +362,88 @@ export function MapView({
     else map.once("load", update);
   }, [circleCenter]);
 
+  // ── Donut cluster overlays ────────────────────────────────────────────────
+  // Renders an SVG donut as an HTML marker for each cluster currently in
+  // view, with arc segments sized by per-status counts (clusterProperties
+  // populated above). Re-runs on map move and on source data changes so
+  // markers stay in sync with what MapLibre is rendering.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const update = () => {
+      if (!map.getSource("facilities")) return;
+      const source = map.getSource("facilities") as maplibregl.GeoJSONSource;
+      const features = map.querySourceFeatures("facilities", {
+        filter: ["has", "point_count"],
+      });
+
+      const seen = new Set<number>();
+
+      for (const f of features) {
+        const props = f.properties as ClusterProps | null;
+        if (!props || typeof props.cluster_id !== "number") continue;
+        const id = props.cluster_id;
+        seen.add(id);
+
+        const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
+        const html = donutSvgHtml(props);
+        let marker = clusterMarkersRef.current.get(id);
+
+        if (!marker) {
+          const el = document.createElement("div");
+          el.style.cursor = "pointer";
+          el.innerHTML = html;
+          el.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            source
+              .getClusterExpansionZoom(id)
+              .then((zoom) => {
+                map.easeTo({ center: coords, zoom: Math.min(zoom, 18), duration: 500 });
+              })
+              .catch(() => {
+                map.easeTo({ center: coords, zoom: map.getZoom() + 3, duration: 500 });
+              });
+          });
+          marker = new maplibregl.Marker({ element: el }).setLngLat(coords).addTo(map);
+          clusterMarkersRef.current.set(id, marker);
+        } else {
+          marker.setLngLat(coords);
+          const el = marker.getElement();
+          // Only re-render the SVG if the counts changed (cheap string compare)
+          if (el.innerHTML !== html) el.innerHTML = html;
+        }
+      }
+
+      // Remove markers no longer present
+      const stale: number[] = [];
+      clusterMarkersRef.current.forEach((marker, id) => {
+        if (!seen.has(id)) {
+          marker.remove();
+          stale.push(id);
+        }
+      });
+      stale.forEach((id) => clusterMarkersRef.current.delete(id));
+    };
+
+    const onData = (e: maplibregl.MapDataEvent) => {
+      if ((e as any).sourceId === "facilities" && (e as any).isSourceLoaded) update();
+    };
+    const onMoveEnd = () => update();
+
+    map.on("data", onData);
+    map.on("moveend", onMoveEnd);
+    if (map.isStyleLoaded()) update();
+    else map.once("load", update);
+
+    return () => {
+      map.off("data", onData);
+      map.off("moveend", onMoveEnd);
+      clusterMarkersRef.current.forEach((m) => m.remove());
+      clusterMarkersRef.current.clear();
+    };
+  }, []);
+
   // Fly to selected facility
   useEffect(() => {
     if (!selectedFacility || !mapRef.current) return;
@@ -502,4 +523,105 @@ function buildGeoJSON(
       },
     })),
   };
+}
+
+// ── Donut cluster SVG ────────────────────────────────────────────────────────
+
+interface ClusterProps {
+  cluster: boolean;
+  cluster_id: number;
+  point_count: number;
+  point_count_abbreviated?: string | number;
+  licensed?: number;
+  pending?: number;
+  probation?: number;
+  closed?: number;
+}
+
+const STATUS_COLORS = {
+  licensed: "#22c55e",  // green-500
+  pending: "#f59e0b",   // amber-500
+  probation: "#a855f7", // purple-500
+  closed: "#ef4444",    // red-500
+  other: "#9ca3af",     // gray-400
+} as const;
+
+function donutSvgHtml(props: ClusterProps): string {
+  const total = Number(props.point_count) || 0;
+  const licensed  = Number(props.licensed)  || 0;
+  const pending   = Number(props.pending)   || 0;
+  const probation = Number(props.probation) || 0;
+  const closed    = Number(props.closed)    || 0;
+  const other = Math.max(0, total - licensed - pending - probation - closed);
+
+  // Outer/inner radii scale with cluster size, matching the prior step ramp.
+  const ro = total < 10 ? 18 : total < 50 ? 24 : 32;
+  const ri = ro - 6;
+  const w = ro * 2 + 4;
+  const cx = w / 2;
+  const cy = w / 2;
+
+  const segments = [
+    { color: STATUS_COLORS.licensed,  n: licensed },
+    { color: STATUS_COLORS.pending,   n: pending },
+    { color: STATUS_COLORS.probation, n: probation },
+    { color: STATUS_COLORS.closed,    n: closed },
+    { color: STATUS_COLORS.other,     n: other },
+  ].filter((s) => s.n > 0);
+
+  let arcs = "";
+  if (segments.length === 1) {
+    // Full ring: SVG arc cannot draw a 360° arc, draw a stroked circle instead.
+    arcs = `<circle cx="${cx}" cy="${cy}" r="${(ro + ri) / 2}" fill="none" stroke="${segments[0].color}" stroke-width="${ro - ri}" />`;
+  } else {
+    let cum = 0;
+    for (const s of segments) {
+      const a0 = (cum / total) * 2 * Math.PI;
+      cum += s.n;
+      const a1 = (cum / total) * 2 * Math.PI;
+      arcs += `<path d="${donutArcPath(cx, cy, ro, ri, a0, a1)}" fill="${s.color}" />`;
+    }
+  }
+
+  const label = abbreviateCount(total);
+  const fontSize = total < 10 ? 11 : total < 100 ? 12 : 13;
+
+  return `
+    <svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" style="display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.18));">
+      ${arcs}
+      <circle cx="${cx}" cy="${cy}" r="${ri}" fill="white" />
+      <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central"
+            font-size="${fontSize}" font-weight="700" fill="#1f2937"
+            font-family="system-ui, -apple-system, sans-serif">${label}</text>
+    </svg>
+  `;
+}
+
+function donutArcPath(
+  cx: number, cy: number, ro: number, ri: number, a0: number, a1: number,
+): string {
+  // Convert from "0 = 12 o'clock" to standard SVG angle (0 = 3 o'clock).
+  const offset = -Math.PI / 2;
+  const x0o = cx + ro * Math.cos(a0 + offset);
+  const y0o = cy + ro * Math.sin(a0 + offset);
+  const x1o = cx + ro * Math.cos(a1 + offset);
+  const y1o = cy + ro * Math.sin(a1 + offset);
+  const x0i = cx + ri * Math.cos(a1 + offset);
+  const y0i = cy + ri * Math.sin(a1 + offset);
+  const x1i = cx + ri * Math.cos(a0 + offset);
+  const y1i = cy + ri * Math.sin(a0 + offset);
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return [
+    `M ${x0o} ${y0o}`,
+    `A ${ro} ${ro} 0 ${large} 1 ${x1o} ${y1o}`,
+    `L ${x0i} ${y0i}`,
+    `A ${ri} ${ri} 0 ${large} 0 ${x1i} ${y1i}`,
+    "Z",
+  ].join(" ");
+}
+
+function abbreviateCount(n: number): string {
+  if (n >= 10000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return String(n);
 }
