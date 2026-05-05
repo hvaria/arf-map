@@ -15,7 +15,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Building2, Briefcase, LogIn, MapPin } from "lucide-react";
+import { Building2, Briefcase, LogIn, MapPin, SlidersHorizontal } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { BrandLogo } from "@/components/BrandLogo";
 import { getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/context/AuthContext";
@@ -29,6 +30,25 @@ export default function MapPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [filters, setFilters] = useState<FacilityFilters>(DEFAULT_FILTERS);
+  // Mutually-exclusive overlays: the search autocomplete dropdown and the
+  // filters panel both anchor under the search bar — opening one closes
+  // the other so they never visually stack.
+  const [filtersOpen, setFiltersOpenRaw] = useState(false);
+  const [searchOpen, setSearchOpenRaw] = useState(false);
+  const setFiltersOpen = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    setFiltersOpenRaw((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      if (resolved) setSearchOpenRaw(false);
+      return resolved;
+    });
+  }, []);
+  const setSearchOpen = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    setSearchOpenRaw((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      if (resolved) setFiltersOpenRaw(false);
+      return resolved;
+    });
+  }, []);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [circleCenter, setCircleCenter] = useState<{ lat: number; lng: number } | null>(null);
 
@@ -47,7 +67,7 @@ export default function MapPage() {
   );
 
   // Facilities with server-side filters applied
-  const { facilities, isLoading: facilitiesLoading } = useFacilities(filters, nearby, viewportBbox);
+  const { facilities } = useFacilities(filters, nearby, viewportBbox);
 
   // Geolocation on mount — fly to user if granted, fall back to California default
   useEffect(() => {
@@ -173,10 +193,53 @@ export default function MapPage() {
           <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
             <div className="p-3 flex items-start gap-2">
               <div className="flex flex-col gap-2 pointer-events-auto max-w-md w-full">
-                <SearchBar
-                  value={filters.search}
-                  onChange={(search) => setFilters((f) => ({ ...f, search }))}
-                />
+                {/* Search bar with embedded filter trigger.
+                    The wrapper is `relative` so FilterPanel's absolute popup
+                    anchors to the same width as the search field. */}
+                <div className="relative">
+                  <SearchBar
+                    value={filters.search}
+                    onChange={(search) => setFilters((f) => ({ ...f, search }))}
+                    open={searchOpen}
+                    onOpenChange={setSearchOpen}
+                    rightSlot={
+                      <button
+                        type="button"
+                        onClick={() => setFiltersOpen((o) => !o)}
+                        aria-label={
+                          activeFilterCount > 0
+                            ? `Filters (${activeFilterCount} active)`
+                            : "Open filters"
+                        }
+                        aria-expanded={filtersOpen}
+                        data-testid="button-open-filters"
+                        className={cn(
+                          "relative inline-flex items-center justify-center h-7 w-7 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          filtersOpen || activeFilterCount > 0
+                            ? "text-primary hover:bg-primary/10"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                      >
+                        <SlidersHorizontal className="h-4 w-4" aria-hidden />
+                        {activeFilterCount > 0 && (
+                          <span
+                            className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none ring-2 ring-background"
+                            aria-hidden
+                          >
+                            {activeFilterCount}
+                          </span>
+                        )}
+                      </button>
+                    }
+                  />
+                  <FilterPanel
+                    filters={filters}
+                    onChange={setFilters}
+                    totalShowing={facilities.length}
+                    open={filtersOpen}
+                    onOpenChange={setFiltersOpen}
+                  />
+                </div>
                 {showAreaCta && (
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background/95 backdrop-blur-sm border border-border/60 shadow-md text-sm">
                     <MapPin className="h-4 w-4 shrink-0 text-primary" />
@@ -201,32 +264,6 @@ export default function MapPage() {
                     </button>
                   </div>
                 )}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {/* Filter panel toggle */}
-                  <FilterPanel
-                    filters={filters}
-                    onChange={setFilters}
-                    totalShowing={facilities.length}
-                  />
-
-                  {/* Hiring quick filter */}
-                  <button
-                    onClick={() => setFilters((f) => ({ ...f, hiringOnly: !f.hiringOnly }))}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm ${
-                      filters.hiringOnly
-                        ? "bg-blue-50 dark:bg-blue-950 backdrop-blur-sm border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
-                        : "bg-background/60 backdrop-blur-sm border-transparent text-muted-foreground opacity-60"
-                    }`}
-                  >
-                    <span className={`w-2 h-2 rounded-full shrink-0 bg-blue-500 ${!filters.hiringOnly ? "opacity-40" : ""}`} />
-                    Hiring
-                  </button>
-
-                  {/* Count */}
-                  <span className="text-xs text-muted-foreground ml-1 bg-background/80 backdrop-blur-sm px-2 py-1 rounded-full shadow-sm border border-border/40">
-                    {facilitiesLoading ? "…" : `${facilities.length.toLocaleString()} shown`}
-                  </span>
-                </div>
               </div>
 
               {/* Mobile-only: account/login button */}

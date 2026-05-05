@@ -2,15 +2,15 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   SlidersHorizontal, X, ChevronDown, ChevronRight,
-  Building2, MapPin, Activity, Users, Briefcase, Search,
+  Building2, MapPin, Activity, Users, Briefcase,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { FacilitiesMeta } from "@shared/schema";
 import {
   DOMAINS,
+  DOMAIN_PALETTE,
   groupsForDomain,
   typesForGroup,
   normalizeRawType,
@@ -154,38 +154,12 @@ const QUICK_FILTER_CHIPS: QuickFilterChip[] = [
 
 // ── Status config ─────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  LICENSED: { label: "Licensed", color: "bg-green-500" },
-  PENDING: { label: "Pending", color: "bg-amber-500" },
-  "ON PROBATION": { label: "Probation", color: "bg-purple-500" },
-  CLOSED: { label: "Closed", color: "bg-red-500" },
-  REVOKED: { label: "Revoked", color: "bg-red-800" },
-};
-
-// ── Domain colors (derived once) ──────────────────────────────────────────────
-
-/**
- * Domain colour palette — kept in sync with the StatsPage swatches and with
- * `client/src/components/MapView.tsx` pin colours (data shape unchanged).
- * Tailwind JIT requires literal class strings, so we map domain → utility set.
- */
-const DOMAIN_COLORS: Record<FacilityDomain, { text: string; dot: string }> = {
-  "Adult & Senior Care": {
-    text: "text-teal-600 dark:text-teal-400",
-    dot: "bg-teal-500",
-  },
-  "Children's Residential": {
-    text: "text-purple-600 dark:text-purple-400",
-    dot: "bg-purple-500",
-  },
-  "Child Care": {
-    text: "text-green-600 dark:text-green-400",
-    dot: "bg-green-500",
-  },
-  "Home Care": {
-    text: "text-orange-600 dark:text-orange-400",
-    dot: "bg-orange-500",
-  },
+const STATUS_CONFIG: Record<string, { label: string }> = {
+  LICENSED:       { label: "Licensed" },
+  PENDING:        { label: "Pending" },
+  "ON PROBATION": { label: "Probation" },
+  CLOSED:         { label: "Closed" },
+  REVOKED:        { label: "Revoked" },
 };
 
 function isDomain(value: string): value is FacilityDomain {
@@ -198,10 +172,26 @@ interface FilterPanelProps {
   filters: FacilityFilters;
   onChange: (filters: FacilityFilters) => void;
   totalShowing: number;
+  /**
+   * Controlled-mode props. When `open` is provided, the component renders
+   * only the popup panel (no internal trigger button) and reports open/close
+   * intent via `onOpenChange`. This lets callers embed their own trigger
+   * elsewhere (e.g. inside the search bar) while keeping the panel layout
+   * here.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProps) {
-  const [open, setOpen] = useState(false);
+export function FilterPanel({ filters, onChange, totalShowing, open: openProp, onOpenChange }: FilterPanelProps) {
+  const isControlled = openProp !== undefined;
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = isControlled ? !!openProp : openInternal;
+  const setOpen = (next: boolean | ((prev: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(open) : next;
+    if (isControlled) onOpenChange?.(resolved);
+    else setOpenInternal(resolved);
+  };
   const [countySearch, setCountySearch] = useState("");
 
   const { data: meta } = useQuery<FacilitiesMeta>({
@@ -248,31 +238,34 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
   const reset = () => onChange({ ...DEFAULT_FILTERS, statuses: new Set(["LICENSED", "PENDING", "ON PROBATION"]) });
 
   return (
-    <div className="relative">
-      {/* Toggle button */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-label={open ? "Close filters" : "Open filters"}
-        aria-expanded={open}
-        className={cn(
-          "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm",
-          open || activeCount > 0
-            ? "bg-primary text-primary-foreground border-primary"
-            : "bg-background/95 backdrop-blur-sm border-border/60 text-foreground hover:bg-muted"
-        )}
-      >
-        <SlidersHorizontal className="h-3.5 w-3.5" />
-        Filters
-        {activeCount > 0 && (
-          <span className="bg-primary-foreground/20 text-primary-foreground rounded-full px-1.5 py-0.5 text-[10px] font-bold min-w-[18px] text-center">
-            {activeCount}
-          </span>
-        )}
-      </button>
+    <div className={isControlled ? "contents" : "relative"}>
+      {/* Internal trigger — only when uncontrolled. In controlled mode the
+          caller renders its own trigger (e.g. inside the search bar). */}
+      {!isControlled && (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? "Close filters" : "Open filters"}
+          aria-expanded={open}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm",
+            open || activeCount > 0
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-background/95 backdrop-blur-sm border-border/60 text-foreground hover:bg-muted"
+          )}
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Filters
+          {activeCount > 0 && (
+            <span className="bg-primary-foreground/20 text-primary-foreground rounded-full px-1.5 py-0.5 text-[10px] font-bold min-w-[18px] text-center">
+              {activeCount}
+            </span>
+          )}
+        </button>
+      )}
 
       {/* Panel */}
       {open && (
-        <div className="absolute top-full left-0 mt-2 z-30 w-80 bg-background border rounded-2xl shadow-2xl overflow-hidden">
+        <div className="absolute top-full left-0 right-0 mt-2 z-30 w-full sm:w-80 sm:right-auto bg-background border rounded-2xl shadow-2xl overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
             <div className="flex items-center gap-2">
@@ -297,33 +290,6 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
           </div>
 
           <div className="overflow-y-auto max-h-[70vh]">
-            {/* Search */}
-            <FilterSection icon={Search} title="Search">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  value={filters.search}
-                  onChange={(e) => update({ search: e.target.value })}
-                  placeholder="Name, city, license #, licensee…"
-                  className="pl-8 h-8 text-xs"
-                />
-                {filters.search && (
-                  <button
-                    aria-label="Clear search"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => update({ search: "" })}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            </FilterSection>
-
-            {/* Quick Filters */}
-            <div className="px-4 py-3 border-b">
-              <QuickFilterBar filters={filters} meta={meta} onChange={onChange} />
-            </div>
-
             {/* Domain → Facility Type hierarchy */}
             <FilterSection icon={Building2} title="Facility Type">
               {/* Domain radio group */}
@@ -338,15 +304,17 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                     onClick={() => update({ facilityGroup: "", facilityType: "", quickFilter: "" })}
                   />
                   {DOMAINS.map((d) => {
-                    const colors = DOMAIN_COLORS[d];
+                    const palette = DOMAIN_PALETTE[d];
                     const count = meta?.countByGroup?.[d];
                     return (
                       <DomainRadio
                         key={d}
                         label={d}
                         active={filters.facilityGroup === d}
-                        dotClass={colors.dot}
-                        textClass={colors.text}
+                        dotClass={palette.dot}
+                        textClass={cn(palette.text, palette.textDark)}
+                        activeBgClass={palette.bg}
+                        activeBorderClass={palette.activeBorder}
                         count={count}
                         onClick={() => update({
                           facilityGroup: filters.facilityGroup === d ? "" : d,
@@ -405,16 +373,6 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                 className="h-7 text-xs mb-2"
                 aria-label="Search counties"
               />
-              {filters.county && (
-                <div className="flex items-center gap-1 mb-1.5">
-                  <Badge variant="secondary" className="text-xs gap-1">
-                    {filters.county}
-                    <button onClick={() => update({ county: "" })} aria-label={`Clear county filter ${filters.county}`}>
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                </div>
-              )}
               <div className="max-h-36 overflow-y-auto space-y-0.5 pr-1">
                 {filteredCounties.map((c) => (
                   <button
@@ -438,8 +396,8 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
 
             {/* Status */}
             <FilterSection icon={Activity} title="License Status">
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(STATUS_CONFIG).map(([key, { label, color }]) => {
+              <div className="space-y-0.5 pr-1">
+                {Object.entries(STATUS_CONFIG).map(([key, { label }]) => {
                   const active = filters.statuses.has(key);
                   return (
                     <button
@@ -447,13 +405,12 @@ export function FilterPanel({ filters, onChange, totalShowing }: FilterPanelProp
                       onClick={() => toggleStatus(key)}
                       aria-pressed={active}
                       className={cn(
-                        "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all",
+                        "w-full text-left flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition-colors duration-150",
                         active
-                          ? "bg-foreground/5 border-foreground/20 text-foreground"
-                          : "border-transparent text-muted-foreground opacity-50 hover:opacity-75"
+                          ? "bg-primary/10 text-primary font-medium"
+                          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                       )}
                     >
-                      <span className={cn("w-2 h-2 rounded-full shrink-0", color, !active && "opacity-40")} />
                       {label}
                     </button>
                   );
@@ -576,6 +533,8 @@ function DomainRadio({
   count,
   dotClass,
   textClass,
+  activeBgClass,
+  activeBorderClass,
 }: {
   label: string;
   active: boolean;
@@ -583,6 +542,10 @@ function DomainRadio({
   count?: number;
   dotClass?: string;
   textClass?: string;
+  /** Domain-tinted background applied when active (e.g. bg-teal-50). */
+  activeBgClass?: string;
+  /** Domain-tinted border for the active radio dot (e.g. border-teal-500). */
+  activeBorderClass?: string;
 }) {
   return (
     <button
@@ -590,22 +553,22 @@ function DomainRadio({
       aria-checked={active}
       onClick={onClick}
       className={cn(
-        "w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-all",
+        "w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors duration-150",
         active
-          ? "bg-primary/10 text-primary font-medium"
+          ? cn("font-semibold", activeBgClass ?? "bg-primary/10", textClass ?? "text-primary")
           : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
       )}
     >
       <span className="flex items-center gap-2">
         <span
           className={cn(
-            "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
-            active ? "border-primary" : "border-muted-foreground/40"
+            "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors",
+            active ? (activeBorderClass ?? "border-primary") : "border-muted-foreground/40"
           )}
         >
-          {active && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
+          {active && <span className={cn("w-1.5 h-1.5 rounded-full", dotClass ?? "bg-primary")} />}
         </span>
-        {dotClass && <span className={cn("w-2 h-2 rounded-full shrink-0", dotClass)} />}
+        {dotClass && !active && <span className={cn("w-2 h-2 rounded-full shrink-0", dotClass)} />}
         <span className={cn(!active && textClass)}>{label}</span>
       </span>
       {count != null && count > 0 && (

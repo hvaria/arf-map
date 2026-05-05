@@ -498,6 +498,96 @@ export const DOMAINS: FacilityDomain[] = [
   "Home Care",
 ];
 
+// ── Domain color palette ─────────────────────────────────────────────────────
+
+/**
+ * Single source of truth for domain → color. Used by:
+ *   - Filter panel (domain radio swatch + selected-state highlight)
+ *   - Map markers (pin fill, popup accent)
+ *   - Cluster donut segments
+ *   - Map legend
+ *
+ * `hex` values are WCAG-AA legible on white; `hexDark` is the dark-mode
+ * variant for future use. Hues are spaced widely enough to remain
+ * distinguishable for the common deuteranopia/protanopia profiles.
+ */
+export interface DomainPalette {
+  hex: string;
+  hexDark: string;
+  text: string;        // tailwind text class (light)
+  textDark: string;    // tailwind text class (dark)
+  bg: string;          // subtle bg for selected/active states
+  ring: string;        // focus ring
+  dot: string;         // small swatch (bg-*-500)
+  border: string;      // border for outlined chips
+  activeBorder: string; // border at the same shade as `dot`, for selected radio rings
+}
+
+export const DOMAIN_PALETTE: Record<FacilityDomain, DomainPalette> = {
+  "Adult & Senior Care": {
+    hex: "#0D9488",
+    hexDark: "#2DD4BF",
+    text: "text-teal-700",
+    textDark: "dark:text-teal-300",
+    bg: "bg-teal-50 dark:bg-teal-950/40",
+    ring: "ring-teal-500",
+    dot: "bg-teal-500",
+    border: "border-teal-400",
+    activeBorder: "border-teal-500",
+  },
+  "Children's Residential": {
+    hex: "#7C3AED",
+    hexDark: "#A78BFA",
+    text: "text-violet-700",
+    textDark: "dark:text-violet-300",
+    bg: "bg-violet-50 dark:bg-violet-950/40",
+    ring: "ring-violet-500",
+    dot: "bg-violet-500",
+    border: "border-violet-400",
+    activeBorder: "border-violet-500",
+  },
+  "Child Care": {
+    hex: "#16A34A",
+    hexDark: "#4ADE80",
+    text: "text-green-700",
+    textDark: "dark:text-green-300",
+    bg: "bg-green-50 dark:bg-green-950/40",
+    ring: "ring-green-500",
+    dot: "bg-green-500",
+    border: "border-green-400",
+    activeBorder: "border-green-500",
+  },
+  "Home Care": {
+    hex: "#EA580C",
+    hexDark: "#FB923C",
+    text: "text-orange-700",
+    textDark: "dark:text-orange-300",
+    bg: "bg-orange-50 dark:bg-orange-950/40",
+    ring: "ring-orange-500",
+    dot: "bg-orange-500",
+    border: "border-orange-400",
+    activeBorder: "border-orange-500",
+  },
+};
+
+/** Resolve a (possibly unknown) domain string to a palette, with a neutral fallback. */
+const NEUTRAL_PALETTE: DomainPalette = {
+  hex: "#6B7280",
+  hexDark: "#9CA3AF",
+  text: "text-gray-700",
+  textDark: "dark:text-gray-300",
+  bg: "bg-gray-50 dark:bg-gray-900/40",
+  ring: "ring-gray-400",
+  dot: "bg-gray-400",
+  border: "border-gray-300",
+  activeBorder: "border-gray-400",
+};
+
+export function paletteForDomain(domain: string | null | undefined): DomainPalette {
+  if (!domain) return NEUTRAL_PALETTE;
+  return (DOMAIN_PALETTE as Record<string, DomainPalette>)[domain] ?? NEUTRAL_PALETTE;
+}
+
 /** All distinct search groups under a given domain, in canonical order. */
 export function groupsForDomain(domain: FacilityDomain): SearchGroup[] {
   const seen: SearchGroup[] = [];
