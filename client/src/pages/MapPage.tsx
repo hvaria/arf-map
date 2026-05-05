@@ -5,6 +5,7 @@ import { FacilityPanel } from "@/components/FacilityPanel";
 import { JobsPanel } from "@/components/JobsPanel";
 import { NearbySheet } from "@/components/NearbySheet";
 import { SearchBar } from "@/components/SearchBar";
+import { SearchResultsList } from "@/components/SearchResultsList";
 import { FilterPanel, DEFAULT_FILTERS, countActiveFilters, type FacilityFilters } from "@/components/FilterPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -276,10 +277,19 @@ export default function MapPage() {
 
         {/* ── Right sidebar ── */}
         <aside className="hidden md:flex flex-col w-80 shrink-0 border-l bg-background z-10">
-          <JobsPanel
-            selectedFacility={selectedFacility}
-            onSelectFacility={handleSelectFacility}
-          />
+          {filters.search.trim() ? (
+            <SearchResultsList
+              facilities={facilities}
+              selectedFacility={selectedFacility}
+              onSelectFacility={handleSelectFacility}
+              query={filters.search.trim()}
+            />
+          ) : (
+            <JobsPanel
+              selectedFacility={selectedFacility}
+              onSelectFacility={handleSelectFacility}
+            />
+          )}
         </aside>
       </div>
 
