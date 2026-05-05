@@ -1,7 +1,23 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import type { Facility } from "@shared/schema";
 import type { FacilityFilters } from "@/components/FilterPanel";
+
+/**
+ * Snap a bbox outward to a coarse lat/lng grid. Two viewports that differ by
+ * less than the grid size collapse to the same snapped bbox, so React Query
+ * reuses the same cache entry — panning within ~70 mi triggers no network.
+ *
+ * Default grid: 1° (~69 mi N/S, ~55 mi E/W in California).
+ */
+function snapBboxToGrid(b: BBox, gridDeg = 1): BBox {
+  return {
+    minLat: Math.floor(b.minLat / gridDeg) * gridDeg,
+    maxLat: Math.ceil(b.maxLat / gridDeg) * gridDeg,
+    minLng: Math.floor(b.minLng / gridDeg) * gridDeg,
+    maxLng: Math.ceil(b.maxLng / gridDeg) * gridDeg,
+  };
+}
 
 export interface NearbyArea {
   lat: number;
@@ -64,7 +80,7 @@ export function useFacilities(
     }
     const searchActive = !!filters?.search?.trim();
     if (!searchActive) {
-      if (bbox) p.set("bbox", bboxString(bbox));
+      if (bbox) p.set("bbox", bboxString(snapBboxToGrid(bbox)));
       else if (nearby) p.set("bbox", bboxStringFromArea(nearby));
     }
     return p.toString();
@@ -81,6 +97,10 @@ export function useFacilities(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 2,
+    // Show the previous result while a new bbox is loading instead of going
+    // blank. Critical for pan/zoom — the map keeps its pins until the new
+    // data arrives.
+    placeholderData: keepPreviousData,
   });
 
   const facilities = query.data ?? [];

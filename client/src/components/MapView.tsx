@@ -65,9 +65,11 @@ function createCircleGeoJSON(
   };
 }
 
-// Pad viewport bounds outward when reporting them so a small pan doesn't
-// immediately blank-edge the map while waiting on a refetch.
-const VIEWPORT_PAD_FRACTION = 0.2;
+// Pad viewport bounds outward when reporting them so a meaningful pan
+// distance is already in the cache by the time the user gets there. Combined
+// with the 1° grid snap in useFacilities, this means panning within roughly
+// 70 mi of where you started rarely re-hits the network.
+const VIEWPORT_PAD_FRACTION = 0.5;
 // Debounce viewport-change emissions so rapid panning doesn't thrash the API.
 const VIEWPORT_DEBOUNCE_MS = 350;
 
