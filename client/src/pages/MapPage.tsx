@@ -20,7 +20,8 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/context/AuthContext";
 import { useFacilities } from "@/hooks/useFacilities";
-import type { NearbyArea } from "@/hooks/useFacilities";
+import type { NearbyArea, BBox } from "@/hooks/useFacilities";
+import type { ViewportBounds } from "@/components/MapView";
 import type { Facility } from "@shared/schema";
 
 export default function MapPage() {
@@ -31,18 +32,22 @@ export default function MapPage() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [circleCenter, setCircleCenter] = useState<{ lat: number; lng: number } | null>(null);
 
-  // Bound API queries to a 30-mile area around the current circleCenter
-  // (set either by geolocation on mount or by the "Search this area" button).
-  // Until we have a center, the API returns the full dataset. The hook
-  // automatically suppresses the bbox when a search query is active so name/
-  // license-# searches still match statewide.
+  // Bound API queries to either:
+  //   1. The current map viewport (preferred — updates as the user pans/zooms), or
+  //   2. A 30-mi area around circleCenter on first load before the map has
+  //      reported its bounds, so the initial fetch isn't statewide.
+  // Both are auto-suppressed when a search query is active.
+  const [viewportBbox, setViewportBbox] = useState<BBox | null>(null);
+  const handleViewportChange = useCallback((b: ViewportBounds) => {
+    setViewportBbox(b);
+  }, []);
   const nearby = useMemo<NearbyArea | null>(
     () => (circleCenter ? { lat: circleCenter.lat, lng: circleCenter.lng, radiusMiles: 30 } : null),
     [circleCenter]
   );
 
   // Facilities with server-side filters applied
-  const { facilities, isLoading: facilitiesLoading } = useFacilities(filters, nearby);
+  const { facilities, isLoading: facilitiesLoading } = useFacilities(filters, nearby, viewportBbox);
 
   // Geolocation on mount — fly to user if granted, fall back to California default
   useEffect(() => {
@@ -60,12 +65,8 @@ export default function MapPage() {
     );
   }, []);
 
-  const handleSearchArea = useCallback((lat: number, lng: number) => {
-    setCircleCenter({ lat, lng });
-  }, []);
-
-  // First-load CTA: dismissed once user takes any action (geolocates, pans
-  // and clicks "Search this area", types a query, or explicitly closes it).
+  // First-load CTA: dismissed once user takes any action (geolocates,
+  // types a query, or explicitly closes it).
   const [areaCtaDismissed, setAreaCtaDismissed] = useState(false);
   const showAreaCta =
     !circleCenter &&
@@ -85,8 +86,7 @@ export default function MapPage() {
         setAreaCtaDismissed(true);
       },
       () => {
-        // User denied — keep CTA visible so they can use Search this area
-        // button after panning, but hide the geolocate button.
+        // User denied — hide the CTA so they can keep browsing without nag.
         setAreaCtaDismissed(true);
       },
       { timeout: 10000, maximumAge: 60000 }
@@ -209,42 +209,6 @@ export default function MapPage() {
                     totalShowing={facilities.length}
                   />
 
-                  {/* Quick status pills */}
-                  {(["LICENSED", "PENDING", "ON PROBATION", "CLOSED"] as const).map((status) => {
-                    const colors: Record<string, string> = {
-                      LICENSED: "bg-green-500",
-                      PENDING: "bg-amber-500",
-                      "ON PROBATION": "bg-purple-500",
-                      CLOSED: "bg-red-500",
-                    };
-                    const labels: Record<string, string> = {
-                      LICENSED: "Licensed",
-                      PENDING: "Pending",
-                      "ON PROBATION": "Probation",
-                      CLOSED: "Closed",
-                    };
-                    const active = filters.statuses.has(status);
-                    return (
-                      <button
-                        key={status}
-                        onClick={() => {
-                          const next = new Set(filters.statuses);
-                          if (next.has(status)) next.delete(status);
-                          else next.add(status);
-                          setFilters((f) => ({ ...f, statuses: next }));
-                        }}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm ${
-                          active
-                            ? "bg-background/95 backdrop-blur-sm border-border/60 text-foreground"
-                            : "bg-background/60 backdrop-blur-sm border-transparent text-muted-foreground opacity-60"
-                        }`}
-                      >
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${colors[status]} ${!active ? "opacity-40" : ""}`} />
-                        {labels[status]}
-                      </button>
-                    );
-                  })}
-
                   {/* Hiring quick filter */}
                   <button
                     onClick={() => setFilters((f) => ({ ...f, hiringOnly: !f.hiringOnly }))}
@@ -321,7 +285,7 @@ export default function MapPage() {
             onSelectFacility={handleSelectFacility}
             userLocation={userLocation}
             circleCenter={circleCenter}
-            onSearchArea={handleSearchArea}
+            onViewportChange={handleViewportChange}
           />
 
           {/* Facility detail bottom sheet */}

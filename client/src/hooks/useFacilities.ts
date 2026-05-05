@@ -10,15 +10,27 @@ export interface NearbyArea {
   radiusMiles: number;
 }
 
+export interface BBox {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+}
+
 /** Convert a point + radius into a bbox string the API understands. */
-function bboxFromArea(area: NearbyArea): string {
+function bboxStringFromArea(area: NearbyArea): string {
   const dLat = area.radiusMiles / 69; // ~69 mi per degree of latitude
   const dLng = area.radiusMiles / (69 * Math.cos((area.lat * Math.PI) / 180));
-  const minLat = area.lat - dLat;
-  const maxLat = area.lat + dLat;
-  const minLng = area.lng - dLng;
-  const maxLng = area.lng + dLng;
-  return [minLat, minLng, maxLat, maxLng].map((n) => n.toFixed(5)).join(",");
+  return bboxString({
+    minLat: area.lat - dLat,
+    maxLat: area.lat + dLat,
+    minLng: area.lng - dLng,
+    maxLng: area.lng + dLng,
+  });
+}
+
+function bboxString(b: BBox): string {
+  return [b.minLat, b.minLng, b.maxLat, b.maxLng].map((n) => n.toFixed(5)).join(",");
 }
 
 /**
@@ -27,16 +39,17 @@ function bboxFromArea(area: NearbyArea): string {
  * regardless of how many components call this hook simultaneously.
  *
  * Pass `filters` to apply server-side filtering (county, type, status, etc.)
- * Pass `nearby` to bound the result to a circular area (the search-this-area
- * affordance) — skipped automatically when a search query is active so users
- * can find facilities outside the current viewport by name/license #.
- * When neither is set, returns all facilities.
+ * Pass `bbox` to bound the result to an arbitrary lat/lng box (e.g. the
+ * current map viewport). Falls back to `nearby` (a point + radius) when no
+ * explicit bbox is provided. Both are suppressed automatically when a search
+ * query is active so name/license-# searches still match statewide.
+ * When none of bbox/nearby/filters is set, returns the whole dataset.
  */
-export function useFacilities(filters?: FacilityFilters, nearby?: NearbyArea | null) {
-  // Build query params from filters + bbox.
-  // bbox is intentionally suppressed when a search query is active — name/
-  // license# searches should match across the whole dataset, not just the
-  // viewport.
+export function useFacilities(
+  filters?: FacilityFilters,
+  nearby?: NearbyArea | null,
+  bbox?: BBox | null,
+) {
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (filters) {
@@ -50,9 +63,12 @@ export function useFacilities(filters?: FacilityFilters, nearby?: NearbyArea | n
       if (filters.maxCapacity != null) p.set("maxCapacity", String(filters.maxCapacity));
     }
     const searchActive = !!filters?.search?.trim();
-    if (nearby && !searchActive) p.set("bbox", bboxFromArea(nearby));
+    if (!searchActive) {
+      if (bbox) p.set("bbox", bboxString(bbox));
+      else if (nearby) p.set("bbox", bboxStringFromArea(nearby));
+    }
     return p.toString();
-  }, [filters, nearby]);
+  }, [filters, nearby, bbox]);
 
   const queryKey = params ? [`/api/facilities`, params] : [`/api/facilities`];
   const url = params ? `/api/facilities?${params}` : `/api/facilities`;

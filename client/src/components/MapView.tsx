@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
-import { Search } from "lucide-react";
 import type { Facility } from "@shared/schema";
+import { DOMAIN_PALETTE, paletteForDomain } from "@shared/taxonomy";
 
 const RADIUS_METERS = 48280; // 30 miles
+
+export interface ViewportBounds {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+}
 
 interface MapViewProps {
   facilities: Facility[];
@@ -11,7 +18,12 @@ interface MapViewProps {
   onSelectFacility: (facility: Facility) => void;
   userLocation: { lat: number; lng: number } | null;
   circleCenter: { lat: number; lng: number } | null;
-  onSearchArea: (lat: number, lng: number) => void;
+  /**
+   * Fired (debounced) after the user finishes panning/zooming so the parent
+   * can refetch facilities for the visible area. The bounds are slightly
+   * padded around the actual viewport — see VIEWPORT_PAD_FRACTION.
+   */
+  onViewportChange?: (bounds: ViewportBounds) => void;
 }
 
 function haversineDistanceMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -53,13 +65,19 @@ function createCircleGeoJSON(
   };
 }
 
+// Pad viewport bounds outward when reporting them so a small pan doesn't
+// immediately blank-edge the map while waiting on a refetch.
+const VIEWPORT_PAD_FRACTION = 0.2;
+// Debounce viewport-change emissions so rapid panning doesn't thrash the API.
+const VIEWPORT_DEBOUNCE_MS = 350;
+
 export function MapView({
   facilities,
   selectedFacility,
   onSelectFacility,
   userLocation,
   circleCenter,
-  onSearchArea,
+  onViewportChange,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -71,7 +89,8 @@ export function MapView({
   const userLocationRef = useRef(userLocation);
   // Donut overlays for clusters: maplibre Marker keyed by cluster_id
   const clusterMarkersRef = useRef<Map<number, maplibregl.Marker>>(new Map());
-  const [showSearchArea, setShowSearchArea] = useState(false);
+  const onViewportChangeRef = useRef(onViewportChange);
+  onViewportChangeRef.current = onViewportChange;
 
   onSelectRef.current = onSelectFacility;
   facilitiesRef.current = facilities;
@@ -121,9 +140,10 @@ export function MapView({
       });
 
       // ── Facilities cluster source ─────────────────────────────────────────
-      // clusterProperties aggregate per-status counts so each cluster knows
-      // how many LICENSED / PENDING / ON PROBATION / CLOSED / other facilities
-      // it contains. Used by the donut overlay below.
+      // clusterProperties aggregate per-domain counts so each cluster's donut
+      // shows the same color story as the pins it expands into. The fifth
+      // bucket ("other") catches unknown / future domains so the segments
+      // always sum to point_count.
       map.addSource("facilities", {
         type: "geojson",
         data: buildGeoJSON(facilitiesRef.current, userLocationRef.current),
@@ -131,17 +151,22 @@ export function MapView({
         clusterMaxZoom: 14,
         clusterRadius: 50,
         clusterProperties: {
-          licensed:  ["+", ["case", ["==", ["get", "status"], "LICENSED"], 1, 0]],
-          pending:   ["+", ["case", ["==", ["get", "status"], "PENDING"], 1, 0]],
-          probation: ["+", ["case", ["==", ["get", "status"], "ON PROBATION"], 1, 0]],
-          closed:    ["+", ["case", ["==", ["get", "status"], "CLOSED"], 1, 0]],
+          adult:    ["+", ["case", ["==", ["get", "facilityGroup"], "Adult & Senior Care"],    1, 0]],
+          children: ["+", ["case", ["==", ["get", "facilityGroup"], "Children's Residential"], 1, 0]],
+          childCare:["+", ["case", ["==", ["get", "facilityGroup"], "Child Care"],             1, 0]],
+          homeCare: ["+", ["case", ["==", ["get", "facilityGroup"], "Home Care"],              1, 0]],
         },
       });
 
       // Cluster donut markers are rendered as DOM overlays in the
       // updateClusterMarkers effect below — no MapLibre layer needed for them.
 
-      // Individual facility points — opacity driven by isNearby flag
+      // Individual facility points
+      //   fill   = domain (DOMAIN_PALETTE)         — primary identity signal
+      //   stroke = status (white normal / red bad) — secondary "is something
+      //                                              wrong with this license"
+      //   ring   = hiring (separate hiring-ring layer below)
+      //   opacity = within 30-mile radius?
       map.addLayer({
         id: "unclustered-point",
         type: "circle",
@@ -149,34 +174,13 @@ export function MapView({
         filter: ["!", ["has", "point_count"]],
         paint: {
           "circle-color": [
-            "case",
-            ["==", ["get", "isHiring"], true],
-            "#E8864A",
-            [
-              "match",
-              ["get", "facilityGroup"],
-              "Adult & Senior Care",
-              "#D4693A",
-              "Child Care",
-              "#22c55e",
-              "Children's Residential",
-              "#a855f7",
-              "Home Care",
-              "#C25A2E",
-              [
-                "match",
-                ["get", "status"],
-                "LICENSED",
-                "#22c55e",
-                "CLOSED",
-                "#ef4444",
-                "PENDING",
-                "#f59e0b",
-                "ON PROBATION",
-                "#a855f7",
-                "#6b7280",
-              ],
-            ],
+            "match",
+            ["get", "facilityGroup"],
+            "Adult & Senior Care",   DOMAIN_PALETTE["Adult & Senior Care"].hex,
+            "Children's Residential",DOMAIN_PALETTE["Children's Residential"].hex,
+            "Child Care",            DOMAIN_PALETTE["Child Care"].hex,
+            "Home Care",             DOMAIN_PALETTE["Home Care"].hex,
+            "#6B7280", // unknown domain fallback
           ],
           "circle-radius": [
             "case",
@@ -185,7 +189,14 @@ export function MapView({
             7,
           ],
           "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
+          "circle-stroke-color": [
+            "match",
+            ["get", "status"],
+            "CLOSED",       "#EF4444",
+            "REVOKED",      "#7F1D1D",
+            "ON PROBATION", "#F59E0B",
+            "#FFFFFF",
+          ],
           "circle-opacity": [
             "case",
             ["==", ["get", "isNearby"], true],
@@ -262,29 +273,29 @@ export function MapView({
           e.features[0].geometry as GeoJSON.Point
         ).coordinates.slice() as [number, number];
         const p = e.features[0].properties;
-        const hiringBadge = p?.isHiring
-          ? `<div style="color:#D4693A;font-weight:700;font-size:11px;margin-top:2px;font-family:'Nunito',sans-serif">★ Hiring · ${p?.jobCount || 0} position${(p?.jobCount || 0) !== 1 ? "s" : ""}</div>`
+        const palette = paletteForDomain(p?.facilityGroup);
+        const domainBadge = p?.facilityGroup
+          ? `<div style="display:flex;align-items:center;gap:5px;margin-top:3px;font-size:10px;color:${palette.hex};font-weight:600">
+              <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${palette.hex}"></span>
+              ${p.facilityGroup}${p?.facilityType && p.facilityType !== p.facilityGroup ? ` · <span style="color:#6b7280;font-weight:500">${p.facilityType}</span>` : ""}
+            </div>`
           : "";
-        const typeBadge =
-          p?.facilityType && p.facilityType !== "Adult Residential Facility"
-            ? `<div style="color:#8b5cf6;font-size:10px;margin-top:1px">${p.facilityType}</div>`
-            : "";
+        const hiringBadge = p?.isHiring
+          ? `<div style="color:#D4693A;font-weight:700;font-size:11px;margin-top:3px;font-family:'Nunito',sans-serif">★ Hiring · ${p?.jobCount || 0} position${(p?.jobCount || 0) !== 1 ? "s" : ""}</div>`
+          : "";
         popup
           .setLngLat(coords)
           .setHTML(
-            `<div style="font-family:'Nunito',sans-serif;font-size:13px;line-height:1.4">
+            `<div style="font-family:'Nunito',sans-serif;font-size:13px;line-height:1.4;border-left:3px solid ${palette.hex};padding-left:8px;margin-left:-4px">
               <div style="font-weight:600;margin-bottom:2px">${p?.name || ""}</div>
-              <div style="color:#6b7280">${p?.city || ""}${p?.county ? ` · ${p.county} Co.` : ""} · Cap: ${p?.capacity || "?"}</div>
-              ${typeBadge}
+              <div style="color:#6b7280;font-size:11px">${p?.city || ""}${p?.county ? ` · ${p.county} Co.` : ""} · Cap: ${p?.capacity || "?"}</div>
+              ${domainBadge}
               ${hiringBadge}
             </div>`
           )
           .addTo(map);
       });
       map.on("mouseleave", "unclustered-point", () => popup.remove());
-
-      // Show "Search this area" button when user drags the map
-      map.on("dragend", () => setShowSearchArea(true));
     });
 
     mapRef.current = map;
@@ -293,6 +304,46 @@ export function MapView({
       mapRef.current = null;
       initializedRef.current = false;
       hasFlownToUser.current = false;
+    };
+  }, []);
+
+// ── Viewport tracking ──────────────────────────────────────────────────────
+  // Emit the current map bounds (debounced) on moveend so the parent can
+  // refetch facilities for the visible region. Padded outward so a small
+  // pan doesn't immediately blank-edge the data.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const emit = () => {
+      const cb = onViewportChangeRef.current;
+      if (!cb) return;
+      const b = map.getBounds();
+      const sw = b.getSouthWest();
+      const ne = b.getNorthEast();
+      const dLat = (ne.lat - sw.lat) * VIEWPORT_PAD_FRACTION;
+      const dLng = (ne.lng - sw.lng) * VIEWPORT_PAD_FRACTION;
+      cb({
+        minLat: sw.lat - dLat,
+        minLng: sw.lng - dLng,
+        maxLat: ne.lat + dLat,
+        maxLng: ne.lng + dLng,
+      });
+    };
+
+    const onMoveEnd = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(emit, VIEWPORT_DEBOUNCE_MS);
+    };
+
+    if (map.isStyleLoaded()) emit();
+    else map.once("load", emit);
+    map.on("moveend", onMoveEnd);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      map.off("moveend", onMoveEnd);
     };
   }, []);
 
@@ -475,23 +526,6 @@ export function MapView({
           border-top-color: #ffffff;
         }
       `}</style>
-
-      {/* "Search this area" floating pill — appears after user drags */}
-      {showSearchArea && (
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-          <button
-            className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-background/95 backdrop-blur-sm rounded-full shadow-lg border border-border/60 text-sm font-medium hover:bg-background transition-colors whitespace-nowrap"
-            onClick={() => {
-              const center = mapRef.current?.getCenter();
-              if (center) onSearchArea(center.lat, center.lng);
-              setShowSearchArea(false);
-            }}
-          >
-            <Search className="h-3.5 w-3.5 text-primary" />
-            Search this area
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -532,27 +566,21 @@ interface ClusterProps {
   cluster_id: number;
   point_count: number;
   point_count_abbreviated?: string | number;
-  licensed?: number;
-  pending?: number;
-  probation?: number;
-  closed?: number;
+  adult?: number;
+  children?: number;
+  childCare?: number;
+  homeCare?: number;
 }
 
-const STATUS_COLORS = {
-  licensed: "#22c55e",  // green-500
-  pending: "#f59e0b",   // amber-500
-  probation: "#a855f7", // purple-500
-  closed: "#ef4444",    // red-500
-  other: "#9ca3af",     // gray-400
-} as const;
+const UNKNOWN_DOMAIN_COLOR = "#9CA3AF"; // gray-400 — for facilities with an unrecognized domain
 
 function donutSvgHtml(props: ClusterProps): string {
   const total = Number(props.point_count) || 0;
-  const licensed  = Number(props.licensed)  || 0;
-  const pending   = Number(props.pending)   || 0;
-  const probation = Number(props.probation) || 0;
-  const closed    = Number(props.closed)    || 0;
-  const other = Math.max(0, total - licensed - pending - probation - closed);
+  const adult     = Number(props.adult)     || 0;
+  const children  = Number(props.children)  || 0;
+  const childCare = Number(props.childCare) || 0;
+  const homeCare  = Number(props.homeCare)  || 0;
+  const other = Math.max(0, total - adult - children - childCare - homeCare);
 
   // Outer/inner radii scale with cluster size, matching the prior step ramp.
   const ro = total < 10 ? 18 : total < 50 ? 24 : 32;
@@ -561,12 +589,14 @@ function donutSvgHtml(props: ClusterProps): string {
   const cx = w / 2;
   const cy = w / 2;
 
+  // Order matches DOMAINS in shared/taxonomy.ts so the visual reading order
+  // is the same as the legend.
   const segments = [
-    { color: STATUS_COLORS.licensed,  n: licensed },
-    { color: STATUS_COLORS.pending,   n: pending },
-    { color: STATUS_COLORS.probation, n: probation },
-    { color: STATUS_COLORS.closed,    n: closed },
-    { color: STATUS_COLORS.other,     n: other },
+    { color: DOMAIN_PALETTE["Adult & Senior Care"].hex,    n: adult },
+    { color: DOMAIN_PALETTE["Children's Residential"].hex, n: children },
+    { color: DOMAIN_PALETTE["Child Care"].hex,             n: childCare },
+    { color: DOMAIN_PALETTE["Home Care"].hex,              n: homeCare },
+    { color: UNKNOWN_DOMAIN_COLOR,                         n: other },
   ].filter((s) => s.n > 0);
 
   let arcs = "";
