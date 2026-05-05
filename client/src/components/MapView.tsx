@@ -3,7 +3,7 @@ import maplibregl from "maplibre-gl";
 import type { Facility } from "@shared/schema";
 import { DOMAIN_PALETTE, paletteForDomain } from "@shared/taxonomy";
 
-const RADIUS_METERS = 48280; // 30 miles
+const RADIUS_METERS = 8047; // 5 miles
 
 export interface ViewportBounds {
   minLat: number;
@@ -116,7 +116,7 @@ export function MapView({
     map.on("load", () => {
       initializedRef.current = true;
 
-      // ── 30-mile radius circle ──────────────────────────────────────────────
+      // ── 5-mile radius circle ───────────────────────────────────────────────
       map.addSource("user-radius", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -168,7 +168,7 @@ export function MapView({
       //   stroke = status (white normal / red bad) — secondary "is something
       //                                              wrong with this license"
       //   ring   = hiring (separate hiring-ring layer below)
-      //   opacity = within 30-mile radius?
+      //   opacity = within 5-mile radius?
       map.addLayer({
         id: "unclustered-point",
         type: "circle",
@@ -358,7 +358,7 @@ export function MapView({
       hasFlownToUser.current = true;
       map.flyTo({
         center: [userLocation.lng, userLocation.lat],
-        zoom: 10,
+        zoom: 12,
         duration: 1500,
       });
     };
@@ -552,9 +552,9 @@ function buildGeoJSON(
         facilityGroup: f.facilityGroup ?? "Adult & Senior Care",
         isHiring: f.isHiring,
         jobCount: f.jobPostings?.length || 0,
-        // true when no user location (no dimming) or within 30 miles
+        // true when no user location (no dimming) or within 5 miles
         isNearby: userLocation
-          ? haversineDistanceMiles(userLocation.lat, userLocation.lng, f.lat, f.lng) <= 30
+          ? haversineDistanceMiles(userLocation.lat, userLocation.lng, f.lat, f.lng) <= 2
           : true,
       },
     })),

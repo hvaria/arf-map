@@ -54,7 +54,7 @@ export default function MapPage() {
 
   // Bound API queries to either:
   //   1. The current map viewport (preferred — updates as the user pans/zooms), or
-  //   2. A 30-mi area around circleCenter on first load before the map has
+  //   2. A 5-mi area around circleCenter on first load before the map has
   //      reported its bounds, so the initial fetch isn't statewide.
   // Both are auto-suppressed when a search query is active.
   const [viewportBbox, setViewportBbox] = useState<BBox | null>(null);
@@ -62,7 +62,7 @@ export default function MapPage() {
     setViewportBbox(b);
   }, []);
   const nearby = useMemo<NearbyArea | null>(
-    () => (circleCenter ? { lat: circleCenter.lat, lng: circleCenter.lng, radiusMiles: 30 } : null),
+    () => (circleCenter ? { lat: circleCenter.lat, lng: circleCenter.lng, radiusMiles: 5 } : null),
     [circleCenter]
   );
 
