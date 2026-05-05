@@ -3,29 +3,56 @@ import { useQuery } from "@tanstack/react-query";
 import type { Facility } from "@shared/schema";
 import type { FacilityFilters } from "@/components/FilterPanel";
 
+export interface NearbyArea {
+  lat: number;
+  lng: number;
+  /** Radius in miles. Used to derive the lat/lng bbox sent to the API. */
+  radiusMiles: number;
+}
+
+/** Convert a point + radius into a bbox string the API understands. */
+function bboxFromArea(area: NearbyArea): string {
+  const dLat = area.radiusMiles / 69; // ~69 mi per degree of latitude
+  const dLng = area.radiusMiles / (69 * Math.cos((area.lat * Math.PI) / 180));
+  const minLat = area.lat - dLat;
+  const maxLat = area.lat + dLat;
+  const minLng = area.lng - dLng;
+  const maxLng = area.lng + dLng;
+  return [minLat, minLng, maxLat, maxLng].map((n) => n.toFixed(5)).join(",");
+}
+
 /**
  * Single source of truth for facility data.
  * React Query deduplicates the fetch — only ONE network request is made
  * regardless of how many components call this hook simultaneously.
  *
- * Pass filters to apply server-side filtering (county, type, status, etc.)
- * When no filters are passed, returns all facilities (backward compat).
+ * Pass `filters` to apply server-side filtering (county, type, status, etc.)
+ * Pass `nearby` to bound the result to a circular area (the search-this-area
+ * affordance) — skipped automatically when a search query is active so users
+ * can find facilities outside the current viewport by name/license #.
+ * When neither is set, returns all facilities.
  */
-export function useFacilities(filters?: FacilityFilters) {
-  // Build query params from filters
+export function useFacilities(filters?: FacilityFilters, nearby?: NearbyArea | null) {
+  // Build query params from filters + bbox.
+  // bbox is intentionally suppressed when a search query is active — name/
+  // license# searches should match across the whole dataset, not just the
+  // viewport.
   const params = useMemo(() => {
-    if (!filters) return "";
     const p = new URLSearchParams();
-    if (filters.search) p.set("search", filters.search);
-    if (filters.county) p.set("county", filters.county);
-    if (filters.facilityGroup) p.set("facilityGroup", filters.facilityGroup);
-    if (filters.facilityType) p.set("facilityType", filters.facilityType);
-    if (filters.statuses.size > 0) p.set("status", Array.from(filters.statuses).join(","));
-    if (filters.hiringOnly) p.set("isHiring", "true");
-    if (filters.minCapacity != null) p.set("minCapacity", String(filters.minCapacity));
-    if (filters.maxCapacity != null) p.set("maxCapacity", String(filters.maxCapacity));
+    if (filters) {
+      if (filters.search) p.set("search", filters.search);
+      if (filters.county) p.set("county", filters.county);
+      if (filters.facilityGroup) p.set("facilityGroup", filters.facilityGroup);
+      if (filters.facilityType) p.set("facilityType", filters.facilityType);
+      if (filters.statuses.size > 0) p.set("status", Array.from(filters.statuses).join(","));
+      if (filters.hiringOnly) p.set("isHiring", "true");
+      if (filters.minCapacity != null) p.set("minCapacity", String(filters.minCapacity));
+      if (filters.maxCapacity != null) p.set("maxCapacity", String(filters.maxCapacity));
+    }
+    const searchActive = !!filters?.search?.trim();
+    if (nearby && !searchActive) p.set("bbox", bboxFromArea(nearby));
     return p.toString();
-  }, [filters]);
+  }, [filters, nearby]);
 
   const queryKey = params ? [`/api/facilities`, params] : [`/api/facilities`];
   const url = params ? `/api/facilities?${params}` : `/api/facilities`;

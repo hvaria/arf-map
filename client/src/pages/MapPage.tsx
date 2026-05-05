@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MapView } from "@/components/MapView";
 import { FacilityPanel } from "@/components/FacilityPanel";
@@ -15,11 +15,12 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Building2, Briefcase, LogIn } from "lucide-react";
+import { Building2, Briefcase, LogIn, MapPin } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/context/AuthContext";
 import { useFacilities } from "@/hooks/useFacilities";
+import type { NearbyArea } from "@/hooks/useFacilities";
 import type { Facility } from "@shared/schema";
 
 export default function MapPage() {
@@ -30,8 +31,18 @@ export default function MapPage() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [circleCenter, setCircleCenter] = useState<{ lat: number; lng: number } | null>(null);
 
+  // Bound API queries to a 30-mile area around the current circleCenter
+  // (set either by geolocation on mount or by the "Search this area" button).
+  // Until we have a center, the API returns the full dataset. The hook
+  // automatically suppresses the bbox when a search query is active so name/
+  // license-# searches still match statewide.
+  const nearby = useMemo<NearbyArea | null>(
+    () => (circleCenter ? { lat: circleCenter.lat, lng: circleCenter.lng, radiusMiles: 30 } : null),
+    [circleCenter]
+  );
+
   // Facilities with server-side filters applied
-  const { facilities, isLoading: facilitiesLoading } = useFacilities(filters);
+  const { facilities, isLoading: facilitiesLoading } = useFacilities(filters, nearby);
 
   // Geolocation on mount — fly to user if granted, fall back to California default
   useEffect(() => {
@@ -51,6 +62,35 @@ export default function MapPage() {
 
   const handleSearchArea = useCallback((lat: number, lng: number) => {
     setCircleCenter({ lat, lng });
+  }, []);
+
+  // First-load CTA: dismissed once user takes any action (geolocates, pans
+  // and clicks "Search this area", types a query, or explicitly closes it).
+  const [areaCtaDismissed, setAreaCtaDismissed] = useState(false);
+  const showAreaCta =
+    !circleCenter &&
+    !areaCtaDismissed &&
+    !filters.search.trim();
+
+  const requestGeolocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setAreaCtaDismissed(true);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        const loc = { lat: coords.latitude, lng: coords.longitude };
+        setUserLocation(loc);
+        setCircleCenter(loc);
+        setAreaCtaDismissed(true);
+      },
+      () => {
+        // User denied — keep CTA visible so they can use Search this area
+        // button after panning, but hide the geolocate button.
+        setAreaCtaDismissed(true);
+      },
+      { timeout: 10000, maximumAge: 60000 }
+    );
   }, []);
 
   const { user: jobSeeker } = useAuth();
@@ -137,6 +177,30 @@ export default function MapPage() {
                   value={filters.search}
                   onChange={(search) => setFilters((f) => ({ ...f, search }))}
                 />
+                {showAreaCta && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background/95 backdrop-blur-sm border border-border/60 shadow-md text-sm">
+                    <MapPin className="h-4 w-4 shrink-0 text-primary" />
+                    <span className="flex-1 leading-tight">
+                      Showing all California facilities. Search your area for a faster view.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={requestGeolocation}
+                      className="text-xs font-semibold px-2.5 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90 shrink-0"
+                      data-testid="cta-search-your-area"
+                    >
+                      Use my location
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAreaCtaDismissed(true)}
+                      className="text-xs text-muted-foreground hover:text-foreground shrink-0 px-1"
+                      aria-label="Dismiss"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {/* Filter panel toggle */}
                   <FilterPanel
