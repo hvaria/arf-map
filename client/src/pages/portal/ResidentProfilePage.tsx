@@ -247,10 +247,9 @@ function AssessmentDialog({
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
+              variant="gradient"
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending || !form.assessedBy}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
             >
               {mutation.isPending ? "Saving..." : "Save Assessment"}
             </Button>
@@ -397,10 +396,9 @@ function CreateCarePlanDialog({
           <div className="flex gap-2 justify-end pt-1">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
+              variant="gradient"
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending || !form.goal || !form.intervention}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
             >
               {mutation.isPending ? "Creating..." : "Create Care Plan"}
             </Button>
@@ -491,10 +489,9 @@ function ReportIncidentInlineDialog({
           <div className="flex gap-2 justify-end pt-1">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
+              variant="gradient"
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending || !form.incidentType || !form.description}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
             >
               {mutation.isPending ? "Reporting..." : "Report Incident"}
             </Button>
@@ -744,12 +741,7 @@ export function ResidentProfileContent({
           {!carePlan ? (
             <div className="rounded-lg border border-dashed p-8 text-center space-y-3">
               <p className="text-sm text-muted-foreground">No active care plan found.</p>
-              <Button
-                size="sm"
-                onClick={() => setCreateCarePlanOpen(true)}
-                className="text-white border-0"
-                style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-              >
+              <Button size="sm" variant="gradient" onClick={() => setCreateCarePlanOpen(true)}>
                 <Plus className="h-4 w-4 mr-1.5" />
                 Create Care Plan
               </Button>

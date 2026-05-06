@@ -378,10 +378,9 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
           </div>
           <Button
             size="sm"
+            variant="gradient"
             onClick={() => updateMutation.mutate()}
             disabled={updateMutation.isPending}
-            className="text-white border-0"
-            style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
           >
             {updateMutation.isPending ? "Saving..." : "Save"}
           </Button>
@@ -428,12 +427,7 @@ export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: s
 
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Incidents</h1>
-        <Button
-          size="sm"
-          onClick={() => setReportOpen(true)}
-          className="text-white border-0"
-          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-        >
+        <Button size="sm" variant="gradient" onClick={() => setReportOpen(true)}>
           <Plus className="h-4 w-4 mr-1.5" />
           Report Incident
         </Button>

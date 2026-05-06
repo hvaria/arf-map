@@ -426,12 +426,7 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
                     <Receipt className="h-4 w-4 mr-1.5" />
                     Generate Invoice
                   </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setPaymentOpen(true)}
-                    className="text-white border-0"
-                    style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-                  >
+                  <Button size="sm" variant="gradient" onClick={() => setPaymentOpen(true)}>
                     <DollarSign className="h-4 w-4 mr-1.5" />
                     Record Payment
                   </Button>

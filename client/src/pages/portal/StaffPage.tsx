@@ -397,12 +397,7 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
         {/* Directory Tab */}
         <TabsContent value="directory" className="mt-4 space-y-4">
           <div className="flex justify-end">
-            <Button
-              size="sm"
-              onClick={() => setAddStaffOpen(true)}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button size="sm" variant="gradient" onClick={() => setAddStaffOpen(true)}>
               <Plus className="h-4 w-4 mr-1.5" />
               Add Staff
             </Button>
@@ -509,12 +504,7 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
         {/* Schedule Tab */}
         <TabsContent value="schedule" className="mt-4 space-y-4">
           <div className="flex justify-end">
-            <Button
-              size="sm"
-              onClick={() => setAddShiftOpen(true)}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button size="sm" variant="gradient" onClick={() => setAddShiftOpen(true)}>
               <Plus className="h-4 w-4 mr-1.5" />
               Add Shift
             </Button>

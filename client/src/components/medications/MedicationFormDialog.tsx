@@ -274,10 +274,9 @@ export function MedicationFormDialog({
           <div className="flex gap-2 justify-end pt-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
+              variant="gradient"
               onClick={onSubmit}
               disabled={mutation.isPending}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
             >
               {mutation.isPending
                 ? (mode === "create" ? "Adding..." : "Saving...")

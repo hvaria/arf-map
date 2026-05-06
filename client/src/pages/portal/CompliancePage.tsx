@@ -283,12 +283,7 @@ export function ComplianceContent({ facilityNumber, onBack }: { facilityNumber: 
 
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Compliance</h1>
-        <Button
-          size="sm"
-          onClick={() => setAddOpen(true)}
-          className="text-white border-0"
-          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-        >
+        <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
           <Plus className="h-4 w-4 mr-1.5" />
           Add Item
         </Button>

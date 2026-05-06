@@ -213,10 +213,9 @@ function AddResidentDialog({
           <div className="flex gap-2 justify-end pt-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
+              variant="gradient"
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
             >
               {mutation.isPending ? "Adding..." : "Add Resident"}
             </Button>
@@ -272,12 +271,7 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
 
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Residents</h1>
-        <Button
-          size="sm"
-          onClick={() => setAddOpen(true)}
-          className="text-white border-0"
-          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-        >
+        <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
           <Plus className="h-4 w-4 mr-1.5" />
           Add Resident
         </Button>
