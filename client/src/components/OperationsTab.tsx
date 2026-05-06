@@ -343,10 +343,13 @@ function AlertRow({
           {alert.detail} · <span className="tabular-nums">{alert.whenLabel}</span>
         </p>
       </div>
+      {/* Variant=outline so the action reads as a button, not a faint text
+          link. Affordance is consistent with the icon-button patterns used
+          on Job Postings / Applicants cards (clear hover + border). */}
       <Button
         size="sm"
-        variant="ghost"
-        className="shrink-0 h-8 text-xs gap-1 opacity-70 group-hover:opacity-100"
+        variant="outline"
+        className="shrink-0 h-8 text-xs gap-1 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-900 transition-colors"
         onClick={() => onAct(alert.subView)}
       >
         {alert.actionLabel}
@@ -411,12 +414,10 @@ function PersonalQueue({
   items,
   isLoading,
   onAct,
-  displayName,
 }: {
   items: AlertItem[];
   isLoading: boolean;
   onAct: (target: SubView | "notes") => void;
-  displayName: string;
 }) {
   return (
     <Card>
@@ -431,8 +432,11 @@ function PersonalQueue({
               </Badge>
             )}
           </div>
+          {/* Second-person copy — the facility account username can be a
+              short abbreviation ("arts") that reads as a display bug if
+              surfaced verbatim in body text. */}
           <span className="text-[11px] text-muted-foreground hidden sm:inline">
-            Items assigned to or awaiting <span className="font-medium">{displayName}</span>
+            Items assigned to you or awaiting acknowledgement
           </span>
         </div>
         {isLoading ? (
@@ -441,12 +445,10 @@ function PersonalQueue({
             <Skeleton className="h-12 w-3/4" />
           </div>
         ) : items.length === 0 ? (
-          <div className="p-5 text-center">
-            <CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto mb-1.5" />
-            <p className="text-sm font-medium">Nothing on your queue</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              When something is assigned to you or needs your acknowledgement, it'll show up here.
-            </p>
+          // Compact empty state — single row, no wasted vertical space.
+          <div className="px-4 py-2.5 flex items-center gap-2 text-xs text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+            <span>Nothing on your queue — items assigned to you will show up here.</span>
           </div>
         ) : (
           <ul>
@@ -1031,6 +1033,10 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     }).length;
     const openIncidents = incidents.filter((i) => i.status === "open").length;
 
+    // Sub-label tone is unified: count-driven phrasing when there's
+    // something to act on ("N <noun>"), "All clear" when there isn't.
+    // residents and meds carry contextual sub-labels because their counts
+    // aren't problems — they're operational state.
     return [
       {
         key: "residents",
@@ -1052,7 +1058,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
               ? `${approachingMeds} due in next ${APPROACHING_MED_MINUTES} min`
               : dashboard.pendingMedPasses === 0
                 ? "All clear"
-                : "On schedule",
+                : `${dashboard.pendingMedPasses} on schedule`,
         icon: Pill,
         tone: lateMissed > 0 ? "danger" : approachingMeds > 0 ? "warn" : dashboard.pendingMedPasses > 0 ? "info" : "ok",
         subView: "emar",
@@ -1061,7 +1067,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         key: "tasks",
         label: "Overdue Tasks",
         count: dashboard.overdueTasks,
-        subtitle: dashboard.overdueTasks > 0 ? "Past due window" : "Caught up",
+        subtitle: dashboard.overdueTasks > 0 ? `${dashboard.overdueTasks} overdue` : "All clear",
         icon: ClipboardList,
         tone: dashboard.overdueTasks > 0 ? "danger" : "ok",
         subView: "residents",
@@ -1074,8 +1080,8 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           openIncidents > 0
             ? `${openIncidents} unresolved`
             : dashboard.openIncidents === 0
-              ? "No open incidents"
-              : "Under review",
+              ? "All clear"
+              : `${dashboard.openIncidents} under review`,
         icon: AlertTriangle,
         tone: dashboard.openIncidents > 0 ? "danger" : "ok",
         subView: "incidents",
@@ -1084,7 +1090,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         key: "leads",
         label: "Pending Leads",
         count: dashboard.pendingLeads,
-        subtitle: dashboard.pendingLeads > 0 ? "Awaiting follow-up" : "Pipeline clear",
+        subtitle: dashboard.pendingLeads > 0 ? `${dashboard.pendingLeads} awaiting follow-up` : "All clear",
         icon: UserPlus,
         tone: dashboard.pendingLeads > 0 ? "info" : "ok",
         subView: "crm",
@@ -1093,7 +1099,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         key: "invoices",
         label: "Overdue Invoices",
         count: dashboard.overdueInvoices,
-        subtitle: dashboard.overdueInvoices > 0 ? "Past due A/R" : "All current",
+        subtitle: dashboard.overdueInvoices > 0 ? `${dashboard.overdueInvoices} past due` : "All clear",
         icon: Receipt,
         tone: dashboard.overdueInvoices > 0 ? "danger" : "ok",
         subView: "billing",
@@ -1102,7 +1108,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         key: "compliance",
         label: "Overdue Compliance",
         count: dashboard.overdueCompliance,
-        subtitle: dashboard.overdueCompliance > 0 ? "Regulatory exposure" : "On track",
+        subtitle: dashboard.overdueCompliance > 0 ? `${dashboard.overdueCompliance} due now` : "All clear",
         icon: ShieldCheck,
         tone: dashboard.overdueCompliance > 0 ? "warn" : "ok",
         subView: "compliance",
@@ -1446,7 +1452,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   });
 
   return (
-    <div className="space-y-5 pb-24">
+    <div className="space-y-4 pb-24">
       {/* Header */}
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
@@ -1478,21 +1484,30 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isAdmin && (
-            <RoleLensSwitcher
-              activeRole={activeRole}
-              userRole={userRole}
-              isPreviewing={isPreviewing}
-              onChange={(r) => setLensOverride(r === userRole ? null : r)}
-            />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground hidden md:inline">
+                View as
+              </span>
+              <RoleLensSwitcher
+                activeRole={activeRole}
+                userRole={userRole}
+                isPreviewing={isPreviewing}
+                onChange={(r) => setLensOverride(r === userRole ? null : r)}
+              />
+            </div>
           )}
+          {/* Shortcuts: icon-only button — secondary utility, shouldn't
+              compete with urgent operational information. Press '?' anywhere
+              also opens the dialog. */}
           <Button
-            size="sm"
-            variant="outline"
+            size="icon"
+            variant="ghost"
             onClick={() => setShowShortcuts(true)}
-            className="gap-1.5"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            aria-label="Keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
           >
-            <Keyboard className="h-3.5 w-3.5" />
-            Shortcuts
+            <Keyboard className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -1524,36 +1539,43 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </SubViewErrorBoundary>
       ) : (
         <>
-      {/* Zone A: KPIs */}
-      <section aria-label="Key indicators">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
-          {dashLoading
-            ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
-            : orderedKpis.length > 0
-              ? orderedKpis.map((t) => (
-                  <KpiCard key={t.label} tile={t} onClick={() => goToSubView(t.subView)} />
-                ))
-              : (
-                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-7 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  {!facilityNumber
-                    ? "Facility not found. Please log out and back in."
-                    : "Could not load operations data. Try refreshing the page."}
-                </div>
-              )}
-        </div>
-      </section>
-
-      {/* Zone B: Alerts & Exceptions */}
+      {/* Zone B: Alerts & Exceptions — surfaced FIRST.
+          Unresolved incidents and missing notifications are higher priority
+          than passive count tiles. Card grows a red left-accent when there
+          are overdue items so the urgency is obvious at a glance. */}
       <section aria-label="Alerts and exceptions">
-        <Card>
+        <Card
+          className={cn(
+            "border-l-4 transition-colors",
+            overdueCount > 0
+              ? "border-l-red-500"
+              : approachingCount > 0
+                ? "border-l-amber-500"
+                : "border-l-emerald-500",
+          )}
+        >
           <CardContent className="p-0">
             <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <Bell className="h-4 w-4 text-amber-600" />
+                <Bell
+                  className={cn(
+                    "h-4 w-4",
+                    overdueCount > 0
+                      ? "text-red-600"
+                      : approachingCount > 0
+                        ? "text-amber-600"
+                        : "text-emerald-600",
+                  )}
+                />
                 <h2 className="text-sm font-semibold">Needs attention</h2>
                 {!alertsLoading && alerts.length > 0 && (
-                  <Badge variant="outline" className="h-5 text-[10px]">
+                  <Badge variant="outline" className="h-5 text-[10px] tabular-nums">
                     {alerts.length}
+                  </Badge>
+                )}
+                {!alertsLoading && overdueCount > 0 && (
+                  <Badge className="h-5 text-[10px] tabular-nums bg-red-100 text-red-700 border-red-200 hover:bg-red-100">
+                    {overdueCount} overdue
                   </Badge>
                 )}
               </div>
@@ -1576,22 +1598,24 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
                 <Skeleton className="h-12 w-3/4" />
               </div>
             ) : alerts.length === 0 ? (
-              <div className="p-6 text-center">
-                <Sparkles className="h-7 w-7 text-emerald-500 mx-auto mb-2" />
-                <p className="text-sm font-semibold">All caught up</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {medPasses.length > 0 ? (
-                    <>
-                      Next med pass at{" "}
-                      <span className="font-medium">
-                        {medPasses.find((m) => m.status === "pending")?.scheduledTime ?? "—"}
-                      </span>
-                      .
-                    </>
-                  ) : (
-                    <>No urgent items right now. Check the calendar for what's coming up.</>
-                  )}
-                </p>
+              <div className="px-4 py-4 flex items-center gap-3">
+                <Sparkles className="h-5 w-5 text-emerald-500 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold leading-tight">All caught up</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {medPasses.length > 0 ? (
+                      <>
+                        Next med pass at{" "}
+                        <span className="font-medium">
+                          {medPasses.find((m) => m.status === "pending")?.scheduledTime ?? "—"}
+                        </span>
+                        .
+                      </>
+                    ) : (
+                      <>No urgent items right now. Check the calendar for what's coming up.</>
+                    )}
+                  </p>
+                </div>
               </div>
             ) : (
               <ul>
@@ -1604,13 +1628,33 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </Card>
       </section>
 
+      {/* Zone A: KPIs — overview tiles, kept on a single row at lg+ so the
+          full operational state is visible in one scan without competing
+          with the urgent action list above. */}
+      <section aria-label="Key indicators">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          {dashLoading
+            ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
+            : orderedKpis.length > 0
+              ? orderedKpis.map((t) => (
+                  <KpiCard key={t.label} tile={t} onClick={() => goToSubView(t.subView)} />
+                ))
+              : (
+                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-7 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  {!facilityNumber
+                    ? "Facility not found. Please log out and back in."
+                    : "Could not load operations data. Try refreshing the page."}
+                </div>
+              )}
+        </div>
+      </section>
+
       {/* Zone F: Personal Work Queue */}
       <section aria-label="My work">
         <PersonalQueue
           items={myQueue}
           isLoading={myQueueLoading}
           onAct={navigateTarget}
-          displayName={me?.username ?? ""}
         />
       </section>
 
@@ -1665,6 +1709,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground hidden sm:inline">
             Quick actions
           </span>
+          {/* Role-driven quick actions (lens-specific). */}
           {lens.quickActions.map((key, idx) => {
             const a = QUICK_ACTIONS[key];
             const A = a.icon;
@@ -1681,7 +1726,15 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
               </Button>
             );
           })}
-          {/* Add Task — independent of role lens since tasks are universal. */}
+          {/* Visual divider between role-driven and universal actions so the
+              two groups parse as distinct on first scan. Hidden on mobile
+              where buttons wrap anyway. */}
+          <span
+            aria-hidden="true"
+            className="hidden sm:inline-block h-5 w-px bg-gray-200 mx-1"
+          />
+          {/* Universal actions (Add task, Trackers) — always visible
+              regardless of role lens. */}
           <Button
             size="sm"
             variant="outline"
@@ -1691,8 +1744,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
             <ClipboardList className="h-4 w-4" />
             Add task
           </Button>
-          {/* Trackers — embedded sub-view; lens-independent since clinical
-              charting cuts across roles. */}
           <Button
             size="sm"
             variant="outline"

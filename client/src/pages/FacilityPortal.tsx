@@ -1237,8 +1237,28 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </TabsContent>
 
         <TabsContent value="operations" className="mt-0">
-          <div style={{ width: '100vw', position: 'relative', left: '50%', marginLeft: '-50vw', paddingLeft: '1rem', paddingRight: '1rem' }}>
-            <OperationsTab facilityNumber={user.facilityNumber} />
+          {/* Operations is a dashboard, not a content card — break out of the
+              max-w-xl content well that wraps the other three tabs and run
+              full-bleed on a subtle gray surface. The background distinction
+              signals "dashboard mode" so the layout shift reads as intentional
+              rather than a missing container. */}
+          <div
+            style={{
+              width: '100vw',
+              position: 'relative',
+              left: '50%',
+              marginLeft: '-50vw',
+              paddingLeft: '1rem',
+              paddingRight: '1rem',
+              paddingTop: '1.5rem',
+              paddingBottom: '1.5rem',
+              background: '#F8FAFC', // slate-50 — quietly distinct from the white tabs
+              minHeight: 'calc(100vh - 200px)',
+            }}
+          >
+            <div className="max-w-7xl mx-auto">
+              <OperationsTab facilityNumber={user.facilityNumber} />
+            </div>
           </div>
         </TabsContent>
       </main>
