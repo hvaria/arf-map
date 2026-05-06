@@ -14,6 +14,9 @@ import { getCachedFacilities, autoSeedIfEmpty } from "./services/facilitiesServi
 import { opsRouter } from "./ops/opsRouter";
 import { bootstrapOpsSchema } from "./ops/opsStorage";
 import { bootstrapNotesSchema } from "./ops/notesStorage";
+import { bootstrapTrackersSchema } from "./trackers/trackerStorage";
+// trackerRouter is mounted under opsRouter in server/ops/opsRouter.ts so it
+// inherits requireFacilityAuth — see M4 fix.
 import { bootstrapMainSchema } from "./db/bootstrap";
 import type { FacilityAccount } from "@shared/schema";
 
@@ -188,8 +191,12 @@ app.use((req, res, next) => {
   await bootstrapMainSchema();
   await bootstrapOpsSchema();
   await bootstrapNotesSchema();
+  await bootstrapTrackersSchema();
 
-  // Mount the Facility Operations Module router before existing routes
+  // Mount the Facility Operations Module router before existing routes.
+  // The Tracker Module is mounted UNDER opsRouter (at /trackers) so it
+  // inherits opsRouter's requireFacilityAuth instead of running auth twice.
+  // Effective URL: /api/ops/trackers/... — unchanged for clients.
   app.use("/api/ops", opsRouter);
 
   await registerRoutes(httpServer, app);
