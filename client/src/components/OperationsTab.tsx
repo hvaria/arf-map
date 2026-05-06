@@ -604,7 +604,10 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
   // Day-scoped sub-views (currently just emar) read this to open on the
   // correct date when navigation comes from a calendar chip.
   const [subViewDate, setSubViewDate] = useState<string | null>(null);
-  const [showCalendar, setShowCalendar] = useState(false);
+  // Calendar is visible by default — it's the main operational view.
+  // Users can collapse it via the toggle in Today's-schedule if they want
+  // more screen space for alerts/queue.
+  const [showCalendar, setShowCalendar] = useState(true);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAllAlerts, setShowAllAlerts] = useState(false);
   const [lensOverride, setLensOverride] = useState<Role | null>(null);
