@@ -343,6 +343,10 @@ export {
 // `TrackerDefinition` *config object* type that lives in
 // shared/tracker-schemas/tracker-types.ts (Phase B).
 
+// NB: `trackerEntryStatusSchema` and the shift enum (`shiftSchema` / `Shift`)
+// are NOT re-exported here. They live in shared/tracker-schemas/tracker-types.ts
+// as the single source of truth — import them from "@shared/tracker-schemas".
+// See fix M7 in the Tracker Module review.
 export {
   // Table objects
   trackerDefinitions,
@@ -359,14 +363,10 @@ export {
   type NewTrackerEntryRow,
   type NewTrackerEntryVersionRow,
   type NewTrackerAuditLogRow,
-  // Zod enums
-  trackerEntryStatusSchema,
-  trackerShiftSchema,
+  // Zod enums (audit-only — entry status & shift moved to @shared/tracker-schemas)
   trackerAuditActionSchema,
   trackerAuditEntityTypeSchema,
   // Inferred enum types
-  type TrackerEntryStatus,
-  type TrackerShift,
   type TrackerAuditAction,
   type TrackerAuditEntityType,
 } from "../server/trackers/trackerSchema";
