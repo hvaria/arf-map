@@ -31,6 +31,7 @@ import {
   type MedicationDiscontinueReason,
 } from "@shared/medication-constants";
 import { useSession } from "@/hooks/useSession";
+import { AddTaskDialog } from "@/components/portal/AddTaskDialog";
 
 interface Resident {
   id: number;
@@ -521,6 +522,7 @@ export function ResidentProfileContent({
   const [medFormInitial, setMedFormInitial] = useState<MedicationFormValue | undefined>(undefined);
   const [discontinueTarget, setDiscontinueTarget] = useState<Medication | null>(null);
   const [createCarePlanOpen, setCreateCarePlanOpen] = useState(false);
+  const [addTaskOpen, setAddTaskOpen] = useState(false);
   const [reportIncidentOpen, setReportIncidentOpen] = useState(false);
   const residentIdStr = String(residentId);
 
@@ -797,8 +799,23 @@ export function ResidentProfileContent({
             facilityNumber={facilityNumber}
           />
 
+          {/* Pre-fills the resident automatically — caregiver doesn't have
+              to re-pick from a dropdown they're already inside. */}
+          <AddTaskDialog
+            open={addTaskOpen}
+            onOpenChange={setAddTaskOpen}
+            facilityNumber={facilityNumber}
+            defaultResidentId={Number(residentIdStr)}
+          />
+
           <div>
-            <h2 className="text-sm font-medium mb-3">Today's Tasks</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium">Today's Tasks</h2>
+              <Button size="sm" variant="outline" onClick={() => setAddTaskOpen(true)} className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" />
+                Add task
+              </Button>
+            </div>
             {todayTasks.length === 0 ? (
               <p className="text-sm text-muted-foreground">No tasks scheduled for today.</p>
             ) : (

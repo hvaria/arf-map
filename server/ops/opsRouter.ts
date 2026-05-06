@@ -397,11 +397,41 @@ const shiftSchema = z.object({
   notes: z.string().optional(),
 });
 
+// Server-enforced enum so the frontend's COMPLIANCE_TYPES list and the
+// dashboard's compliance-overdue rollup share one vocabulary. Adding a
+// new type here is the canonical extension point.
+const COMPLIANCE_ITEM_TYPES = [
+  "lic_624_quarterly_report",
+  "fire_drill",
+  "earthquake_drill",
+  "elopement_drill",
+  "staff_cpr_certification",
+  "staff_first_aid_certification",
+  "tb_test_renewal",
+  "criminal_background_clearance",
+  "facility_inspection",
+  "license_renewal",
+  "insurance_renewal",
+  "policy_review",
+  "other",
+] as const;
+
 const complianceItemSchema = z.object({
   facilityNumber: z.string().min(1),
-  itemType: z.string().min(1),
+  itemType: z.enum(COMPLIANCE_ITEM_TYPES, {
+    errorMap: () => ({ message: "Pick a valid compliance type" }),
+  }),
   description: z.string().min(1),
-  dueDate: z.number().int(),
+  // BE-9: due date must be today or later when creating a NEW item.
+  // Compare to local-midnight so timezone drift doesn't reject valid dates.
+  dueDate: z.number().int().refine(
+    (ts) => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return ts >= today.getTime();
+    },
+    { message: "Due date must be today or later" },
+  ),
   assignedTo: z.string().optional(),
   status: z.string().optional(),
   reminderDaysBefore: z.number().int().optional(),
@@ -2077,6 +2107,21 @@ opsRouter.get("/facilities/:facilityNumber/calendar/events", async (req, res) =>
     const fromMs = localMidnight(from);
     const toMs   = localMidnight(to) + 86_400_000; // exclusive end-of-day
 
+    // BE-8: hard caps so a malicious or careless client can't ask for a
+    // 5-year window over a 10,000-resident facility.
+    const MAX_RANGE_DAYS = 90;
+    const MAX_ROWS = 5000;
+    if (toMs <= fromMs) {
+      return res.status(400).json({ success: false, error: "to must be on or after from" });
+    }
+    const totalDays = Math.round((toMs - fromMs) / 86_400_000);
+    if (totalDays > MAX_RANGE_DAYS) {
+      return res.status(400).json({
+        success: false,
+        error: `Date range too large (max ${MAX_RANGE_DAYS} days)`,
+      });
+    }
+
     // Optional type filter — accepts comma list or repeated query params.
     const VALID: ReadonlyArray<ops.CalendarEventType> = [
       "meds", "tasks", "incidents", "leads", "billing", "compliance",
@@ -2091,12 +2136,22 @@ opsRouter.get("/facilities/:facilityNumber/calendar/events", async (req, res) =>
 
     // Make sure today's pending med-pass rows exist before reading; mirrors
     // the behavior of /med-pass and /calendar so the calendar self-heals.
-    const diffDays = Math.min(Math.round((toMs - fromMs) / 86_400_000), 42);
-    const days = Array.from({ length: diffDays }, (_, i) => fromMs + i * 86_400_000);
+    // Cap the materialization loop to 42 days even when totalDays is larger
+    // (already prevented by the range cap above, but kept defensive).
+    const matDays = Math.min(totalDays, 42);
+    const days = Array.from({ length: matDays }, (_, i) => fromMs + i * 86_400_000);
     await Promise.all(days.map((d) => ops.generateDailyMedPassEntries(facilityNumber, d)));
 
     const data = await ops.getFacilityCalendarEvents(facilityNumber, fromMs, toMs, types);
-    return res.json({ success: true, data });
+    // Defense in depth: cap the response so a single facility with an
+    // unusual mix of recurring meds can't OOM the client.
+    const truncated = data.length > MAX_ROWS;
+    const payload = truncated ? data.slice(0, MAX_ROWS) : data;
+    return res.json({
+      success: true,
+      data: payload,
+      meta: { total: data.length, returned: payload.length, truncated },
+    });
   } catch (e) {
     console.error("[ops] calendar/events failed", e);
     return res.status(500).json({ success: false, error: "Internal error" });

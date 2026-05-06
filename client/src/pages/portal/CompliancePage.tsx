@@ -109,10 +109,18 @@ function AddComplianceDialog({
     },
   });
 
+  // Mirror server-side validation so the user gets feedback before the
+  // network call. Server-side enforcement still owns correctness.
+  const dueDateMs = form.dueDate ? toLocalEpochMs(form.dueDate) : null;
+  const todayMidnight = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
   const errors = {
     type: !form.type ? "Pick a compliance type" : undefined,
+    dueDate:
+      dueDateMs !== null && dueDateMs < todayMidnight
+        ? "Due date must be today or later"
+        : undefined,
   };
-  const isValid = !errors.type;
+  const isValid = !errors.type && !errors.dueDate;
   const submit = () => {
     if (!isValid || mutation.isPending) {
       setShowErrors(true);
@@ -147,8 +155,13 @@ function AddComplianceDialog({
             />
           </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Due Date">
-              <Input type="date" value={form.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
+            <FormField label="Due Date" error={showErrors ? errors.dueDate : undefined}>
+              <Input
+                type="date"
+                value={form.dueDate}
+                min={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => set("dueDate", e.target.value)}
+              />
             </FormField>
             <FormField label="Assigned To">
               <Select
