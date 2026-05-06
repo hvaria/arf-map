@@ -142,18 +142,22 @@ const carePlanSchema = z.object({
   status: z.string().optional(),
 });
 
+// Below — `.strict()` on small, single-purpose schemas so any unknown field
+// in the request surfaces as a 400 rather than being silently dropped. The
+// only thing that breaks is sending fields nobody asked for; legitimate
+// callers are unaffected.
 const signCarePlanSchema = z.object({
   signerType: z.enum(["resident", "family"]),
   signature: z.string().min(1),
-});
+}).strict();
 
 const completeTaskSchema = z.object({
   notes: z.string(),
-});
+}).strict();
 
 const refuseTaskSchema = z.object({
   reason: z.string().min(1),
-});
+}).strict();
 
 // Manual task creation — independent of a care plan. Used by the "Add Task"
 // dialog so users can put a task on the calendar without having to create a
@@ -231,7 +235,7 @@ const medPassSchema = z.object({
 const prnFollowupSchema = z.object({
   effectivenessNotes: z.string().min(1),
   notedAt: z.number().int(),
-});
+}).strict();
 
 const controlledSubCountSchema = z.object({
   medicationId: z.number().int(),
@@ -318,7 +322,7 @@ const tourSchema = z.object({
   notes: z.string().optional(),
   followUpAction: z.string().optional(),
   completedAt: z.number().int().optional(),
-});
+}).strict();
 
 const admissionSchema = z.object({
   leadId: z.number().int(),
@@ -439,7 +443,7 @@ const complianceItemSchema = z.object({
 
 const completeComplianceSchema = z.object({
   completedDate: z.number().int(),
-});
+}).strict();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module 1 — Residents
