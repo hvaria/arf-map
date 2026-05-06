@@ -190,6 +190,37 @@ export async function refuseTask(id: number, reason: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+// Direct task creation — independent of a care plan. Lets the manual
+// "Add Task" form put one row on the calendar without the user having to
+// build a whole care plan. Returns the inserted row.
+export async function createManualDailyTask(input: {
+  facilityNumber: string;
+  residentId: number;
+  taskName: string;
+  taskType: string;
+  taskDate: number;
+  scheduledTime?: string;
+  shift?: string;
+  assignedTo?: string;
+}): Promise<OpsDailyTask> {
+  const now = Date.now();
+  const row: InsertOpsDailyTask = {
+    carePlanId: 0,                    // 0 = "manual / no care plan"
+    residentId: input.residentId,
+    facilityNumber: input.facilityNumber,
+    taskName: input.taskName,
+    taskType: input.taskType,
+    scheduledTime: input.scheduledTime,
+    shift: input.shift,
+    assignedTo: input.assignedTo,
+    status: "pending",
+    taskDate: input.taskDate,
+    createdAt: now,
+  };
+  const [inserted] = await db.insert(opsDailyTasks).values(row).returning();
+  return inserted;
+}
+
 export async function createDailyTasksFromCarePlan(carePlanId: number, residentId: number, facilityNumber: string): Promise<number> {
   const cpRows = await db.select().from(opsCarePlans).where(eq(opsCarePlans.id, carePlanId));
   const carePlan = cpRows[0] as OpsCarePlan | undefined;
@@ -1012,6 +1043,302 @@ export async function getFacilityDashboard(facilityNumber: string): Promise<{
     overdueInvoices:   r6.rows[0]?.c ?? 0,
     overdueCompliance: r7.rows[0]?.c ?? 0,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified calendar events
+//
+// Returns one normalized row per scheduled item across six source modules
+// (meds, tasks, incidents, leads, billing, compliance) for the requested
+// date window. The Day and Week time grids consume this so that anything
+// the user fills in elsewhere in the portal — a new incident, a tour, an
+// invoice due date, a compliance item — automatically shows up on the
+// calendar without per-source plumbing.
+//
+// Time-of-day handling:
+//   • Meds, tours — already carry an exact timestamp.
+//   • Tasks, incidents — date timestamp + free-text "HH:MM" (combined here).
+//   • Invoices, compliance — date-only; pinned to 09:00 local and flagged
+//     allDay so the UI can render them differently if desired.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type CalendarEventType =
+  | "meds"
+  | "tasks"
+  | "incidents"
+  | "leads"
+  | "billing"
+  | "compliance";
+
+export interface CalendarEventRow {
+  id: string;             // namespaced: "meds-123", "tasks-45"
+  type: CalendarEventType;
+  title: string;
+  subtitle: string;
+  date: string;           // YYYY-MM-DD (local to the server)
+  scheduledAt: number;    // Unix ms — used for hour-grid placement
+  scheduledTime: string;  // "HH:MM" 24h
+  status: string;
+  allDay: boolean;
+  href: string;
+}
+
+const HREF_BY_TYPE: Record<CalendarEventType, string> = {
+  meds:       "/portal/emar",
+  tasks:      "/portal/residents",
+  incidents:  "/portal/incidents",
+  leads:      "/portal/crm",
+  billing:    "/portal/billing",
+  compliance: "/portal/compliance",
+};
+
+function isoLocalDate(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function timeOfDay(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// Combine a date timestamp with an optional "HH:MM" text and return a fresh
+// timestamp anchored to that local time. If the text is missing or malformed
+// the event is treated as all-day and pinned to 09:00 so it still surfaces
+// in the operational hour grid.
+function combineDateAndTime(dateMs: number, timeStr: string | null | undefined): { ts: number; allDay: boolean } {
+  const m = timeStr ? timeStr.match(/^(\d{1,2}):(\d{2})/) : null;
+  const d = new Date(dateMs);
+  if (m) {
+    d.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 0, 0);
+    return { ts: d.getTime(), allDay: false };
+  }
+  d.setHours(9, 0, 0, 0);
+  return { ts: d.getTime(), allDay: true };
+}
+
+export async function getFacilityCalendarEvents(
+  facilityNumber: string,
+  fromMs: number,
+  toMs: number,
+  types?: ReadonlyArray<CalendarEventType>,
+): Promise<CalendarEventRow[]> {
+  const want = (t: CalendarEventType) => !types || types.length === 0 || types.includes(t);
+
+  const queries: Array<Promise<CalendarEventRow[]>> = [];
+
+  // ── Meds ─────────────────────────────────────────────────────────────────
+  if (want("meds")) {
+    queries.push(
+      pool.query<{
+        id: number; scheduled_datetime: number; status: string;
+        drug_name: string; dosage: string;
+        first_name: string; last_name: string; room_number: string | null;
+      }>(
+        `SELECT mp.id, mp.scheduled_datetime, mp.status,
+                m.drug_name, m.dosage,
+                r.first_name, r.last_name, r.room_number
+         FROM ops_med_passes mp
+         JOIN ops_medications m ON mp.medication_id = m.id
+         JOIN ops_residents   r ON mp.resident_id = r.id
+         WHERE mp.facility_number = $1
+           AND mp.scheduled_datetime >= $2
+           AND mp.scheduled_datetime <  $3
+         ORDER BY mp.scheduled_datetime ASC`,
+        [facilityNumber, fromMs, toMs],
+      ).then((res) => res.rows.map((row): CalendarEventRow => ({
+        id: `meds-${row.id}`,
+        type: "meds",
+        title: `${row.drug_name}${row.dosage ? ` ${row.dosage}` : ""}`.trim(),
+        subtitle: `${row.first_name} ${row.last_name}${row.room_number ? ` · Rm ${row.room_number}` : ""}`,
+        date: isoLocalDate(row.scheduled_datetime),
+        scheduledAt: row.scheduled_datetime,
+        scheduledTime: timeOfDay(row.scheduled_datetime),
+        status: row.status,
+        allDay: false,
+        href: HREF_BY_TYPE.meds,
+      }))),
+    );
+  }
+
+  // ── Tasks ────────────────────────────────────────────────────────────────
+  if (want("tasks")) {
+    queries.push(
+      pool.query<{
+        id: number; task_date: number; scheduled_time: string | null;
+        task_name: string; status: string;
+        first_name: string | null; last_name: string | null; room_number: string | null;
+      }>(
+        `SELECT t.id, t.task_date, t.scheduled_time, t.task_name, t.status,
+                r.first_name, r.last_name, r.room_number
+         FROM ops_daily_tasks t
+         LEFT JOIN ops_residents r ON t.resident_id = r.id
+         WHERE t.facility_number = $1
+           AND t.task_date >= $2
+           AND t.task_date <  $3
+         ORDER BY t.task_date ASC`,
+        [facilityNumber, fromMs, toMs],
+      ).then((res) => res.rows.map((row): CalendarEventRow => {
+        const { ts, allDay } = combineDateAndTime(row.task_date, row.scheduled_time);
+        const resident = row.first_name ? `${row.first_name} ${row.last_name ?? ""}`.trim() : "Facility-wide";
+        return {
+          id: `tasks-${row.id}`,
+          type: "tasks",
+          title: row.task_name,
+          subtitle: `${resident}${row.room_number ? ` · Rm ${row.room_number}` : ""}`,
+          date: isoLocalDate(ts),
+          scheduledAt: ts,
+          scheduledTime: timeOfDay(ts),
+          status: row.status,
+          allDay,
+          href: HREF_BY_TYPE.tasks,
+        };
+      })),
+    );
+  }
+
+  // ── Incidents ────────────────────────────────────────────────────────────
+  if (want("incidents")) {
+    queries.push(
+      pool.query<{
+        id: number; incident_date: number; incident_time: string | null;
+        incident_type: string; status: string;
+        first_name: string | null; last_name: string | null;
+      }>(
+        `SELECT i.id, i.incident_date, i.incident_time, i.incident_type, i.status,
+                r.first_name, r.last_name
+         FROM ops_incidents i
+         LEFT JOIN ops_residents r ON i.resident_id = r.id
+         WHERE i.facility_number = $1
+           AND i.incident_date >= $2
+           AND i.incident_date <  $3
+         ORDER BY i.incident_date ASC`,
+        [facilityNumber, fromMs, toMs],
+      ).then((res) => res.rows.map((row): CalendarEventRow => {
+        const { ts, allDay } = combineDateAndTime(row.incident_date, row.incident_time);
+        const resident = row.first_name ? `${row.first_name} ${row.last_name ?? ""}`.trim() : "Facility-wide";
+        return {
+          id: `incidents-${row.id}`,
+          type: "incidents",
+          title: row.incident_type.replace(/_/g, " "),
+          subtitle: resident,
+          date: isoLocalDate(ts),
+          scheduledAt: ts,
+          scheduledTime: timeOfDay(ts),
+          status: row.status,
+          allDay,
+          href: HREF_BY_TYPE.incidents,
+        };
+      })),
+    );
+  }
+
+  // ── Leads (tours) ────────────────────────────────────────────────────────
+  if (want("leads")) {
+    queries.push(
+      pool.query<{
+        id: number; scheduled_at: number; outcome: string | null; completed_at: number | null;
+        prospect_name: string; contact_name: string;
+      }>(
+        `SELECT t.id, t.scheduled_at, t.outcome, t.completed_at,
+                l.prospect_name, l.contact_name
+         FROM ops_tours t
+         JOIN ops_leads l ON t.lead_id = l.id
+         WHERE t.facility_number = $1
+           AND t.scheduled_at >= $2
+           AND t.scheduled_at <  $3
+         ORDER BY t.scheduled_at ASC`,
+        [facilityNumber, fromMs, toMs],
+      ).then((res) => res.rows.map((row): CalendarEventRow => ({
+        id: `leads-${row.id}`,
+        type: "leads",
+        title: `Tour · ${row.prospect_name}`,
+        subtitle: `Contact: ${row.contact_name}`,
+        date: isoLocalDate(row.scheduled_at),
+        scheduledAt: row.scheduled_at,
+        scheduledTime: timeOfDay(row.scheduled_at),
+        status: row.completed_at ? (row.outcome ?? "completed") : "scheduled",
+        allDay: false,
+        href: HREF_BY_TYPE.leads,
+      }))),
+    );
+  }
+
+  // ── Billing (invoice due dates) ──────────────────────────────────────────
+  if (want("billing")) {
+    queries.push(
+      pool.query<{
+        id: number; due_date: number; invoice_number: string;
+        total: number; balance_due: number; status: string;
+        first_name: string | null; last_name: string | null;
+      }>(
+        `SELECT i.id, i.due_date, i.invoice_number, i.total, i.balance_due, i.status,
+                r.first_name, r.last_name
+         FROM ops_invoices i
+         LEFT JOIN ops_residents r ON i.resident_id = r.id
+         WHERE i.facility_number = $1
+           AND i.due_date IS NOT NULL
+           AND i.due_date >= $2
+           AND i.due_date <  $3
+         ORDER BY i.due_date ASC`,
+        [facilityNumber, fromMs, toMs],
+      ).then((res) => res.rows.map((row): CalendarEventRow => {
+        const { ts, allDay } = combineDateAndTime(row.due_date, null);
+        const resident = row.first_name ? `${row.first_name} ${row.last_name ?? ""}`.trim() : "Resident";
+        const amount = (row.balance_due ?? row.total).toFixed(2);
+        return {
+          id: `billing-${row.id}`,
+          type: "billing",
+          title: `Invoice ${row.invoice_number} due · $${amount}`,
+          subtitle: resident,
+          date: isoLocalDate(ts),
+          scheduledAt: ts,
+          scheduledTime: timeOfDay(ts),
+          status: row.status,
+          allDay,
+          href: HREF_BY_TYPE.billing,
+        };
+      })),
+    );
+  }
+
+  // ── Compliance ───────────────────────────────────────────────────────────
+  if (want("compliance")) {
+    queries.push(
+      pool.query<{
+        id: number; due_date: number; item_type: string; description: string;
+        status: string; assigned_to: string | null;
+      }>(
+        `SELECT c.id, c.due_date, c.item_type, c.description, c.status, c.assigned_to
+         FROM ops_compliance_calendar c
+         WHERE c.facility_number = $1
+           AND c.due_date >= $2
+           AND c.due_date <  $3
+         ORDER BY c.due_date ASC`,
+        [facilityNumber, fromMs, toMs],
+      ).then((res) => res.rows.map((row): CalendarEventRow => {
+        const { ts, allDay } = combineDateAndTime(row.due_date, null);
+        return {
+          id: `compliance-${row.id}`,
+          type: "compliance",
+          title: row.description || row.item_type.replace(/_/g, " "),
+          subtitle: row.assigned_to ? `Assigned: ${row.assigned_to}` : "Unassigned",
+          date: isoLocalDate(ts),
+          scheduledAt: ts,
+          scheduledTime: timeOfDay(ts),
+          status: row.status,
+          allDay,
+          href: HREF_BY_TYPE.compliance,
+        };
+      })),
+    );
+  }
+
+  // Run all source queries in parallel; merge and sort by absolute time.
+  const results = await Promise.all(queries);
+  const merged = results.flat();
+  merged.sort((a, b) => a.scheduledAt - b.scheduledAt);
+  return merged;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -13,6 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { toLocalEpochMs, todayLocal } from "@/lib/datetime";
+import { FormField, onSubmitKey } from "@/components/portal/FormField";
 import { Plus, Users, AlertCircle, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
@@ -84,13 +86,14 @@ function AddStaffDialog({
   });
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const [showErrors, setShowErrors] = useState(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/staff`, {
         ...form,
-        hireDate: form.hireDate ? new Date(form.hireDate).getTime() : Date.now(),
-        licenseExpiry: form.licenseExpiry ? new Date(form.licenseExpiry).getTime() : null,
+        hireDate: form.hireDate ? toLocalEpochMs(form.hireDate) : Date.now(),
+        licenseExpiry: form.licenseExpiry ? toLocalEpochMs(form.licenseExpiry) : null,
       });
       return res.json();
     },
@@ -98,11 +101,31 @@ function AddStaffDialog({
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/staff`] });
       toast({ title: "Staff member added" });
       onOpenChange(false);
+      setShowErrors(false);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  // Inline validation: required fields + future-only license expiry.
+  const expiryMs = form.licenseExpiry ? toLocalEpochMs(form.licenseExpiry) : null;
+  const errors = {
+    firstName: !form.firstName.trim() ? "First name is required" : undefined,
+    lastName:  !form.lastName.trim() ? "Last name is required" : undefined,
+    role:      !form.role ? "Pick a role" : undefined,
+    licenseExpiry:
+      expiryMs !== null && expiryMs <= Date.now() ? "Must be a future date" : undefined,
+  };
+  const isValid =
+    !errors.firstName && !errors.lastName && !errors.role && !errors.licenseExpiry;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -110,19 +133,16 @@ function AddStaffDialog({
         <DialogHeader>
           <DialogTitle>Add Staff Member</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>First Name</Label>
+            <FormField label="First Name" required error={showErrors ? errors.firstName : undefined}>
               <Input value={form.firstName} onChange={(e) => set("firstName", e.target.value)} placeholder="First name" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Last Name</Label>
+            </FormField>
+            <FormField label="Last Name" required error={showErrors ? errors.lastName : undefined}>
               <Input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} placeholder="Last name" />
-            </div>
+            </FormField>
           </div>
-          <div className="space-y-1.5">
-            <Label>Role</Label>
+          <FormField label="Role" required error={showErrors ? errors.role : undefined}>
             <Select value={form.role} onValueChange={(v) => set("role", v)}>
               <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
               <SelectContent>
@@ -131,35 +151,30 @@ function AddStaffDialog({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Email</Label>
+            <FormField label="Email">
               <Input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="email@example.com" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Phone</Label>
+            </FormField>
+            <FormField label="Phone">
               <Input value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="Phone" />
-            </div>
+            </FormField>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Hire Date</Label>
+            <FormField label="Hire Date">
               <Input type="date" value={form.hireDate} onChange={(e) => set("hireDate", e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>License Expiry</Label>
+            </FormField>
+            <FormField
+              label="License Expiry"
+              error={showErrors ? errors.licenseExpiry : undefined}
+              hint="Must be in the future"
+            >
               <Input type="date" value={form.licenseExpiry} onChange={(e) => set("licenseExpiry", e.target.value)} />
-            </div>
+            </FormField>
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || !form.firstName || !form.role}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Adding..." : "Add Staff"}
             </Button>
           </div>
@@ -182,28 +197,23 @@ function AddShiftDialog({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [form, setForm] = useState(() => {
-    // Local-date YYYY-MM-DD (toISOString is UTC and rolls forward in the evening
-    // for users west of UTC, so the form would default to tomorrow's date).
-    const d = new Date();
-    const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return {
-      staffId: "",
-      shiftType: "AM" as typeof SHIFT_TYPES[number],
-      shiftDate: localDate,
-      startTime: "06:00",
-      endTime: "14:00",
-    };
-  });
+  const [form, setForm] = useState(() => ({
+    staffId: "",
+    shiftType: "AM" as typeof SHIFT_TYPES[number],
+    shiftDate: todayLocal(),
+    startTime: "06:00",
+    endTime: "14:00",
+  }));
 
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const [showErrors, setShowErrors] = useState(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/shifts`, {
         ...form,
         staffId: Number(form.staffId),
-        shiftDate: new Date(form.shiftDate).getTime(),
+        shiftDate: toLocalEpochMs(form.shiftDate),
       });
       return res.json();
     },
@@ -211,11 +221,26 @@ function AddShiftDialog({
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/schedule`] });
       toast({ title: "Shift added" });
       onOpenChange(false);
+      setShowErrors(false);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  // Inline validation: pick a person, sane time order.
+  const errors = {
+    staffId: !form.staffId ? "Pick a staff member" : undefined,
+    times: form.startTime >= form.endTime ? "End time must be after start" : undefined,
+  };
+  const isValid = !errors.staffId && !errors.times;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -223,9 +248,8 @@ function AddShiftDialog({
         <DialogHeader>
           <DialogTitle>Add Shift</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Staff Member</Label>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Staff Member" required error={showErrors ? errors.staffId : undefined}>
             <Select value={form.staffId} onValueChange={(v) => set("staffId", v)}>
               <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
               <SelectContent>
@@ -236,43 +260,37 @@ function AddShiftDialog({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Shift Type</Label>
+            <FormField label="Shift Type">
               <Select value={form.shiftType} onValueChange={(v) => set("shiftType", v as typeof SHIFT_TYPES[number])}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {SHIFT_TYPES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Date</Label>
+            </FormField>
+            <FormField label="Date">
               <Input type="date" value={form.shiftDate} onChange={(e) => set("shiftDate", e.target.value)} />
-            </div>
+            </FormField>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Start Time</Label>
+            <FormField label="Start Time" error={showErrors ? errors.times : undefined}>
               <Input type="time" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>End Time</Label>
+            </FormField>
+            <FormField label="End Time">
               <Input type="time" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} />
-            </div>
+            </FormField>
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || !form.staffId}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Adding..." : "Add Shift"}
             </Button>
           </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
         </div>
       </DialogContent>
     </Dialog>

@@ -4,7 +4,7 @@
  * aggregated per day. Clicking any event chip navigates to that sub-view.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -29,19 +29,67 @@ interface DayOpsEvent {
 type CalView = "day" | "week" | "month";
 type SubView = "emar" | "residents" | "incidents" | "crm" | "billing" | "compliance";
 
+// Filter applied across all calendar views. "all" = no filter (default);
+// any other value narrows the calendar to that single category.
+type FilterKey = "all" | SubView;
+
+const FILTER_LABEL: Record<FilterKey, string> = {
+  all: "events",
+  emar: "meds",
+  residents: "tasks",
+  incidents: "incidents",
+  crm: "leads",
+  billing: "billing items",
+  compliance: "compliance items",
+};
+
+
 // ── Time-grid types (Day + Week hourly views) ─────────────────────────────────
 
-interface MedPassRow {
-  id: number;
-  residentId: number;
-  residentName: string;
-  roomNumber: string;
-  drugName: string;
-  dosage: string;
-  scheduledTime: string;        // backend emits "08:00" (24h); we also accept "8:00 AM"
-  status: "pending" | "given" | "late" | "missed" | "refused" | "held";
-  shift: "AM" | "PM" | "NOC";
+// Unified event shape from /api/ops/facilities/:f/calendar/events. Mirrors
+// CalendarEventRow in server/ops/opsStorage.ts.
+type EventType = "meds" | "tasks" | "incidents" | "leads" | "billing" | "compliance";
+
+interface CalendarEvent {
+  id: string;                   // namespaced: "meds-123", "tasks-45"
+  type: EventType;
+  title: string;
+  subtitle: string;
+  date: string;                 // YYYY-MM-DD
+  scheduledAt: number;          // Unix ms
+  scheduledTime: string;        // "HH:MM" (24h); also tolerated as "8:00 AM"
+  status: string;
+  allDay: boolean;
+  href: string;
 }
+
+// Type → SubView mapping (for navigation drill-down and filter-key alignment
+// with the existing CHIPS array, which is keyed by SubView).
+const SUBVIEW_BY_TYPE: Record<EventType, SubView> = {
+  meds:       "emar",
+  tasks:      "residents",
+  incidents:  "incidents",
+  leads:      "crm",
+  billing:    "billing",
+  compliance: "compliance",
+};
+const TYPE_BY_SUBVIEW = Object.fromEntries(
+  Object.entries(SUBVIEW_BY_TYPE).map(([k, v]) => [v, k as EventType]),
+) as Record<SubView, EventType>;
+
+// Default chip color per event type — pastel palette matching the legend.
+const TYPE_STYLE: Record<EventType, string> = {
+  meds:       "bg-indigo-100  text-indigo-800  border-indigo-300",
+  tasks:      "bg-violet-100  text-violet-800  border-violet-300",
+  incidents:  "bg-orange-100  text-orange-800  border-orange-300",
+  leads:      "bg-blue-100    text-blue-800    border-blue-300",
+  billing:    "bg-emerald-100 text-emerald-800 border-emerald-300",
+  compliance: "bg-rose-100    text-rose-800    border-rose-300",
+};
+
+// Med-pass status — used for status-aware coloring of meds chips and the
+// status legend strip in DayTimeGrid.
+type MedStatus = "pending" | "given" | "late" | "missed" | "refused" | "held";
 
 // Operational hour range surfaced by default. NOC shift (00:00–05:00) is
 // hidden behind a toggle so the grid stays compact.
@@ -153,14 +201,40 @@ function minuteOffset(hour: number, minute: number, hourStart: number): number {
 }
 
 // Color rules per med-pass status — same vocabulary as EmarPage so users
-// don't relearn it.
-const MED_STATUS_STYLE: Record<MedPassRow["status"], string> = {
+// don't relearn it. For non-meds events, TYPE_STYLE drives the color.
+const MED_STATUS_STYLE: Record<MedStatus, string> = {
   pending: "bg-indigo-100  text-indigo-800  border-indigo-300",
   given:   "bg-emerald-100 text-emerald-800 border-emerald-300",
   late:    "bg-amber-100   text-amber-900   border-amber-400",
   missed:  "bg-red-100     text-red-800     border-red-400",
   refused: "bg-slate-100   text-slate-700   border-slate-300",
   held:    "bg-yellow-100  text-yellow-800  border-yellow-300",
+};
+
+// Picks the right palette for an event chip:
+//   • meds  → status-driven (clinical signal matters)
+//   • other → type default
+function chipStyleFor(event: CalendarEvent): string {
+  if (event.type === "meds") {
+    const s = event.status as MedStatus;
+    return MED_STATUS_STYLE[s] ?? TYPE_STYLE.meds;
+  }
+  // For non-meds, dim "completed/closed/paid" so they recede visually.
+  const closed = ["completed", "closed", "paid", "void"];
+  if (closed.includes(event.status)) {
+    return cn(TYPE_STYLE[event.type], "opacity-60");
+  }
+  return TYPE_STYLE[event.type];
+}
+
+// Lucide icon per type — matches CHIPS legend.
+const TYPE_ICON: Record<EventType, React.ElementType> = {
+  meds:       Pill,
+  tasks:      ClipboardList,
+  incidents:  AlertTriangle,
+  leads:      UserPlus,
+  billing:    Receipt,
+  compliance: ShieldCheck,
 };
 
 // ── Event chip definitions ────────────────────────────────────────────────────
@@ -235,13 +309,18 @@ const CHIPS: ChipDef[] = [
 // ── EventChips ────────────────────────────────────────────────────────────────
 
 function EventChips({
-  event, onNavigate, compact = false,
+  event, onNavigate, compact = false, filter = "all",
 }: {
   event: DayOpsEvent;
   onNavigate: (sv: SubView, date?: string) => void;
   compact?: boolean;
+  /** When set to anything other than "all", only chips matching that key
+   * appear. Hides categories the user has filtered out. */
+  filter?: FilterKey;
 }) {
-  const active = CHIPS.filter((c) => c.count(event) > 0);
+  const active = CHIPS
+    .filter((c) => c.count(event) > 0)
+    .filter((c) => filter === "all" || c.key === filter);
   if (active.length === 0) return null;
 
   const visible = compact ? active.slice(0, 3) : active;
@@ -369,15 +448,15 @@ function HourLanes({
 
 // ── Time-grid event chip ──────────────────────────────────────────────────────
 
-function MedChip({
-  m,
+function EventChip({
+  event,
   hourStart,
   compact = false,
   laneIndex = 0,
   laneCount = 1,
   onClick,
 }: {
-  m: MedPassRow;
+  event: CalendarEvent;
   hourStart: number;
   compact?: boolean;
   /** When multiple chips overlap on the same time, each is assigned a
@@ -386,7 +465,7 @@ function MedChip({
   laneCount?: number;
   onClick?: () => void;
 }) {
-  const parsed = parseAmPm(m.scheduledTime);
+  const parsed = parseAmPm(event.scheduledTime);
   if (!parsed) return null;
   const top = (minuteOffset(parsed.hour, parsed.minute, hourStart) / 60) * HOUR_PX;
   if (top < 0) return null;
@@ -394,18 +473,18 @@ function MedChip({
   const windowMin = compact ? WEEK_WINDOW_MIN : DAY_WINDOW_MIN;
   const height = Math.max(MIN_CHIP_PX, (windowMin / 60) * HOUR_PX);
 
-  // Lane layout: split horizontal space into laneCount columns, leave a 2px
-  // gutter between lanes. Single-chip case keeps the original full-width feel.
   const leftPct  = (laneIndex / laneCount) * 100;
   const widthPct = (1 / laneCount) * 100;
+
+  const Icon = TYPE_ICON[event.type];
 
   return (
     <button
       onClick={onClick}
-      title={`${m.scheduledTime} · ${m.residentName} · ${m.drugName} ${m.dosage} · ${m.status}`}
+      title={`${event.scheduledTime} · ${event.title} · ${event.subtitle} · ${event.status}`}
       className={cn(
         "absolute rounded border text-left overflow-hidden transition-all hover:brightness-95 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400",
-        MED_STATUS_STYLE[m.status],
+        chipStyleFor(event),
         compact ? "px-1 py-0.5 text-[10px] leading-tight" : "px-1.5 py-1 text-[11px] leading-tight",
       )}
       style={{
@@ -416,66 +495,76 @@ function MedChip({
       }}
     >
       <div className="flex items-center gap-1 font-semibold tabular-nums">
-        <Pill className={cn(compact ? "h-2.5 w-2.5" : "h-3 w-3", "shrink-0")} />
-        <span className="truncate">{formatTimeLabel(m.scheduledTime)}</span>
-        {!compact && <span className="opacity-70 truncate">· {m.residentName}</span>}
+        <Icon className={cn(compact ? "h-2.5 w-2.5" : "h-3 w-3", "shrink-0")} />
+        <span className="truncate">
+          {event.allDay ? "All day" : formatTimeLabel(event.scheduledTime)}
+        </span>
+        {!compact && <span className="opacity-70 truncate">· {event.title}</span>}
       </div>
       {!compact && (
-        <div className="opacity-80 truncate">
-          {m.drugName}
-          {m.dosage ? ` · ${m.dosage}` : ""}
-        </div>
+        <div className="opacity-80 truncate">{event.subtitle}</div>
       )}
       {compact && (
-        <div className="opacity-80 truncate text-[9px]">{m.residentName}</div>
+        <div className="opacity-80 truncate text-[9px]">{event.title}</div>
       )}
     </button>
   );
 }
 
 // Compute lane (column slot) for each chip so overlapping events show
-// side-by-side instead of stacked. Uses a simple greedy algorithm: walk
-// chips in time order, assign each to the first lane that's free at its
-// start time (lane is free if its previous chip's window has ended).
+// side-by-side instead of stacked. Greedy: walk events in time order, assign
+// each to the first lane that's free at its start time (lane is free if its
+// previous event's window has ended).
 function assignLanes(
-  rows: MedPassRow[],
+  events: CalendarEvent[],
   windowMin: number,
-): Array<{ row: MedPassRow; laneIndex: number; laneCount: number }> {
-  const items = rows
-    .map((r) => {
-      const p = parseAmPm(r.scheduledTime);
+): Array<{ event: CalendarEvent; laneIndex: number; laneCount: number }> {
+  const items = events
+    .map((e) => {
+      const p = parseAmPm(e.scheduledTime);
       if (!p) return null;
       const start = p.hour * 60 + p.minute;
-      return { r, start, end: start + windowMin };
+      return { e, start, end: start + windowMin };
     })
-    .filter((x): x is { r: MedPassRow; start: number; end: number } => x !== null)
+    .filter((x): x is { e: CalendarEvent; start: number; end: number } => x !== null)
     .sort((a, b) => a.start - b.start);
 
-  const laneEnds: number[] = []; // when each lane next becomes free
-  const placed: Array<{ row: MedPassRow; laneIndex: number }> = [];
+  const laneEnds: number[] = [];
+  const placed: Array<{ event: CalendarEvent; laneIndex: number }> = [];
 
   for (const it of items) {
-    let lane = laneEnds.findIndex((e) => e <= it.start);
+    let lane = laneEnds.findIndex((end) => end <= it.start);
     if (lane === -1) {
       lane = laneEnds.length;
       laneEnds.push(it.end);
     } else {
       laneEnds[lane] = it.end;
     }
-    placed.push({ row: it.r, laneIndex: lane });
+    placed.push({ event: it.e, laneIndex: lane });
   }
 
   const laneCount = Math.max(1, laneEnds.length);
   return placed.map((p) => ({ ...p, laneCount }));
 }
 
-// ── Hook: med passes for one day, with status filtering ───────────────────────
+// ── Hook: unified calendar events for a date range ────────────────────────────
+// Replaces the old per-day med-pass fetch. One request returns events from
+// every source module (meds, tasks, incidents, leads, billing, compliance).
+// Optional `types` narrows the request server-side so the filter chip applies
+// at the network level too.
 
-function fetchMedPassesForDay(facilityNumber: string, dateIso: string) {
-  return async (): Promise<{ success: boolean; data: MedPassRow[] } | null> => {
+function fetchCalendarEvents(
+  facilityNumber: string,
+  fromIso: string,
+  toIso: string,
+  types?: ReadonlyArray<EventType>,
+) {
+  return async (): Promise<{ success: boolean; data: CalendarEvent[] } | null> => {
+    const params = new URLSearchParams({ from: fromIso, to: toIso });
+    if (types && types.length > 0) params.set("type", types.join(","));
     const res = await apiRequest(
       "GET",
-      `/api/ops/facilities/${facilityNumber}/med-pass?date=${dateIso}`,
+      `/api/ops/facilities/${facilityNumber}/calendar/events?${params.toString()}`,
     );
     return res.json();
   };
@@ -549,7 +638,7 @@ function SeedDemoButton({ facilityNumber }: { facilityNumber: string }) {
   );
 }
 
-const STATUS_LEGEND: Array<{ status: MedPassRow["status"]; label: string }> = [
+const STATUS_LEGEND: Array<{ status: MedStatus; label: string }> = [
   { status: "pending", label: "Pending" },
   { status: "given",   label: "Given"   },
   { status: "late",    label: "Late"    },
@@ -584,11 +673,13 @@ function DayTimeGrid({
   dateIso,
   todayIso,
   onNavigate,
+  filter,
 }: {
   facilityNumber: string;
   dateIso: string;
   todayIso: string;
   onNavigate: (sv: SubView, date?: string) => void;
+  filter: FilterKey;
 }) {
   const [showOvernight, setShowOvernight] = useState(false);
   const isToday = dateIso === todayIso;
@@ -597,9 +688,18 @@ function DayTimeGrid({
   const hourStart = showOvernight ? 0 : DEFAULT_HOUR_START;
   const hourEnd   = showOvernight ? 23 : DEFAULT_HOUR_END;
 
-  const { data, isLoading } = useQuery<{ success: boolean; data: MedPassRow[] } | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`, dateIso],
-    queryFn: fetchMedPassesForDay(facilityNumber, dateIso),
+  // Server-side type filter when the user has narrowed by category. "all"
+  // sends no filter; the SubView keys (emar, residents, …) map back to
+  // event types via TYPE_BY_SUBVIEW.
+  const typeFilter: ReadonlyArray<EventType> | undefined =
+    filter === "all" ? undefined : [TYPE_BY_SUBVIEW[filter]];
+
+  const { data, isLoading } = useQuery<{ success: boolean; data: CalendarEvent[] } | null>({
+    queryKey: [
+      `/api/ops/facilities/${facilityNumber}/calendar/events`,
+      dateIso, dateIso, typeFilter?.join(",") ?? "all",
+    ],
+    queryFn: fetchCalendarEvents(facilityNumber, dateIso, dateIso, typeFilter),
     enabled: !!facilityNumber,
     staleTime: 60_000,
   });
@@ -607,8 +707,8 @@ function DayTimeGrid({
   const items = data?.data ?? [];
   const visibleLanes = useMemo(
     () => {
-      const within = items.filter((m) => {
-        const p = parseAmPm(m.scheduledTime);
+      const within = items.filter((e) => {
+        const p = parseAmPm(e.scheduledTime);
         if (!p) return false;
         return p.hour >= hourStart && p.hour <= hourEnd;
       });
@@ -629,42 +729,64 @@ function DayTimeGrid({
     containerRef.current.scrollTop = Math.max(0, offset);
   }, [isToday, hourStart, hourEnd]);
 
+  // Counts shown in the day header, grouped by event type. Falls back to the
+  // meds-only summary (given/pending/late) when the user is filtered to meds.
   const totals = useMemo(() => {
-    const t = { total: 0, given: 0, pending: 0, lateMissed: 0 };
-    for (const m of items) {
-      t.total += 1;
-      if (m.status === "given") t.given += 1;
-      else if (m.status === "pending") t.pending += 1;
-      else if (m.status === "late" || m.status === "missed") t.lateMissed += 1;
+    const byType: Record<EventType, number> = {
+      meds: 0, tasks: 0, incidents: 0, leads: 0, billing: 0, compliance: 0,
+    };
+    let medsGiven = 0, medsPending = 0, medsLateMissed = 0;
+    for (const e of items) {
+      byType[e.type] += 1;
+      if (e.type === "meds") {
+        if (e.status === "given") medsGiven += 1;
+        else if (e.status === "pending") medsPending += 1;
+        else if (e.status === "late" || e.status === "missed") medsLateMissed += 1;
+      }
     }
-    return t;
+    return { byType, total: items.length, medsGiven, medsPending, medsLateMissed };
   }, [items]);
 
   return (
     <div>
-      {/* Day header strip */}
+      {/* Day header strip — meds-detail summary when meds are visible,
+          otherwise per-type counts. */}
       <div className="flex items-center justify-between px-1 pb-2 mb-2 border-b border-gray-100 flex-wrap gap-2">
         <div className="text-xs text-gray-600 tabular-nums">
           {isLoading ? (
-            <Skeleton className="h-4 w-32 inline-block" />
-          ) : (
+            <Skeleton className="h-4 w-40 inline-block" />
+          ) : totals.byType.meds > 0 ? (
             <>
-              <span className="font-semibold text-gray-800">{totals.total}</span> meds
+              <span className="font-semibold text-gray-800">{totals.byType.meds}</span> meds
               <span className="mx-1.5 text-gray-300">·</span>
-              <span className="text-emerald-700">{totals.given} given</span>
+              <span className="text-emerald-700">{totals.medsGiven} given</span>
               <span className="mx-1.5 text-gray-300">·</span>
-              <span className="text-indigo-700">{totals.pending} pending</span>
-              {totals.lateMissed > 0 && (
+              <span className="text-indigo-700">{totals.medsPending} pending</span>
+              {totals.medsLateMissed > 0 && (
                 <>
                   <span className="mx-1.5 text-gray-300">·</span>
-                  <span className="text-red-700 font-medium">{totals.lateMissed} late/missed</span>
+                  <span className="text-red-700 font-medium">{totals.medsLateMissed} late/missed</span>
+                </>
+              )}
+              {(totals.total - totals.byType.meds) > 0 && (
+                <>
+                  <span className="mx-1.5 text-gray-300">·</span>
+                  <span>{totals.total - totals.byType.meds} other</span>
                 </>
               )}
             </>
+          ) : totals.total > 0 ? (
+            <>
+              <span className="font-semibold text-gray-800">{totals.total}</span> events
+            </>
+          ) : (
+            <span>No events scheduled</span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <StatusLegend className="hidden md:flex" />
+          {(filter === "all" || filter === "emar") && (
+            <StatusLegend className="hidden md:flex" />
+          )}
           <button
             type="button"
             onClick={() => setShowOvernight((v) => !v)}
@@ -686,26 +808,26 @@ function DayTimeGrid({
         </div>
         <HourLanes hourStart={hourStart} hourEnd={hourEnd} isToday={isToday}>
           {!isLoading &&
-            visibleLanes.map(({ row, laneIndex, laneCount }) => (
-              <MedChip
-                key={row.id}
-                m={row}
+            visibleLanes.map(({ event, laneIndex, laneCount }) => (
+              <EventChip
+                key={event.id}
+                event={event}
                 hourStart={hourStart}
                 laneIndex={laneIndex}
                 laneCount={laneCount}
-                onClick={() => onNavigate("emar", dateIso)}
+                onClick={() => onNavigate(SUBVIEW_BY_TYPE[event.type], dateIso)}
               />
             ))}
         </HourLanes>
       </div>
 
-      {/* Empty state — offers to seed demo data so the color states show up */}
+      {/* Empty state */}
       {!isLoading && items.length === 0 && (
         <div className="flex flex-col items-center gap-2 mt-4 text-center">
           <p className="text-xs text-gray-500">
-            No medications scheduled for this day.
+            No {FILTER_LABEL[filter]} scheduled for this day.
           </p>
-          <SeedDemoButton facilityNumber={facilityNumber} />
+          {filter === "all" && <SeedDemoButton facilityNumber={facilityNumber} />}
         </div>
       )}
     </div>
@@ -719,11 +841,13 @@ function WeekTimeGrid({
   weekStart,
   todayIso,
   onNavigate,
+  filter,
 }: {
   facilityNumber: string;
   weekStart: string;
   todayIso: string;
   onNavigate: (sv: SubView, date?: string) => void;
+  filter: FilterKey;
 }) {
   const [showOvernight, setShowOvernight] = useState(false);
   const hourStart = showOvernight ? 0 : DEFAULT_HOUR_START;
@@ -733,19 +857,31 @@ function WeekTimeGrid({
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
     [weekStart],
   );
+  const weekEnd = days[days.length - 1];
 
-  // One useQuery per day. React Query dedupes per key so prev/next week
-  // navigation reuses cached days.
-  const queries = useQueries({
-    queries: days.map((d) => ({
-      queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`, d],
-      queryFn: fetchMedPassesForDay(facilityNumber, d),
-      enabled: !!facilityNumber,
-      staleTime: 60_000,
-    })),
+  const typeFilter: ReadonlyArray<EventType> | undefined =
+    filter === "all" ? undefined : [TYPE_BY_SUBVIEW[filter]];
+
+  // Single range query covers all 7 days and every event type the user wants.
+  // Replaces the old 7× per-day med-pass fan-out.
+  const { data, isLoading } = useQuery<{ success: boolean; data: CalendarEvent[] } | null>({
+    queryKey: [
+      `/api/ops/facilities/${facilityNumber}/calendar/events`,
+      weekStart, weekEnd, typeFilter?.join(",") ?? "all",
+    ],
+    queryFn: fetchCalendarEvents(facilityNumber, weekStart, weekEnd, typeFilter),
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
   });
 
-  const isLoading = queries.some((q) => q.isLoading);
+  const eventsByDate = useMemo(() => {
+    const map = new Map<string, CalendarEvent[]>();
+    for (const e of data?.data ?? []) {
+      if (!map.has(e.date)) map.set(e.date, []);
+      map.get(e.date)!.push(e);
+    }
+    return map;
+  }, [data]);
 
   return (
     <div>
@@ -765,10 +901,13 @@ function WeekTimeGrid({
         {days.map((iso) => {
           const d = new Date(iso + "T12:00:00");
           const isToday = iso === todayIso;
+          // Day-header click drills into the most relevant sub-view: when a
+          // filter is active, that filter's section; otherwise eMAR (default).
+          const headerSub: SubView = filter === "all" ? "emar" : (filter as SubView);
           return (
             <button
               key={`h-${iso}`}
-              onClick={() => onNavigate("emar", iso)}
+              onClick={() => onNavigate(headerSub, iso)}
               className={cn(
                 "text-center py-1.5 border-b border-l border-gray-100 transition-colors hover:bg-indigo-50/40",
                 isToday && "bg-indigo-50",
@@ -805,11 +944,11 @@ function WeekTimeGrid({
                 isToday={days.includes(todayIso)}
               />
             </div>
-            {days.map((iso, i) => {
-              const items = queries[i].data?.data ?? [];
+            {days.map((iso) => {
+              const items = eventsByDate.get(iso) ?? [];
               const isToday = iso === todayIso;
-              const within = items.filter((m) => {
-                const p = parseAmPm(m.scheduledTime);
+              const within = items.filter((e) => {
+                const p = parseAmPm(e.scheduledTime);
                 if (!p) return false;
                 return p.hour >= hourStart && p.hour <= hourEnd;
               });
@@ -821,15 +960,15 @@ function WeekTimeGrid({
                 >
                   <HourLanes hourStart={hourStart} hourEnd={hourEnd} isToday={isToday}>
                     {!isLoading &&
-                      lanes.map(({ row, laneIndex, laneCount }) => (
-                        <MedChip
-                          key={`${iso}-${row.id}`}
-                          m={row}
+                      lanes.map(({ event, laneIndex, laneCount }) => (
+                        <EventChip
+                          key={`${iso}-${event.id}`}
+                          event={event}
                           hourStart={hourStart}
                           compact
                           laneIndex={laneIndex}
                           laneCount={laneCount}
-                          onClick={() => onNavigate("emar", iso)}
+                          onClick={() => onNavigate(SUBVIEW_BY_TYPE[event.type], iso)}
                         />
                       ))}
                   </HourLanes>
@@ -846,7 +985,7 @@ function WeekTimeGrid({
 // ── MonthGrid ─────────────────────────────────────────────────────────────────
 
 function MonthGrid({
-  monthStart, byDate, isLoading, todayIso, onNavigate, flashTick,
+  monthStart, byDate, isLoading, todayIso, onNavigate, flashTick, filter,
 }: {
   monthStart: string;
   byDate: Map<string, DayOpsEvent>;
@@ -854,9 +993,17 @@ function MonthGrid({
   todayIso: string;
   onNavigate: (sv: SubView, date?: string) => void;
   flashTick: number;
+  filter: FilterKey;
 }) {
   const days   = monthGridDays(monthStart);
   const prefix = monthStart.slice(0, 7);
+
+  // When a filter is active, cell tinting (urgent / hasAny) only considers
+  // chips that match the filter, so a filtered-out category doesn't keep a
+  // day looking "busy" when nothing of that kind is scheduled there.
+  const matches = (c: typeof CHIPS[number]) => filter === "all" || c.key === filter;
+  const cellHasUrgent = (ev: DayOpsEvent) => CHIPS.some((c) => matches(c) && c.urgent(ev) && c.count(ev) > 0);
+  const cellHasAny    = (ev: DayOpsEvent) => CHIPS.some((c) => matches(c) && c.count(ev) > 0);
 
   return (
     <div>
@@ -870,8 +1017,8 @@ function MonthGrid({
           const inMonth = iso.startsWith(prefix);
           const isToday = iso === todayIso;
           const ev = byDate.get(iso);
-          const hasUrgent = ev && CHIPS.some((c) => c.urgent(ev) && c.count(ev) > 0);
-          const hasAny    = ev && CHIPS.some((c) => c.count(ev) > 0);
+          const hasUrgent = ev && cellHasUrgent(ev);
+          const hasAny    = ev && cellHasAny(ev);
 
           if (isLoading && inMonth) {
             return (
@@ -885,8 +1032,6 @@ function MonthGrid({
 
           return (
             <div
-              // Re-keying today's cell on every Today-click forces a remount
-              // so the indigo highlight replays even when anchor didn't change.
               key={isToday ? `${iso}-${flashTick}` : iso}
               className={cn(
                 "min-h-[80px] rounded-xl border p-1.5 flex flex-col transition-all",
@@ -903,7 +1048,9 @@ function MonthGrid({
               )}>
                 {new Date(iso + "T12:00:00").getDate()}
               </span>
-              {inMonth && ev && <EventChips event={ev} onNavigate={onNavigate} compact />}
+              {inMonth && ev && (
+                <EventChips event={ev} onNavigate={onNavigate} compact filter={filter} />
+              )}
             </div>
           );
         })}
@@ -914,11 +1061,44 @@ function MonthGrid({
 
 // ── OpsCalendar ───────────────────────────────────────────────────────────────
 
+// Pull initial filter from the URL query string so a "compliance only"
+// calendar link stays meaningful when shared. We use raw window.location
+// rather than wouter because the calendar can mount inside both routed
+// (PortalDashboard / TrackerHomePage) and embedded (OperationsTab) contexts.
+function readFilterFromUrl(): FilterKey {
+  if (typeof window === "undefined") return "all";
+  const hash = window.location.hash; // wouter useHashLocation
+  const qIdx = hash.indexOf("?");
+  if (qIdx === -1) return "all";
+  const params = new URLSearchParams(hash.slice(qIdx + 1));
+  const raw = params.get("calFilter");
+  const valid: FilterKey[] = ["all", "emar", "residents", "incidents", "crm", "billing", "compliance"];
+  return valid.includes(raw as FilterKey) ? (raw as FilterKey) : "all";
+}
+
+function writeFilterToUrl(filter: FilterKey) {
+  if (typeof window === "undefined") return;
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf("?");
+  const path = qIdx === -1 ? hash : hash.slice(0, qIdx);
+  const params = new URLSearchParams(qIdx === -1 ? "" : hash.slice(qIdx + 1));
+  if (filter === "all") params.delete("calFilter");
+  else params.set("calFilter", filter);
+  const qs = params.toString();
+  const next = qs ? `${path}?${qs}` : path;
+  if (next !== hash) window.history.replaceState(null, "", `${window.location.pathname}${next}`);
+}
+
 export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarProps) {
   const todayIso = today();
   const [view, setView]     = useState<CalView>("day");
   const [anchor, setAnchor] = useState(() => todayIso);
   const [flashTick, setFlashTick] = useState(0);
+  const [filter, setFilterState] = useState<FilterKey>(() => readFilterFromUrl());
+  const setFilter = (next: FilterKey) => {
+    setFilterState(next);
+    writeFilterToUrl(next);
+  };
 
   const range = useMemo(() => {
     if (view === "month") return { from: startOfMonth(anchor), to: endOfMonth(anchor) };
@@ -1034,14 +1214,54 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
         </div>
       </div>
 
-      {/* ── Legend ── */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-50 flex-wrap">
-        {CHIPS.map((c) => (
-          <button key={c.key} onClick={() => onNavigate(c.key)}
-            className={cn("inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-all hover:brightness-95", c.chip)}>
-            <c.Icon className="h-2.5 w-2.5 shrink-0" />{c.label}
-          </button>
-        ))}
+      {/* ── Category filter bar ──
+          Click a chip to filter the calendar to that category in place.
+          Click again (or click "All") to reset. Active filter is filled +
+          ringed; inactive chips are translucent. */}
+      <div
+        className="flex items-center gap-2 px-4 py-2 border-b border-gray-50 flex-wrap"
+        role="toolbar"
+        aria-label="Filter calendar by category"
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mr-1">
+          Filter
+        </span>
+        <button
+          type="button"
+          onClick={() => setFilter("all")}
+          aria-pressed={filter === "all"}
+          className={cn(
+            "inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-all",
+            filter === "all"
+              ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+              : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50",
+          )}
+        >
+          All
+        </button>
+        {CHIPS.map((c) => {
+          const isActive = filter === c.key;
+          return (
+            <button
+              key={c.key}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() => setFilter(isActive ? "all" : c.key)}
+              className={cn(
+                "inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-all hover:brightness-95",
+                c.chip,
+                isActive && "ring-2 ring-offset-1 ring-indigo-500 brightness-95",
+              )}
+            >
+              <c.Icon className="h-2.5 w-2.5 shrink-0" />{c.label}
+            </button>
+          );
+        })}
+        {filter !== "all" && (
+          <span className="ml-auto text-[10px] text-gray-500">
+            Showing only <span className="font-semibold">{FILTER_LABEL[filter]}</span>
+          </span>
+        )}
       </div>
 
       {/* ── Empty-facility banner — visible from any view ── */}
@@ -1065,6 +1285,7 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
             todayIso={todayIso}
             onNavigate={onNavigate}
             flashTick={flashTick}
+            filter={filter}
           />
         )}
         {view === "week" && (
@@ -1073,6 +1294,7 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
             weekStart={range.from}
             todayIso={todayIso}
             onNavigate={onNavigate}
+            filter={filter}
           />
         )}
         {view === "day" && (
@@ -1081,6 +1303,7 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
             dateIso={range.from}
             todayIso={todayIso}
             onNavigate={onNavigate}
+            filter={filter}
           />
         )}
       </div>

@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { FormField, onSubmitKey } from "@/components/portal/FormField";
 import { Plus, Receipt, DollarSign, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
@@ -92,6 +93,7 @@ function AddChargeDialog({
   });
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const [showErrors, setShowErrors] = useState(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -107,11 +109,30 @@ function AddChargeDialog({
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents`] });
       toast({ title: "Charge added" });
       onOpenChange(false);
+      setShowErrors(false);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const amountNum = parseFloat(form.amount);
+  const errors = {
+    chargeType: !form.chargeType ? "Pick a charge type" : undefined,
+    amount: !form.amount
+      ? "Enter an amount"
+      : Number.isNaN(amountNum) || amountNum <= 0
+      ? "Amount must be greater than 0"
+      : undefined,
+  };
+  const isValid = !errors.chargeType && !errors.amount;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -119,9 +140,8 @@ function AddChargeDialog({
         <DialogHeader>
           <DialogTitle>Add Charge</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Charge Type</Label>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Charge Type" required error={showErrors ? errors.chargeType : undefined}>
             <Select value={form.chargeType} onValueChange={(v) => set("chargeType", v)}>
               <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
               <SelectContent>
@@ -132,19 +152,17 @@ function AddChargeDialog({
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Description</Label>
+          </FormField>
+          <FormField label="Description">
             <Textarea
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               className="resize-none min-h-[60px]"
               placeholder="Description..."
             />
-          </div>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Amount ($)</Label>
+            <FormField label="Amount ($)" required error={showErrors ? errors.amount : undefined}>
               <Input
                 type="number"
                 step="0.01"
@@ -152,23 +170,20 @@ function AddChargeDialog({
                 onChange={(e) => set("amount", e.target.value)}
                 placeholder="0.00"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Billing Period</Label>
+            </FormField>
+            <FormField label="Billing Period">
               <Input type="month" value={form.billingPeriod} onChange={(e) => set("billingPeriod", e.target.value)} />
-            </div>
+            </FormField>
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || !form.chargeType || !form.amount}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Adding..." : "Add Charge"}
             </Button>
           </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
         </div>
       </DialogContent>
     </Dialog>
@@ -211,19 +226,36 @@ function RecordPaymentDialog({
     },
   });
 
+  const [showErrors, setShowErrors] = useState(false);
+  const amtNum = parseFloat(form.amount);
+  const errors = {
+    amount: !form.amount
+      ? "Enter an amount"
+      : Number.isNaN(amtNum) || amtNum <= 0
+      ? "Amount must be greater than 0"
+      : undefined,
+    paymentMethod: !form.paymentMethod ? "Pick a payment method" : undefined,
+  };
+  const isValid = !errors.amount && !errors.paymentMethod;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Record Payment</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Amount ($)</Label>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Amount ($)" required error={showErrors ? errors.amount : undefined}>
             <Input type="number" step="0.01" value={form.amount} onChange={(e) => set("amount", e.target.value)} placeholder="0.00" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Payment Method</Label>
+          </FormField>
+          <FormField label="Payment Method" required error={showErrors ? errors.paymentMethod : undefined}>
             <Select value={form.paymentMethod} onValueChange={(v) => set("paymentMethod", v)}>
               <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
               <SelectContent>
@@ -234,22 +266,19 @@ function RecordPaymentDialog({
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Reference / Check #</Label>
+          </FormField>
+          <FormField label="Reference / Check #">
             <Input value={form.reference} onChange={(e) => set("reference", e.target.value)} placeholder="Reference number" />
-          </div>
+          </FormField>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || !form.amount || !form.paymentMethod}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Recording..." : "Record Payment"}
             </Button>
           </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
         </div>
       </DialogContent>
     </Dialog>
@@ -290,28 +319,35 @@ function GenerateInvoiceDialog({
     },
   });
 
+  const [showErrors, setShowErrors] = useState(false);
+  const periodErr = !billingPeriod ? "Pick a billing period" : undefined;
+  const submit = () => {
+    if (periodErr || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Generate Invoice</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Billing Period</Label>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Billing Period" required error={showErrors ? periodErr : undefined}>
             <Input type="month" value={billingPeriod} onChange={(e) => setBillingPeriod(e.target.value)} />
-          </div>
+          </FormField>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Generating..." : "Generate Invoice"}
             </Button>
           </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
         </div>
       </DialogContent>
     </Dialog>

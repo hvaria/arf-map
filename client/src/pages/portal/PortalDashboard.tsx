@@ -24,8 +24,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 import { getQueryFn } from "@/lib/queryClient";
+import { useSession } from "@/hooks/useSession";
 import PortalLayout from "./PortalLayout";
 import OpsCalendar from "@/components/OpsCalendar";
+import { AddTaskDialog } from "@/components/portal/AddTaskDialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -66,13 +68,6 @@ import {
 } from "lucide-react";
 
 // ── Shared types ─────────────────────────────────────────────────────────────
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-  role?: string;
-}
 
 interface DashboardData {
   activeResidents: number;
@@ -574,12 +569,9 @@ export default function PortalDashboard() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAllAlerts, setShowAllAlerts] = useState(false);
   const [lensOverride, setLensOverride] = useState<Role | null>(null);
+  const [addTaskOpen, setAddTaskOpen] = useState(false);
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
   const enabled = !!facilityNumber;
@@ -1314,6 +1306,16 @@ export default function PortalDashboard() {
               </Button>
             );
           })}
+          {/* Add Task — independent of role lens since tasks are universal. */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setAddTaskOpen(true)}
+            className="gap-1.5"
+          >
+            <ClipboardList className="h-4 w-4" />
+            Add task
+          </Button>
           <div className="ml-auto text-[10px] text-muted-foreground hidden md:flex items-center gap-1">
             <TrendingUp className="h-3 w-3" />
             Press <kbd className="px-1 py-0.5 rounded bg-gray-100 border text-[10px] font-mono">?</kbd> for shortcuts
@@ -1322,6 +1324,11 @@ export default function PortalDashboard() {
       </div>
 
       <ShortcutHelp open={showShortcuts} onOpenChange={setShowShortcuts} />
+      <AddTaskDialog
+        open={addTaskOpen}
+        onOpenChange={setAddTaskOpen}
+        facilityNumber={facilityNumber}
+      />
     </PortalLayout>
   );
 }

@@ -4,26 +4,14 @@
  * can be linked to from the dashboard, nav, and keyboard shortcut g+n.
  */
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { getQueryFn } from "@/lib/queryClient";
 import PortalLayout from "./PortalLayout";
 import { NotesContent } from "./NotesPage";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
+import { useSession } from "@/hooks/useSession";
 
 export default function NotesPortalPage() {
   const [, navigate] = useLocation();
-
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   useEffect(() => {
     if (me === null) navigate("/facility-portal");

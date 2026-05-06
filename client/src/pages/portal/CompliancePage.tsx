@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { toLocalEpochMs } from "@/lib/datetime";
+import { FormField, onSubmitKey } from "@/components/portal/FormField";
 import { Plus, ShieldCheck, Check, AlertCircle, Clock, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
@@ -51,6 +53,14 @@ const STATUS_STYLES: Record<string, string> = {
   overdue: "bg-red-100 text-red-700",
 };
 
+interface StaffLite {
+  id: number;
+  firstName: string;
+  lastName: string;
+  role?: string;
+  status?: string;
+}
+
 function AddComplianceDialog({
   open,
   onOpenChange,
@@ -69,13 +79,26 @@ function AddComplianceDialog({
     assignedTo: "",
   });
 
+  // Staff list drives the assignee dropdown. Free-text used to silently break
+  // the dashboard's "My work" queue when the typed name didn't exactly match
+  // the assignee's username.
+  const { data: staffEnv } = useQuery<{ success: boolean; data: StaffLite[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/staff`],
+    enabled: open && !!facilityNumber,
+    staleTime: 60_000,
+  });
+  const activeStaff = (staffEnv?.data ?? []).filter(
+    (s) => !s.status || s.status === "active",
+  );
+
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const [showErrors, setShowErrors] = useState(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/compliance`, {
         ...form,
-        dueDate: form.dueDate ? new Date(form.dueDate).getTime() : null,
+        dueDate: form.dueDate ? toLocalEpochMs(form.dueDate) : null,
       });
       return res.json();
     },
@@ -84,11 +107,24 @@ function AddComplianceDialog({
       toast({ title: "Compliance item added" });
       onOpenChange(false);
       setForm({ type: "", description: "", dueDate: "", assignedTo: "" });
+      setShowErrors(false);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const errors = {
+    type: !form.type ? "Pick a compliance type" : undefined,
+  };
+  const isValid = !errors.type;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -96,9 +132,8 @@ function AddComplianceDialog({
         <DialogHeader>
           <DialogTitle>Add Compliance Item</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Type</Label>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Type" required error={showErrors ? errors.type : undefined}>
             <Select value={form.type} onValueChange={(v) => set("type", v)}>
               <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
               <SelectContent>
@@ -107,37 +142,57 @@ function AddComplianceDialog({
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Description</Label>
+          </FormField>
+          <FormField label="Description">
             <Textarea
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               placeholder="Describe the compliance requirement..."
               className="resize-none min-h-[60px]"
             />
-          </div>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Due Date</Label>
+            <FormField label="Due Date">
               <Input type="date" value={form.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Assigned To</Label>
-              <Input value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)} placeholder="Name or role" />
-            </div>
+            </FormField>
+            <FormField label="Assigned To">
+              <Select
+                value={form.assignedTo || "__unassigned__"}
+                onValueChange={(v) => set("assignedTo", v === "__unassigned__" ? "" : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select staff…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__unassigned__">Unassigned</SelectItem>
+                  {activeStaff.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No active staff
+                    </div>
+                  ) : (
+                    activeStaff.map((s) => {
+                      const fullName = `${s.firstName} ${s.lastName}`.trim();
+                      return (
+                        <SelectItem key={s.id} value={fullName}>
+                          {fullName}
+                          {s.role ? ` · ${s.role.replace(/_/g, " ")}` : ""}
+                        </SelectItem>
+                      );
+                    })
+                  )}
+                </SelectContent>
+              </Select>
+            </FormField>
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || !form.type}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Adding..." : "Add Item"}
             </Button>
           </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
         </div>
       </DialogContent>
     </Dialog>

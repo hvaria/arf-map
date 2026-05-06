@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import { getQueryFn } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { NotesNotificationButton } from "@/components/portal/NotesNotificationButton";
+import { useSession } from "@/hooks/useSession";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -16,21 +15,17 @@ import {
   CalendarDays,
   ShieldCheck,
   MessageSquare,
+  ClipboardList,
   Menu,
   ArrowLeft,
   Building2,
 } from "lucide-react";
 
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
-
 const NAV_LINKS = [
   { href: "/portal", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { href: "/portal/residents", label: "Residents", icon: Users },
   { href: "/portal/emar", label: "eMAR", icon: Pill },
+  { href: "/portal/tracker", label: "Trackers", icon: ClipboardList },
   { href: "/portal/incidents", label: "Incidents", icon: AlertTriangle },
   { href: "/portal/notes", label: "Notes", icon: MessageSquare },
   { href: "/portal/crm", label: "CRM", icon: UserPlus },
@@ -80,11 +75,7 @@ function NavLink({
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#FFFFFF' }}>

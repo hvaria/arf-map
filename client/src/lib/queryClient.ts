@@ -55,10 +55,13 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+// Default to "returnNull" on 401 — matches what every protected portal
+// query has been opting in to (39 sites). Pages that need the throw
+// behavior can still override per-query with getQueryFn({ on401: "throw" }).
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      queryFn: getQueryFn({ on401: "throw" }),
+      queryFn: getQueryFn({ on401: "returnNull" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: Infinity,

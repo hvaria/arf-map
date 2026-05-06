@@ -14,6 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { toLocalEpochMs } from "@/lib/datetime";
+import { useResidents } from "@/hooks/useResidents";
+import { FormField, onSubmitKey } from "@/components/portal/FormField";
 import { Plus, AlertTriangle, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
@@ -132,13 +135,16 @@ function ReportIncidentDialog({
 
   const set = <K extends keyof IncidentFormData>(key: K, value: IncidentFormData[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+  const [showErrors, setShowErrors] = useState(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
+      // Use toLocalEpochMs for date-only fields so users west of UTC don't
+      // see their incident-date roll back by a day.
       const body = {
         ...form,
         residentId: form.residentId && form.residentId !== "none" ? Number(form.residentId) : null,
-        incidentDate: form.incidentDate ? new Date(form.incidentDate).getTime() : Date.now(),
+        incidentDate: form.incidentDate ? toLocalEpochMs(form.incidentDate) : Date.now(),
         injuryInvolved: form.injuryInvolved ? 1 : 0,
         supervisorNotified: form.supervisorNotified ? 1 : 0,
         supervisorNotifiedAt: form.supervisorNotifiedAt ? new Date(form.supervisorNotifiedAt).getTime() : null,
@@ -155,11 +161,27 @@ function ReportIncidentDialog({
       toast({ title: "Incident reported" });
       onOpenChange(false);
       setForm({ ...makeEmptyForm(), residentId: "none" });
+      setShowErrors(false);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  // Required: type, date, description. Everything else is supporting context.
+  const errors = {
+    incidentType: !form.incidentType ? "Pick the incident type" : undefined,
+    incidentDate: !form.incidentDate ? "When did it happen?" : undefined,
+    description: form.description.trim().length === 0 ? "Describe what happened" : undefined,
+  };
+  const isValid = !errors.incidentType && !errors.incidentDate && !errors.description;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -167,10 +189,9 @@ function ReportIncidentDialog({
         <DialogHeader>
           <DialogTitle>Report Incident</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-4" onKeyDown={onSubmitKey(submit)}>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Incident Type</Label>
+            <FormField label="Incident Type" required error={showErrors ? errors.incidentType : undefined}>
               <Select value={form.incidentType} onValueChange={(v) => set("incidentType", v)}>
                 <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
@@ -179,13 +200,12 @@ function ReportIncidentDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Resident (optional)</Label>
+            </FormField>
+            <FormField label="Resident">
               <Select value={form.residentId} onValueChange={(v) => set("residentId", v)}>
                 <SelectTrigger><SelectValue placeholder="Select resident" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="none">None / facility-wide</SelectItem>
                   {Array.isArray(residents) && residents.map((r) => (
                     <SelectItem key={r.id} value={String(r.id)}>
                       {r.firstName} {r.lastName}
@@ -193,44 +213,39 @@ function ReportIncidentDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </FormField>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Date</Label>
+            <FormField label="Date" required error={showErrors ? errors.incidentDate : undefined}>
               <Input type="date" value={form.incidentDate} onChange={(e) => set("incidentDate", e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Time</Label>
+            </FormField>
+            <FormField label="Time" hint="Calendar uses this for the time grid">
               <Input type="time" value={form.incidentTime} onChange={(e) => set("incidentTime", e.target.value)} />
-            </div>
+            </FormField>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Location</Label>
+          <FormField label="Location">
             <Input value={form.location} onChange={(e) => set("location", e.target.value)} placeholder="e.g. Dining room" />
-          </div>
+          </FormField>
 
-          <div className="space-y-1.5">
-            <Label>Description</Label>
+          <FormField label="Description" required error={showErrors ? errors.description : undefined}>
             <Textarea
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               placeholder="Describe what happened..."
               className="resize-none min-h-[80px]"
             />
-          </div>
+          </FormField>
 
-          <div className="space-y-1.5">
-            <Label>Immediate Action Taken</Label>
+          <FormField label="Immediate Action Taken">
             <Textarea
               value={form.immediateActionTaken}
               onChange={(e) => set("immediateActionTaken", e.target.value)}
               placeholder="What was done immediately..."
               className="resize-none min-h-[60px]"
             />
-          </div>
+          </FormField>
 
           <div className="flex items-center gap-2">
             <Checkbox
@@ -271,15 +286,13 @@ function ReportIncidentDialog({
 
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || !form.incidentType}
-              className="text-white border-0"
-              style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-            >
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Reporting..." : "Report Incident"}
             </Button>
           </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
         </div>
       </DialogContent>
     </Dialog>
@@ -394,14 +407,11 @@ export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: s
     enabled: !!facilityNumber,
   });
 
-  const { data: residentsEnvelope } = useQuery<{ success: boolean; data: Resident[] } | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber,
-  });
+  // Active residents only — incidents are reported on people currently in
+  // care. Past incidents on discharged residents stay readable in the list.
+  const { residents } = useResidents(facilityNumber);
 
   const incidents = incidentsEnvelope?.data ?? [];
-  const residents = residentsEnvelope?.data ?? [];
 
   const filtered = incidents.filter((i) => {
     const typeMatch = typeFilter === "all" || i.incidentType === typeFilter;

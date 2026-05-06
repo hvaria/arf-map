@@ -11,6 +11,7 @@ import { z } from "zod";
 import { pool } from "../db/index";
 import * as ops from "./opsStorage";
 import { notesRouter } from "./notesRouter";
+import { trackerRouter } from "../trackers/routes";
 import {
   MedicationCreateInput,
   MedicationUpdateInput,
@@ -42,6 +43,11 @@ opsRouter.use(requireFacilityAuth);
 // Notes module — mounted under the auth middleware so handlers can rely on
 // req.isAuthenticated() and req.user being populated.
 opsRouter.use("/notes", notesRouter);
+
+// Tracker module — mounted here (not directly on `app`) so it inherits
+// requireFacilityAuth instead of running its own auth middleware. Effective
+// URL stays /api/ops/trackers/... (M4).
+opsRouter.use("/trackers", trackerRouter);
 
 // ── IDOR guard: any route with `:facilityNumber` in the path must match the
 // authenticated user's facility. Without this, facility A could read facility
@@ -148,6 +154,21 @@ const completeTaskSchema = z.object({
 const refuseTaskSchema = z.object({
   reason: z.string().min(1),
 });
+
+// Manual task creation — independent of a care plan. Used by the "Add Task"
+// dialog so users can put a task on the calendar without having to create a
+// full care plan first.
+// `.strict()` so any unknown field surfaces as a 400 instead of being
+// silently dropped (the same bug class that broke tour scheduling).
+const manualTaskSchema = z.object({
+  residentId: z.number().int().positive(),
+  taskName:   z.string().min(1, "Task name is required"),
+  taskType:   z.string().min(1).default("manual"),
+  taskDate:   z.number().int().positive(),                    // Unix ms (start of local day)
+  scheduledTime: z.string().regex(/^\d{1,2}:\d{2}$/).optional(), // "HH:MM" 24h
+  shift:      z.enum(["day", "evening", "night", "AM", "PM", "NOC"]).optional(),
+  assignedTo: z.string().optional(),
+}).strict();
 
 // Medication create/update Zod schemas live in @shared/medication-constants so
 // the FE form and BE route share one contract. Both schemas accept legacy
@@ -786,6 +807,31 @@ opsRouter.get("/residents/:id/tasks", async (req, res) => {
   }
 });
 
+// POST /tasks — direct task creation (no care plan required).
+opsRouter.post("/tasks", async (req, res) => {
+  try {
+    const facilityNumber = getFacilityNumber(req);
+    const parsed = manualTaskSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    }
+    const task = await ops.createManualDailyTask({
+      facilityNumber,
+      residentId:   parsed.data.residentId,
+      taskName:     parsed.data.taskName,
+      taskType:     parsed.data.taskType,
+      taskDate:     parsed.data.taskDate,
+      scheduledTime: parsed.data.scheduledTime,
+      shift:         parsed.data.shift,
+      assignedTo:    parsed.data.assignedTo,
+    });
+    res.status(201).json({ success: true, data: task });
+  } catch (e) {
+    console.error("[ops] POST /tasks failed", e);
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
 // PUT /tasks/:id/complete
 opsRouter.put("/tasks/:id/complete", async (req, res) => {
   try {
@@ -1375,6 +1421,10 @@ opsRouter.get("/leads/:id", async (req, res) => {
 });
 
 // POST /leads/:id/tours
+// Creating a tour also advances the lead's stage to "tour_scheduled" so
+// pipeline reports stay consistent. Both writes happen on the same DB
+// connection so a frontend that only made a single call still gets
+// atomic semantics — the FE is no longer responsible for sequencing.
 opsRouter.post("/leads/:id/tours", async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
@@ -1386,6 +1436,13 @@ opsRouter.post("/leads/:id/tours", async (req, res) => {
     }
     const now = Date.now();
     const tour = await ops.scheduleTour({ ...parsed.data, leadId, facilityNumber, createdAt: now });
+    // Best-effort stage bump; failure here doesn't roll back the tour, but
+    // it does log so monitoring can catch drift.
+    try {
+      await ops.updateLead(leadId, facilityNumber, { stage: "tour_scheduled" });
+    } catch (e) {
+      console.warn("[ops] tour created but lead stage update failed", { leadId, e });
+    }
     res.status(201).json({ success: true, data: tour });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -2000,6 +2057,51 @@ opsRouter.get("/facilities/:facilityNumber/compliance/overdue", async (req, res)
 // ─────────────────────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────────────────────
+
+// GET /facilities/:facilityNumber/calendar/events?from=YYYY-MM-DD&to=YYYY-MM-DD&type=meds,tasks,...
+// Returns one normalized event row per scheduled item across all six source
+// modules. Drives the Day/Week time-grid views and stays in sync with any
+// data the user enters elsewhere in the portal.
+opsRouter.get("/facilities/:facilityNumber/calendar/events", async (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    if (getFacilityNumber(req) !== facilityNumber) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    const { from, to } = req.query as { from?: string; to?: string };
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to)) {
+      return res.status(400).json({ success: false, error: "from and to (YYYY-MM-DD) are required" });
+    }
+    const localMidnight = (iso: string) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const fromMs = localMidnight(from);
+    const toMs   = localMidnight(to) + 86_400_000; // exclusive end-of-day
+
+    // Optional type filter — accepts comma list or repeated query params.
+    const VALID: ReadonlyArray<ops.CalendarEventType> = [
+      "meds", "tasks", "incidents", "leads", "billing", "compliance",
+    ];
+    const rawType = req.query.type;
+    let types: ops.CalendarEventType[] | undefined;
+    if (typeof rawType === "string" && rawType.trim()) {
+      types = rawType.split(",").map((s) => s.trim()).filter((t): t is ops.CalendarEventType =>
+        (VALID as readonly string[]).includes(t),
+      );
+    }
+
+    // Make sure today's pending med-pass rows exist before reading; mirrors
+    // the behavior of /med-pass and /calendar so the calendar self-heals.
+    const diffDays = Math.min(Math.round((toMs - fromMs) / 86_400_000), 42);
+    const days = Array.from({ length: diffDays }, (_, i) => fromMs + i * 86_400_000);
+    await Promise.all(days.map((d) => ops.generateDailyMedPassEntries(facilityNumber, d)));
+
+    const data = await ops.getFacilityCalendarEvents(facilityNumber, fromMs, toMs, types);
+    return res.json({ success: true, data });
+  } catch (e) {
+    console.error("[ops] calendar/events failed", e);
+    return res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
 
 // GET /facilities/:facilityNumber/dashboard
 opsRouter.get("/facilities/:facilityNumber/dashboard", async (req, res) => {

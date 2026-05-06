@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { FormField, onSubmitKey } from "@/components/portal/FormField";
 import { Plus, UserPlus, Clock, ArrowLeft } from "lucide-react";
 
 interface SessionUser {
@@ -105,6 +106,7 @@ function AddLeadDialog({
   const [form, setForm] = useState<LeadFormData>(EMPTY_FORM);
 
   const set = (k: keyof LeadFormData, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const [showErrors, setShowErrors] = useState(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -119,11 +121,29 @@ function AddLeadDialog({
       toast({ title: "Lead added" });
       onOpenChange(false);
       setForm(EMPTY_FORM);
+      setShowErrors(false);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  // Required: prospect + at least one contact channel.
+  const errors = {
+    prospectName: !form.prospectName.trim() ? "Who are we tracking?" : undefined,
+    contact:
+      !form.contactName.trim() && !form.contactPhone.trim() && !form.contactEmail.trim()
+        ? "Add a contact name, phone, or email"
+        : undefined,
+  };
+  const isValid = !errors.prospectName && !errors.contact;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -131,37 +151,31 @@ function AddLeadDialog({
         <DialogHeader>
           <DialogTitle>Add Lead</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Prospect Name</Label>
+        <div className="space-y-4" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Prospect Name" required error={showErrors ? errors.prospectName : undefined}>
             <Input value={form.prospectName} onChange={(e) => set("prospectName", e.target.value)} placeholder="Resident's name" />
-          </div>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Contact Name</Label>
+            <FormField label="Contact Name" error={showErrors ? errors.contact : undefined}>
               <Input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="Family contact" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Contact Phone</Label>
+            </FormField>
+            <FormField label="Contact Phone">
               <Input value={form.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} placeholder="Phone" />
-            </div>
+            </FormField>
           </div>
-          <div className="space-y-1.5">
-            <Label>Contact Email</Label>
+          <FormField label="Contact Email" hint="At least one contact channel is required">
             <Input type="email" value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} placeholder="email@example.com" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Care Needs</Label>
+          </FormField>
+          <FormField label="Care Needs">
             <Textarea
               value={form.careNeeds}
               onChange={(e) => set("careNeeds", e.target.value)}
               placeholder="Describe care needs..."
               className="resize-none min-h-[60px]"
             />
-          </div>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Stage</Label>
+            <FormField label="Stage">
               <Select value={form.stage} onValueChange={(v) => set("stage", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -170,27 +184,28 @@ function AddLeadDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Next Follow-up</Label>
+            </FormField>
+            <FormField label="Next Follow-up">
               <Input type="date" value={form.nextFollowUpDate} onChange={(e) => set("nextFollowUpDate", e.target.value)} />
-            </div>
+            </FormField>
           </div>
-          <div className="space-y-1.5">
-            <Label>Notes</Label>
+          <FormField label="Notes">
             <Textarea
               value={form.notes}
               onChange={(e) => set("notes", e.target.value)}
               placeholder="Additional notes..."
               className="resize-none min-h-[60px]"
             />
-          </div>
+          </FormField>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.prospectName}>
+            <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Adding..." : "Add Lead"}
             </Button>
           </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
         </div>
       </DialogContent>
     </Dialog>
@@ -210,20 +225,27 @@ function TourDialog({
   const qc = useQueryClient();
   const [tourDatetime, setTourDatetime] = useState("");
 
+  // POST /leads/:id/tours now atomically (a) inserts the ops_tours row and
+  // (b) advances the lead's stage to "tour_scheduled" server-side. The FE
+  // makes one call instead of orchestrating two.
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest(
-        "PUT",
-        `/api/ops/leads/${lead.id}`,
-        {
-          tourDate: tourDatetime ? new Date(tourDatetime).getTime() : null,
-          stage: "tour_scheduled",
-        }
-      );
+      const scheduledAt = new Date(tourDatetime).getTime();
+      const res = await apiRequest("POST", `/api/ops/leads/${lead.id}/tours`, { scheduledAt });
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/leads`] });
+      // Invalidate everything the new tour might affect: lead list, lead
+      // detail, and the calendar feed (which now picks up ops_tours rows).
+      qc.invalidateQueries({
+        predicate: (q) => {
+          const k = q.queryKey[0];
+          return typeof k === "string" && (
+            k.startsWith(`/api/ops/facilities/${facilityNumber}/leads`) ||
+            k.startsWith(`/api/ops/facilities/${facilityNumber}/calendar`)
+          );
+        },
+      });
       toast({ title: "Tour scheduled" });
       onClose();
     },
@@ -232,21 +254,28 @@ function TourDialog({
     },
   });
 
+  const [showErrors, setShowErrors] = useState(false);
+  const tourErr = !tourDatetime ? "Pick a tour date and time" : undefined;
+  const submit = () => {
+    if (tourErr || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
+
   return (
-    <div className="space-y-3 p-4 rounded-lg bg-[#F0F4FF]" style={{ border: '1px solid #E0E7FF' }}>
+    <div
+      className="space-y-3 p-4 rounded-lg bg-[#F0F4FF]"
+      style={{ border: '1px solid #E0E7FF' }}
+      onKeyDown={onSubmitKey(submit)}
+    >
       <p className="text-sm font-medium">Schedule Tour for {lead.prospectName}</p>
-      <div className="space-y-1.5">
-        <Label>Tour Date & Time</Label>
+      <FormField label="Tour Date & Time" required error={showErrors ? tourErr : undefined}>
         <Input type="datetime-local" value={tourDatetime} onChange={(e) => setTourDatetime(e.target.value)} />
-      </div>
+      </FormField>
       <div className="flex gap-2">
-        <Button
-          size="sm"
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending || !tourDatetime}
-          className="text-white border-0"
-          style={{ background: 'linear-gradient(135deg, #818CF8, #F9A8D4)', borderRadius: '10px', backgroundColor: '#818CF8' }}
-        >
+        <Button size="sm" onClick={submit} disabled={mutation.isPending}>
           {mutation.isPending ? "Scheduling..." : "Confirm Tour"}
         </Button>
         <Button size="sm" variant="outline" onClick={onClose}>Cancel</Button>
