@@ -49,8 +49,8 @@ Drizzle table definitions live in `shared/schema.ts`.
 
 ## New Module Namespace
 - **API**: `/api/ops/*` (mounted in server/index.ts, never modifying server/routes.ts)
-- **Frontend**: `/#/portal/*` (new routes added to App.tsx Switch)
-- **Auth**: Reuses `requireAuth` — all portal routes require facility auth
+- **Frontend**: `/#/facility-portal` is the only canonical operations route. New operations UI lands inside `OperationsTab` as a new sub-view, or as a `*Content` component under `client/src/components/operations/`. The `/portal/*` route namespace was retired; only a `/portal/*` → `/facility-portal` redirect remains for legacy bookmarks. Do not reintroduce `/portal/*` routes.
+- **Auth**: Reuses `requireFacilityAuth` — facility-portal and the ops API both require facility auth
 
 ## New Table Naming Convention
 All new tables prefixed with ops_ to avoid collisions:

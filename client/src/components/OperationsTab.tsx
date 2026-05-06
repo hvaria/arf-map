@@ -1471,7 +1471,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
         <>
       {/* Zone A: KPIs */}
       <section aria-label="Key indicators">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {dashLoading
             ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
             : orderedKpis.length > 0
@@ -1479,7 +1479,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
                   <KpiCard key={t.label} tile={t} onClick={() => goToSubView(t.subView)} />
                 ))
               : (
-                <div className="col-span-2 md:col-span-3 lg:col-span-4 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-7 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                   {!facilityNumber
                     ? "Facility not found. Please log out and back in."
                     : "Could not load operations data. Try refreshing the page."}
