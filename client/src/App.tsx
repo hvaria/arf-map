@@ -23,6 +23,9 @@ import BillingPage from "./pages/portal/BillingPage";
 import StaffPage from "./pages/portal/StaffPage";
 import CompliancePage from "./pages/portal/CompliancePage";
 import NotesPortalPage from "./pages/portal/NotesPortalPage";
+// Portal — Tracker Module routes
+import TrackerLandingPage from "./pages/tracker/TrackerLandingPage";
+import TrackerHomePage from "./pages/tracker/TrackerHomePage";
 
 function AppRouter() {
   return (
@@ -48,6 +51,10 @@ function AppRouter() {
         <Route path="/portal/staff" component={StaffPage} />
         <Route path="/portal/compliance" component={CompliancePage} />
         <Route path="/portal/notes" component={NotesPortalPage} />
+        {/* Tracker Module — landing + per-tracker home (with optional tab segment) */}
+        <Route path="/portal/tracker" component={TrackerLandingPage} />
+        <Route path="/portal/tracker/:slug" component={TrackerHomePage} />
+        <Route path="/portal/tracker/:slug/:tab" component={TrackerHomePage} />
         <Route component={NotFound} />
       </Switch>
     </Router>
