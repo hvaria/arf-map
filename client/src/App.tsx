@@ -12,15 +12,12 @@ import StatsPage from "./pages/StatsPage";
 import LoginPage from "./pages/jobseeker/LoginPage";
 import DashboardPage from "./pages/jobseeker/DashboardPage";
 import NotFound from "./pages/not-found";
-// Portal — Tracker Module routes (live)
-import TrackerLandingPage from "./pages/tracker/TrackerLandingPage";
-import TrackerHomePage from "./pages/tracker/TrackerHomePage";
 
-// Old /portal/* URLs are no longer live (everything is reached via
-// /facility-portal). Redirect bookmarks, shared links, and any internal
-// nav that still references the old paths so users don't hit NotFound.
-// Tracker routes (/portal/tracker*) match earlier in the Switch, so this
-// redirect only catches the legacy operations-module paths.
+// /facility-portal is the only canonical operations route. All `/portal/*`
+// URLs (including the legacy tracker module deep-links) redirect here.
+// OperationsTab inside FacilityPortal handles all module navigation
+// (residents, eMAR, incidents, CRM, billing, staff, compliance, trackers)
+// via in-app sub-view state — there are no longer per-module URLs.
 function RedirectToFacilityPortal() {
   const [, navigate] = useLocation();
   useEffect(() => {
@@ -28,16 +25,6 @@ function RedirectToFacilityPortal() {
   }, [navigate]);
   return null;
 }
-
-// NOTE on the Operations Module routes:
-// The individual `/portal/*` pages (PortalDashboard, ResidentsPage, EmarPage,
-// IncidentsPage, CrmPage, AdmissionsPage, BillingPage, StaffPage,
-// CompliancePage, NotesPortalPage) used to be live as standalone routes.
-// They are NOT live anymore — the canonical entry is /facility-portal,
-// which renders OperationsTab inline and embeds those modules' *Content
-// exports (ResidentsContent, EmarContent, etc.) directly.
-// The page files are kept because OperationsTab still imports the
-// *Content named exports from them.
 
 function AppRouter() {
   return (
@@ -51,12 +38,8 @@ function AppRouter() {
         {/* Job seeker auth + dashboard routes */}
         <Route path="/jobseeker/login" component={LoginPage} />
         <Route path="/jobseeker/dashboard" component={DashboardPage} />
-        {/* Tracker Module — landing + per-tracker home (with optional tab segment) */}
-        <Route path="/portal/tracker" component={TrackerLandingPage} />
-        <Route path="/portal/tracker/:slug" component={TrackerHomePage} />
-        <Route path="/portal/tracker/:slug/:tab" component={TrackerHomePage} />
-        {/* Legacy /portal/* deep-links → /facility-portal. Must come after the
-            tracker routes above so those still match first. */}
+        {/* Legacy /portal/* deep-links → /facility-portal so saved bookmarks
+            and shared links keep working. */}
         <Route path="/portal" component={RedirectToFacilityPortal} />
         <Route path="/portal/:rest*" component={RedirectToFacilityPortal} />
         <Route component={NotFound} />

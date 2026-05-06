@@ -1080,17 +1080,11 @@ export interface CalendarEventRow {
   scheduledTime: string;  // "HH:MM" 24h
   status: string;
   allDay: boolean;
-  href: string;
 }
 
-const HREF_BY_TYPE: Record<CalendarEventType, string> = {
-  meds:       "/portal/emar",
-  tasks:      "/portal/residents",
-  incidents:  "/portal/incidents",
-  leads:      "/portal/crm",
-  billing:    "/portal/billing",
-  compliance: "/portal/compliance",
-};
+// Note: there is no per-event `href` anymore. The client (OperationsTab) is
+// the only consumer and navigates via in-app sub-view state keyed off the
+// event `type`, not a URL — `/facility-portal` is the only canonical route.
 
 function isoLocalDate(ts: number): string {
   const d = new Date(ts);
@@ -1156,7 +1150,6 @@ export async function getFacilityCalendarEvents(
         scheduledTime: timeOfDay(row.scheduled_datetime),
         status: row.status,
         allDay: false,
-        href: HREF_BY_TYPE.meds,
       }))),
     );
   }
@@ -1191,7 +1184,6 @@ export async function getFacilityCalendarEvents(
           scheduledTime: timeOfDay(ts),
           status: row.status,
           allDay,
-          href: HREF_BY_TYPE.tasks,
         };
       })),
     );
@@ -1227,7 +1219,6 @@ export async function getFacilityCalendarEvents(
           scheduledTime: timeOfDay(ts),
           status: row.status,
           allDay,
-          href: HREF_BY_TYPE.incidents,
         };
       })),
     );
@@ -1259,7 +1250,6 @@ export async function getFacilityCalendarEvents(
         scheduledTime: timeOfDay(row.scheduled_at),
         status: row.completed_at ? (row.outcome ?? "completed") : "scheduled",
         allDay: false,
-        href: HREF_BY_TYPE.leads,
       }))),
     );
   }
@@ -1296,7 +1286,6 @@ export async function getFacilityCalendarEvents(
           scheduledTime: timeOfDay(ts),
           status: row.status,
           allDay,
-          href: HREF_BY_TYPE.billing,
         };
       })),
     );
@@ -1328,7 +1317,6 @@ export async function getFacilityCalendarEvents(
           scheduledTime: timeOfDay(ts),
           status: row.status,
           allDay,
-          href: HREF_BY_TYPE.compliance,
         };
       })),
     );

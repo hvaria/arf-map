@@ -1,6 +1,5 @@
-/** Tracker page header — title, breadcrumb, and primary action. */
-import { Link } from "wouter";
-import { ArrowLeft, Plus } from "lucide-react";
+/** Tracker page header — title and primary action. */
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { resolveTrackerIcon } from "./trackerIcons";
 import type { SerializedTrackerDefinition } from "@shared/tracker-schemas";
@@ -15,19 +14,6 @@ export function TrackerHeader({
   const Icon = resolveTrackerIcon(definition.icon);
   return (
     <div className="space-y-2">
-      <nav
-        aria-label="Breadcrumb"
-        className="text-xs text-muted-foreground flex items-center gap-1"
-      >
-        <Link href="/portal/tracker">
-          <a className="hover:text-foreground inline-flex items-center gap-1">
-            <ArrowLeft className="h-3 w-3" />
-            Trackers
-          </a>
-        </Link>
-        <span aria-hidden>/</span>
-        <span className="text-foreground font-medium">{definition.name}</span>
-      </nav>
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-md bg-indigo-100 text-indigo-700 flex items-center justify-center">

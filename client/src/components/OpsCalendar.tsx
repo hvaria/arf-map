@@ -61,7 +61,6 @@ interface CalendarEvent {
   scheduledTime: string;        // "HH:MM" (24h); also tolerated as "8:00 AM"
   status: string;
   allDay: boolean;
-  href: string;
 }
 
 // Type → SubView mapping (for navigation drill-down and filter-key alignment
@@ -1064,8 +1063,8 @@ function MonthGrid({
 
 // Pull initial filter from the URL query string so a "compliance only"
 // calendar link stays meaningful when shared. We use raw window.location
-// rather than wouter because the calendar can mount inside both routed
-// (PortalDashboard / TrackerHomePage) and embedded (OperationsTab) contexts.
+// rather than wouter because the calendar mounts inside OperationsTab and
+// reads any `?calFilter=` token a user may have appended to the hash URL.
 function readFilterFromUrl(): FilterKey {
   if (typeof window === "undefined") return "all";
   const hash = window.location.hash; // wouter useHashLocation

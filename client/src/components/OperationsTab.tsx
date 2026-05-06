@@ -1,7 +1,7 @@
 /**
  * OperationsTab — rendered as the 4th tab inside FacilityPortal.
  *
- * Intentionally has NO PortalLayout wrapper and NO auth guard.
+ * Intentionally has NO outer layout wrapper and NO auth guard.
  * Auth is already enforced by FacilityPortal before this component mounts.
  * facilityNumber is passed as a prop so we never re-fetch the session here.
  *
@@ -59,6 +59,23 @@ import { StaffContent } from "@/components/operations/StaffContent";
 import { ComplianceContent } from "@/components/operations/ComplianceContent";
 import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
 import OpsCalendar from "@/components/OpsCalendar";
+// Tracker module — embedded as a sub-view (no per-tracker URL anymore).
+import { TrackerShell } from "@/components/tracker/TrackerShell";
+import { TrackerCard } from "@/components/tracker/TrackerCard";
+import {
+  TrackerLoading,
+  TrackerCardSkeleton,
+} from "@/components/tracker/TrackerLoading";
+import { TrackerEmpty } from "@/components/tracker/TrackerEmpty";
+import { useTrackerDefinitions } from "@/lib/tracker/useTrackerDefinitions";
+import { useTrackerDefinition } from "@/lib/tracker/useTrackerDefinition";
+import { startOfDay, type TrackerFilters } from "@/components/tracker/TrackerFilterBar";
+import { deriveCurrentShift } from "@/components/tracker/selectors/ShiftToggle";
+import type {
+  SerializedTrackerDefinition,
+  TrackerMode,
+  Shift,
+} from "@shared/tracker-schemas";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -128,7 +145,15 @@ interface NoteListItem {
 }
 
 // Sub-view keys that the user can navigate to inside this tab.
-type SubView = "residents" | "emar" | "incidents" | "crm" | "billing" | "staff" | "compliance";
+type SubView =
+  | "residents"
+  | "emar"
+  | "incidents"
+  | "crm"
+  | "billing"
+  | "staff"
+  | "compliance"
+  | "tracker";
 
 // ── Time / urgency helpers ───────────────────────────────────────────────────
 
@@ -440,6 +465,7 @@ function ShortcutHelp({ open, onOpenChange }: { open: boolean; onOpenChange: (v:
     { keys: ["g", "n"], label: "Open notes (bell drawer)" },
     { keys: ["g", "r"], label: "Go to residents" },
     { keys: ["g", "c"], label: "Go to compliance" },
+    { keys: ["g", "t"], label: "Go to trackers" },
     { keys: ["c"],      label: "Chart medication (eMAR)" },
     { keys: ["?"],      label: "Show this dialog" },
   ];
@@ -597,6 +623,168 @@ class SubViewErrorBoundary extends React.Component<
   }
 }
 
+// ── Tracker sub-view ──────────────────────────────────────────────────────────
+
+/**
+ * Tracker sub-view. Two modes:
+ *   • slug == null → render a picker (one card per active tracker definition).
+ *     If exactly one definition exists, auto-select it on mount so the user
+ *     doesn't see a one-card picker.
+ *   • slug != null → fetch the definition and render <TrackerShell> in
+ *     fully-controlled mode.
+ */
+function TrackerSubView({
+  slug,
+  tab,
+  filters,
+  onSelectTracker,
+  onTabChange,
+  onFiltersChange,
+  onBack,
+}: {
+  slug: string | null;
+  tab: TrackerMode;
+  filters: TrackerFilters;
+  onSelectTracker: (slug: string, def: SerializedTrackerDefinition) => void;
+  onTabChange: (next: TrackerMode) => void;
+  onFiltersChange: (
+    patch: Partial<{ date: number; shift: Shift; residentId: number | undefined }>,
+  ) => void;
+  onBack: () => void;
+}) {
+  // Picker-mode list. Always fetched (cached 5 min) so auto-select works.
+  const {
+    data: defsEnv,
+    isLoading: defsLoading,
+    isError: defsError,
+  } = useTrackerDefinitions();
+  const definitions = defsEnv?.data ?? [];
+
+  // Auto-select the only tracker if there's exactly one — saves a click.
+  useEffect(() => {
+    if (slug !== null) return;
+    if (definitions.length === 1) {
+      const def = definitions[0];
+      onSelectTracker(def.slug, def);
+    }
+    // Intentionally only depend on the lengths — onSelectTracker is recreated
+    // each render and would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, definitions.length]);
+
+  const {
+    data: defEnv,
+    isLoading: defLoading,
+    isError: defError,
+  } = useTrackerDefinition(slug ?? undefined);
+
+  if (slug === null) {
+    return (
+      <div className="space-y-4">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          className="gap-1.5 -ml-2"
+          aria-label="Back to overview"
+        >
+          ← Back to Overview
+        </Button>
+        <header>
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-md bg-indigo-100 text-indigo-700 flex items-center justify-center">
+              <ClipboardList className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold leading-tight">Trackers</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Document daily care, vitals, ADLs, and more — pick a tracker
+                to start charting.
+              </p>
+            </div>
+          </div>
+        </header>
+
+        {defsLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <TrackerCardSkeleton key={i} />
+            ))}
+          </div>
+        ) : defsError ? (
+          <TrackerEmpty
+            title="Couldn't load trackers"
+            hint="Try refreshing the page."
+          />
+        ) : definitions.length === 0 ? (
+          <TrackerEmpty
+            title="No trackers configured for your facility"
+            hint="Trackers are added centrally — check back soon."
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {definitions.map((def) => (
+              <TrackerCard
+                key={def.slug}
+                definition={def}
+                onSelect={(s) => onSelectTracker(s, def)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (defLoading) {
+    return (
+      <div className="space-y-4">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          className="gap-1.5 -ml-2"
+          aria-label="Back to overview"
+        >
+          ← Back to Overview
+        </Button>
+        <TrackerLoading rows={4} />
+      </div>
+    );
+  }
+
+  if (defError || !defEnv?.data) {
+    return (
+      <div className="space-y-4">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          className="gap-1.5 -ml-2"
+          aria-label="Back to overview"
+        >
+          ← Back to Overview
+        </Button>
+        <TrackerEmpty
+          title="Tracker not found"
+          hint={`No tracker with slug "${slug}" is registered for your facility.`}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <TrackerShell
+      definition={defEnv.data}
+      tab={tab}
+      onTabChange={onTabChange}
+      filters={filters}
+      onFiltersChange={onFiltersChange}
+      onBack={onBack}
+    />
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function OperationsTab({ facilityNumber }: { facilityNumber: string }) {
@@ -604,6 +792,14 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
   // Day-scoped sub-views (currently just emar) read this to open on the
   // correct date when navigation comes from a calendar chip.
   const [subViewDate, setSubViewDate] = useState<string | null>(null);
+  // Tracker sub-view state. The slug picks the definition; tab/filters are
+  // owned here because trackers no longer have their own URL.
+  const [selectedTrackerSlug, setSelectedTrackerSlug] = useState<string | null>(null);
+  const [trackerTab, setTrackerTab] = useState<TrackerMode>("quick");
+  const [trackerFilters, setTrackerFilters] = useState<TrackerFilters>(() => ({
+    date: startOfDay(Date.now()),
+    shift: deriveCurrentShift(),
+  }));
   // Calendar is visible by default — it's the main operational view.
   // Users can collapse it via the toggle in Today's-schedule if they want
   // more screen space for alerts/queue.
@@ -697,6 +893,9 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
   const goToSubView = (sv: SubView, date: string | null = null) => {
     setSubView(sv);
     setSubViewDate(date);
+    // Entering tracker via the overview always lands on the picker; users
+    // can re-enter the same tracker if they want by clicking its card.
+    if (sv === "tracker") setSelectedTrackerSlug(null);
   };
 
   // Unified "go" — alerts/quick actions can target either a sub-view or the
@@ -745,6 +944,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
           n: "notes",
           r: "residents",
           c: "compliance",
+          t: "tracker",
         };
         const dest = map[e.key];
         prefix = null;
@@ -756,6 +956,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
           } else {
             setSubView(dest);
             setSubViewDate(null);
+            if (dest === "tracker") setSelectedTrackerSlug(null);
           }
         }
       }
@@ -1127,7 +1328,20 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
   // header (greeting + status sentence) stays pinned while the user is
   // drilled into a module — UX-1 from BA review: "see at-a-glance status
   // even while you're focused on one thing".
-  const subViewBack = () => { setSubView(null); setSubViewDate(null); };
+  const subViewBack = () => {
+    setSubView(null);
+    setSubViewDate(null);
+    setSelectedTrackerSlug(null);
+  };
+  const trackerBack = () => {
+    // Inside the tracker sub-view, "Back" returns to the tracker picker.
+    // From the picker, it returns to the overview.
+    if (selectedTrackerSlug !== null) {
+      setSelectedTrackerSlug(null);
+    } else {
+      subViewBack();
+    }
+  };
   const subViewContent: React.ReactNode =
     subView === "residents"  ? <ResidentsContent  facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "emar"       ? <EmarContent       facilityNumber={facilityNumber} onBack={subViewBack} initialDate={subViewDate ?? undefined} /> :
@@ -1136,6 +1350,30 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
     subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "tracker"    ? (
+      <TrackerSubView
+        slug={selectedTrackerSlug}
+        tab={trackerTab}
+        filters={trackerFilters}
+        onSelectTracker={(slug, def) => {
+          setSelectedTrackerSlug(slug);
+          // Seed tab from the definition's defaultMode (falls back to quick).
+          const defaultMode = (def.defaultMode as TrackerMode | undefined) ?? "quick";
+          setTrackerTab(defaultMode);
+          // Re-seed filters in case the user has been on the picker for a
+          // while — pick up "today" + the current shift fresh on entry.
+          setTrackerFilters({
+            date: startOfDay(Date.now()),
+            shift: deriveCurrentShift(),
+          });
+        }}
+        onTabChange={setTrackerTab}
+        onFiltersChange={(patch) =>
+          setTrackerFilters((prev) => ({ ...prev, ...patch }))
+        }
+        onBack={trackerBack}
+      />
+    ) :
     null;
 
   // Role-lens preview is admin-only; caregivers and med techs don't need
@@ -1397,6 +1635,17 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
           >
             <ClipboardList className="h-4 w-4" />
             Add task
+          </Button>
+          {/* Trackers — embedded sub-view; lens-independent since clinical
+              charting cuts across roles. */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => goToSubView("tracker")}
+            className="gap-1.5"
+          >
+            <ClipboardList className="h-4 w-4" />
+            Trackers
           </Button>
           <div className="ml-auto text-[10px] text-muted-foreground hidden md:flex items-center gap-1">
             <TrendingUp className="h-3 w-3" />

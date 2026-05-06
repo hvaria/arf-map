@@ -1,19 +1,17 @@
 /**
  * Filter bar for tracker pages — date + shift (+ optional resident filter).
  *
- * Hash-routing aware: filters live in the part of `location` after the `?`.
- * Selecting a value updates the URL via wouter's `setLocation` so refreshing
- * (or sharing the link) restores the same view.
+ * This is a fully controlled component. The parent owns date / shift /
+ * residentId state and emits patches via `onChange`. There is no URL
+ * coupling — trackers now render as a sub-view inside OperationsTab and
+ * therefore have no per-tracker route.
  */
-import { useEffect, useMemo } from "react";
 import { Calendar as CalendarIcon } from "lucide-react";
-import { ShiftToggle, deriveCurrentShift } from "./selectors/ShiftToggle";
+import { ShiftToggle } from "./selectors/ShiftToggle";
 import {
-  ResidentSelector,
   useResidents,
   residentLabel,
 } from "./selectors/ResidentSelector";
-import { useQueryParams } from "@/lib/tracker/urlState";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -56,88 +54,32 @@ function inputValueToDate(value: string): number {
   return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
 }
 
-const VALID_SHIFTS: readonly Shift[] = ["AM", "PM", "NOC", "OTHER"] as const;
-
-function isShift(s: string): s is Shift {
-  return (VALID_SHIFTS as readonly string[]).includes(s);
-}
-
-export function useTrackerFilters(opts: {
-  /** When false, the resident parameter is omitted from the bar's UI. */
+export interface TrackerFilterBarProps {
+  date: number;
+  shift: Shift;
+  residentId?: number;
+  /** When true, render the resident dropdown (used by the History tab). */
   showResidentFilter?: boolean;
-}): {
-  filters: TrackerFilters;
-  setDate: (ms: number) => void;
-  setShift: (s: Shift) => void;
-  setResident: (id: number | undefined) => void;
-  showResidentFilter: boolean;
-} {
-  const [params, setParams] = useQueryParams();
-
-  const filters: TrackerFilters = useMemo(() => {
-    const dateRaw = params.get("date");
-    const shiftRaw = params.get("shift") ?? "";
-    const residentRaw = params.get("residentId");
-
-    const date = dateRaw
-      ? Number.parseInt(dateRaw, 10)
-      : startOfDay(Date.now());
-    const shift: Shift = isShift(shiftRaw) ? shiftRaw : deriveCurrentShift();
-    const residentId = residentRaw ? Number(residentRaw) : undefined;
-    return {
-      date: Number.isFinite(date) ? startOfDay(date) : startOfDay(Date.now()),
-      shift,
-      residentId: Number.isFinite(residentId) ? residentId : undefined,
-    };
-  }, [params]);
-
-  // Backfill the URL with sensible defaults so the user-visible state is
-  // always in the address bar (and shareable). We only write when missing.
-  useEffect(() => {
-    if (params.get("date") && params.get("shift")) return;
-    setParams((next) => {
-      if (!next.get("date")) next.set("date", String(startOfDay(Date.now())));
-      if (!next.get("shift")) next.set("shift", deriveCurrentShift());
-    });
-    // We intentionally read params from closure; setParams is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return {
-    filters,
-    setDate: (ms) => setParams((p) => p.set("date", String(startOfDay(ms)))),
-    setShift: (s) => setParams((p) => p.set("shift", s)),
-    setResident: (id) =>
-      setParams((p) => {
-        if (id === undefined) p.delete("residentId");
-        else p.set("residentId", String(id));
-      }),
-    showResidentFilter: opts.showResidentFilter ?? false,
-  };
+  /** Patch callback — keys not present in the patch are left unchanged. */
+  onChange: (
+    patch: Partial<{ date: number; shift: Shift; residentId: number | undefined }>,
+  ) => void;
 }
 
 export function TrackerFilterBar({
-  filters,
-  setDate,
-  setShift,
-  setResident,
-  showResidentFilter,
-}: {
-  filters: TrackerFilters;
-  setDate: (ms: number) => void;
-  setShift: (s: Shift) => void;
-  setResident: (id: number | undefined) => void;
-  showResidentFilter: boolean;
-}) {
-  const dateLabel = new Date(filters.date).toLocaleDateString("en-US", {
+  date,
+  shift,
+  residentId,
+  showResidentFilter = false,
+  onChange,
+}: TrackerFilterBarProps) {
+  const dateLabel = new Date(date).toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
   const { data: residentEnv } = useResidents();
-  const selectedResident = residentEnv?.data.find(
-    (r) => r.id === filters.residentId,
-  );
+  const selectedResident = residentEnv?.data.find((r) => r.id === residentId);
 
   return (
     <div
@@ -161,16 +103,18 @@ export function TrackerFilterBar({
           <input
             type="date"
             aria-label="Date"
-            value={dateToInputValue(filters.date)}
-            onChange={(e) => setDate(inputValueToDate(e.target.value))}
+            value={dateToInputValue(date)}
+            onChange={(e) =>
+              onChange({ date: startOfDay(inputValueToDate(e.target.value)) })
+            }
             className="h-9 px-2 rounded-md border border-input bg-background text-sm"
           />
         </PopoverContent>
       </Popover>
 
       <ShiftToggle
-        value={filters.shift}
-        onChange={setShift}
+        value={shift}
+        onChange={(s) => onChange({ shift: s })}
         size="sm"
         ariaLabel="Filter by shift"
       />
@@ -179,9 +123,11 @@ export function TrackerFilterBar({
         <div className="flex items-center gap-2">
           <select
             aria-label="Filter by resident"
-            value={filters.residentId ?? ""}
+            value={residentId ?? ""}
             onChange={(e) =>
-              setResident(e.target.value ? Number(e.target.value) : undefined)
+              onChange({
+                residentId: e.target.value ? Number(e.target.value) : undefined,
+              })
             }
             className="h-9 px-2 rounded-md border border-input bg-background text-sm min-w-[160px]"
           >
@@ -196,7 +142,7 @@ export function TrackerFilterBar({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setResident(undefined)}
+              onClick={() => onChange({ residentId: undefined })}
               aria-label="Clear resident filter"
             >
               Clear
