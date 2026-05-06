@@ -1120,26 +1120,25 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
 
   const myQueueLoading = compLoading || incLoading || notesLoading;
 
-  // Sub-view routing
-  if (subView) {
-    const back = () => { setSubView(null); setSubViewDate(null); };
-    const content =
-      subView === "residents"  ? <ResidentsContent  facilityNumber={facilityNumber} onBack={back} /> :
-      subView === "emar"       ? <EmarContent       facilityNumber={facilityNumber} onBack={back} initialDate={subViewDate ?? undefined} /> :
-      subView === "incidents"  ? <IncidentsContent  facilityNumber={facilityNumber} onBack={back} /> :
-      subView === "crm"        ? <CrmContent        facilityNumber={facilityNumber} onBack={back} /> :
-      subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={back} /> :
-      subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={back} /> :
-      subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={back} /> :
-      null;
-    if (content) {
-      return (
-        <SubViewErrorBoundary key={subView} onBack={back}>
-          {content}
-        </SubViewErrorBoundary>
-      );
-    }
-  }
+  // Sub-view content is rendered inline below the overview header so the
+  // header (greeting + status sentence) stays pinned while the user is
+  // drilled into a module — UX-1 from BA review: "see at-a-glance status
+  // even while you're focused on one thing".
+  const subViewBack = () => { setSubView(null); setSubViewDate(null); };
+  const subViewContent: React.ReactNode =
+    subView === "residents"  ? <ResidentsContent  facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "emar"       ? <EmarContent       facilityNumber={facilityNumber} onBack={subViewBack} initialDate={subViewDate ?? undefined} /> :
+    subView === "incidents"  ? <IncidentsContent  facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "crm"        ? <CrmContent        facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    null;
+
+  // Role-lens preview is admin-only; caregivers and med techs don't need
+  // to "preview as another role" and the picker is just visual noise for
+  // them.
+  const isAdmin = userRole === "super_admin" || userRole === "facility_admin";
 
   // ── Overview render ────────────────────────────────────────────────────────
 
@@ -1182,12 +1181,14 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <RoleLensSwitcher
-            activeRole={activeRole}
-            userRole={userRole}
-            isPreviewing={isPreviewing}
-            onChange={(r) => setLensOverride(r === userRole ? null : r)}
-          />
+          {isAdmin && (
+            <RoleLensSwitcher
+              activeRole={activeRole}
+              userRole={userRole}
+              isPreviewing={isPreviewing}
+              onChange={(r) => setLensOverride(r === userRole ? null : r)}
+            />
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -1221,6 +1222,12 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
         </div>
       )}
 
+      {subView && subViewContent ? (
+        <SubViewErrorBoundary key={subView} onBack={subViewBack}>
+          {subViewContent}
+        </SubViewErrorBoundary>
+      ) : (
+        <>
       {/* Zone A: KPIs */}
       <section aria-label="Key indicators">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -1349,6 +1356,8 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
             }}
           />
         </section>
+      )}
+        </>
       )}
 
       {/* Sticky quick action bar (Zone G) */}
