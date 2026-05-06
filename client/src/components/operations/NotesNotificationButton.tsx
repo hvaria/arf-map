@@ -1,21 +1,28 @@
 /**
  * Outlook-style notes notification button.
  *
- * Lives in the portal header on every page. Shows a messages icon with a red
- * count badge when urgent open notes exist; clicking opens the full Notes
- * feed (composer + filters + thread) in a right-side drawer.
+ * Lives in the FacilityPortal header. Shows a messages icon with a red count
+ * badge when urgent open notes exist; clicking opens the full Notes feed
+ * (composer + filters + thread) in a right-side drawer.
  *
  * Drawer hosts the existing NotesContent component in embedded mode so the
  * empty state, post flow, replies, and acknowledgements all work without
- * duplication. The badge query reuses the same key as the dashboard's notes
- * fetch so React Query dedupes it across the app.
+ * duplication.
+ *
+ * Query key alignment: uses `?status=open&limit=50` to match
+ * OperationsTab's notes-count query and the FacilityPortal Operations-tab
+ * indicator. React Query dedupes the request across the app.
+ *
+ * Listens for `arf:open-notes` window events so OperationsTab keyboard
+ * shortcuts (g+n) and "Open" actions on note alerts can pop the drawer
+ * without coupling to the bell's local state.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { NotesContent } from "@/pages/portal/NotesPage";
+import { NotesContent } from "@/components/operations/NotesContent";
 import { MessageSquare } from "lucide-react";
 
 interface NoteListItem {
@@ -29,7 +36,8 @@ interface ListResponse {
   data: { items: NoteListItem[]; nextCursor: string | null };
 }
 
-const QUERY_KEY = `/api/ops/notes?status=open&limit=20`;
+// Match OperationsTab's notes-count query so React Query dedupes.
+const QUERY_KEY = `/api/ops/notes?status=open&limit=50`;
 
 export function NotesNotificationButton({
   facilityNumber,
@@ -38,6 +46,14 @@ export function NotesNotificationButton({
 }) {
   const [open, setOpen] = useState(false);
   const enabled = !!facilityNumber;
+
+  // Allow OperationsTab keyboard shortcut g+n + alert actions to open the
+  // drawer without lifting state.
+  useEffect(() => {
+    function onOpen() { setOpen(true); }
+    window.addEventListener("arf:open-notes", onOpen);
+    return () => window.removeEventListener("arf:open-notes", onOpen);
+  }, []);
 
   const { data } = useQuery<ListResponse | null>({
     queryKey: [QUERY_KEY],

@@ -27,7 +27,7 @@ import { getQueryFn } from "@/lib/queryClient";
 import { useSession } from "@/hooks/useSession";
 import PortalLayout from "./PortalLayout";
 import OpsCalendar from "@/components/OpsCalendar";
-import { AddTaskDialog } from "@/components/portal/AddTaskDialog";
+import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

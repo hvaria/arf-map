@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { NotesNotificationButton } from "@/components/portal/NotesNotificationButton";
+import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
 import { useSession } from "@/hooks/useSession";
 import { cn } from "@/lib/utils";
 import {

@@ -23,6 +23,7 @@ import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import type { Facility } from "@shared/schema";
 import { useFacilities } from "@/hooks/useFacilities";
 import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-of-interest
+import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -1064,6 +1065,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             </Button>
           </Link>
           <div className="flex-1" />
+          <NotesNotificationButton facilityNumber={user.facilityNumber} />
           <Button
             variant="ghost"
             size="sm"
