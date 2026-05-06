@@ -34,6 +34,7 @@ import { StaffContent } from "@/pages/portal/StaffPage";
 import { ComplianceContent } from "@/pages/portal/CompliancePage";
 import { NotesContent } from "@/pages/portal/NotesPage";
 import OpsCalendar from "@/components/OpsCalendar";
+import { OpsAttention, type OpsSubView } from "@/components/portal/OpsAttention";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -274,7 +275,7 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       )}
 
       {/* KPI grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {isLoading
           ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
           : kpiCards.length > 0
@@ -287,6 +288,20 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
               </div>
             )}
       </div>
+
+      {/* Cross-module attention panels — Needs attention + My work.
+          Sits between the KPI strip and the calendar so the user sees
+          urgent items before drilling into a module. Navigation flows
+          back through the same setSubView state OperationsTab uses. */}
+      {facilityNumber && (
+        <OpsAttention
+          facilityNumber={facilityNumber}
+          onNavigate={(sv: OpsSubView, date) => {
+            setSubView(sv);
+            setSubViewDate(date ?? null);
+          }}
+        />
+      )}
 
       {/* Operations calendar — visible when on the overview */}
       {facilityNumber && (
