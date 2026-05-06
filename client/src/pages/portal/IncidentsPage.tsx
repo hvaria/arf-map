@@ -17,13 +17,8 @@ import { cn } from "@/lib/utils";
 import { toLocalEpochMs } from "@/lib/datetime";
 import { useResidents } from "@/hooks/useResidents";
 import { FormField, onSubmitKey } from "@/components/portal/FormField";
+import { useSession } from "@/hooks/useSession";
 import { Plus, AlertTriangle, ArrowLeft } from "lucide-react";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
 
 interface Resident {
   id: number;
@@ -507,11 +502,7 @@ export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: s
 export default function IncidentsPage() {
   const [, navigate] = useLocation();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
 

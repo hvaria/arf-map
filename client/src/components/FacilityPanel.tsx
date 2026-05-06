@@ -13,6 +13,7 @@ import type { Facility, JobPosting } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { normalizeRawType } from "@shared/taxonomy";
 import { ExpressInterestButton } from "@/components/ExpressInterestButton"; // NEW: expression-of-interest
+import { useSession } from "@/hooks/useSession";
 
 function haversineDistanceMiles(
   lat1: number,
@@ -59,12 +60,6 @@ interface FacilityOverride {
 interface PublicData {
   overrides: FacilityOverride | null;
   jobPostings: DbJobPosting[];
-}
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
 }
 
 const STATUS_CONFIG: Record<string, { color: string; bgClass: string; textClass: string }> = {
@@ -139,11 +134,7 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
     staleTime: 30000,
   });
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 60000,
-  });
+  const { data: me } = useSession();
 
   if (!facility) return null;
 

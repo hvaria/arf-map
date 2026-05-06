@@ -30,12 +30,7 @@ import {
   MEDICATION_DISCONTINUE_REASONS,
   type MedicationDiscontinueReason,
 } from "@shared/medication-constants";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
+import { useSession } from "@/hooks/useSession";
 
 interface Resident {
   id: number;
@@ -984,11 +979,7 @@ export default function ResidentProfilePage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
 

@@ -15,13 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { FormField, onSubmitKey } from "@/components/portal/FormField";
+import { useSession } from "@/hooks/useSession";
 import { Plus, UserPlus, Clock, ArrowLeft } from "lucide-react";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
 
 type LeadStage =
   | "inquiry"
@@ -506,11 +501,7 @@ export function CrmContent({ facilityNumber, onBack }: { facilityNumber: string;
 export default function CrmPage() {
   const [, navigate] = useLocation();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
 

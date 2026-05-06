@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { BrandLogo } from "@/components/BrandLogo";
 import { getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/context/AuthContext";
+import { useSession } from "@/hooks/useSession";
 import { useFacilities } from "@/hooks/useFacilities";
 import type { NearbyArea, BBox } from "@/hooks/useFacilities";
 import type { ViewportBounds } from "@/components/MapView";
@@ -121,10 +122,7 @@ export default function MapPage() {
     enabled: !!jobSeeker,
   });
 
-  const { data: facilityUser } = useQuery<{ id: number; facilityNumber: string; username: string } | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-  });
+  const { data: facilityUser } = useSession();
 
   const handleSelectFacility = useCallback((facility: Facility) => {
     setSelectedFacility(facility);

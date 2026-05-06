@@ -59,6 +59,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { useResidents } from "@/hooks/useResidents";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types — minimal client-side mirrors of the API response shapes.
@@ -236,13 +237,10 @@ export function NotesContent({
   // dropdown). The picker also re-uses this list.
   const needsResidents =
     GROUP_REQUIRES_RESIDENT[group] || group === "all";
-  const { data: residentsEnvelope } = useQuery<ResidentsResponse | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber && needsResidents,
-    staleTime: 60_000,
+  const { residents } = useResidents(facilityNumber, {
+    activeOnly: false,
+    enabled: needsResidents,
   });
-  const residents = residentsEnvelope?.data ?? [];
 
   const items = envelope?.data?.items ?? [];
 

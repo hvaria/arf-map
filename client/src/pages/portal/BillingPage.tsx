@@ -14,30 +14,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { FormField, onSubmitKey } from "@/components/portal/FormField";
+import { useSession } from "@/hooks/useSession";
+import { useResidents, type Resident } from "@/hooks/useResidents";
 import { Plus, Receipt, DollarSign, ArrowLeft } from "lucide-react";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
-
-interface Resident {
-  id: number;
-  facilityNumber: string;
-  firstName: string;
-  lastName: string;
-  dob: number;
-  gender: string;
-  roomNumber: string;
-  admissionDate: number;
-  primaryDx: string;
-  levelOfCare: string;
-  emergencyContactName: string;
-  emergencyContactPhone: string;
-  fundingSource: string;
-  status: "active" | "discharged" | "on_leave";
-}
 
 interface Charge {
   id: number;
@@ -360,11 +339,9 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
 
-  const { data: residentsEnvelope, isLoading } = useQuery<{ success: boolean; data: Resident[]; meta: { total: number } } | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber,
-  });
+  // Billing surfaces the full resident roster (active + discharged) so old
+  // invoices remain reachable. activeOnly: false keeps that behavior.
+  const { residents: residentList, isLoading } = useResidents(facilityNumber, { activeOnly: false });
 
   const { data: detailEnvelope } = useQuery<{ success: boolean; data: BillingDetail } | null>({
     queryKey: [`/api/ops/residents/${selectedResidentId}/billing`],
@@ -372,7 +349,6 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
     enabled: !!facilityNumber && selectedResidentId !== null,
   });
 
-  const residentList = residentsEnvelope?.data ?? [];
   const detail = detailEnvelope?.data ?? null;
   const selectedResident = residentList.find((r) => r.id === selectedResidentId);
 
@@ -416,8 +392,8 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium">{r.firstName} {r.lastName}</span>
-                      <span className={cn("text-xs px-1.5 py-0.5 rounded", STATUS_STYLES[r.status] ?? "")}>
-                        {r.status}
+                      <span className={cn("text-xs px-1.5 py-0.5 rounded", (r.status && STATUS_STYLES[r.status]) ?? "")}>
+                        {r.status ?? "active"}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">
@@ -542,11 +518,7 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
 export default function BillingPage() {
   const [, navigate] = useLocation();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
 

@@ -14,30 +14,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useSession } from "@/hooks/useSession";
+import { useResidents, type Resident } from "@/hooks/useResidents";
 import { Plus, Search, User, ArrowLeft } from "lucide-react";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
-
-interface Resident {
-  id: number;
-  facilityNumber: string;
-  firstName: string;
-  lastName: string;
-  dob: number;
-  gender: string;
-  roomNumber: string;
-  admissionDate: number;
-  primaryDx: string;
-  levelOfCare: string;
-  emergencyContactName: string;
-  emergencyContactPhone: string;
-  fundingSource: string;
-  status: "active" | "discharged" | "on_leave";
-}
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Active",
@@ -256,13 +235,9 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
   const [addOpen, setAddOpen] = useState(false);
   const [selectedResidentId, setSelectedResidentId] = useState<number | null>(null);
 
-  const { data: envelope, isLoading, error } = useQuery<{ success: boolean; data: Resident[] } | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber,
-  });
-
-  const residents = envelope?.data ?? [];
+  // Residents page shows the full roster — activeOnly: false to keep
+  // discharged residents reachable through the status filter.
+  const { residents, isLoading, error } = useResidents(facilityNumber, { activeOnly: false });
 
   // If a resident is selected, show their profile
   if (selectedResidentId !== null) {
@@ -378,12 +353,12 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
                     <td className="px-4 py-3 font-medium">
                       {r.firstName} {r.lastName}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">Room {r.roomNumber}</td>
+                    <td className="px-4 py-3 text-muted-foreground">Room {r.roomNumber ?? "—"}</td>
                     <td className="px-4 py-3">
-                      <ResidentStatusBadge status={r.status} />
+                      <ResidentStatusBadge status={r.status ?? "active"} />
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {new Date(r.admissionDate).toLocaleDateString()}
+                      {r.admissionDate ? new Date(r.admissionDate).toLocaleDateString() : "—"}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground capitalize">
                       {r.levelOfCare?.replace(/_/g, " ")}
@@ -406,11 +381,11 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
                   <span className="font-medium text-sm">
                     {r.firstName} {r.lastName}
                   </span>
-                  <ResidentStatusBadge status={r.status} />
+                  <ResidentStatusBadge status={r.status ?? "active"} />
                 </div>
                 <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                  <span>Room {r.roomNumber}</span>
-                  <span>Admitted {new Date(r.admissionDate).toLocaleDateString()}</span>
+                  <span>Room {r.roomNumber ?? "—"}</span>
+                  <span>Admitted {r.admissionDate ? new Date(r.admissionDate).toLocaleDateString() : "—"}</span>
                 </div>
               </button>
             ))}
@@ -430,11 +405,7 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
 export default function ResidentsPage() {
   const [, navigate] = useLocation();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
 

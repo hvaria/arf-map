@@ -12,13 +12,8 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useSession } from "@/hooks/useSession";
 import { ArrowLeft, CheckCircle2, Circle } from "lucide-react";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
 
 interface Lead {
   id: number;
@@ -295,11 +290,7 @@ export default function AdmissionsPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
 

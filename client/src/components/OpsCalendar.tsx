@@ -5,6 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useResidents } from "@/hooks/useResidents";
 import { apiRequest } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -1145,17 +1146,14 @@ export default function OpsCalendar({ facilityNumber, onNavigate }: OpsCalendarP
   }, [envelope]);
 
   // Detect a fully-empty facility (no residents) so we can offer a global
-  // "Seed demo data" affordance that's reachable from any view.
-  const { data: residentsEnv } = useQuery<{ success: boolean; data: unknown[] } | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/ops/facilities/${facilityNumber}/residents`);
-      return res.json();
-    },
-    enabled: !!facilityNumber,
-    staleTime: 60_000,
-  });
-  const facilityIsEmpty = !!residentsEnv && (residentsEnv.data ?? []).length === 0;
+  // "Seed demo data" affordance that's reachable from any view. activeOnly
+  // is false so a facility with only discharged residents doesn't trigger
+  // the empty-state banner.
+  const { all: allResidents, isFetched: residentsFetched } = useResidents(
+    facilityNumber,
+    { activeOnly: false },
+  );
+  const facilityIsEmpty = residentsFetched && allResidents.length === 0;
 
   function navigate(dir: -1 | 1) {
     if (view === "month") {

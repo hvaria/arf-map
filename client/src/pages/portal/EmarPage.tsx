@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useSession } from "@/hooks/useSession";
 import {
   RefreshCw, ArrowLeft, AlertTriangle, CheckCircle2, Clock,
   XCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
@@ -17,12 +18,6 @@ import {
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
 
 interface MedPassEntry {
   id: number;
@@ -655,11 +650,7 @@ export function EmarContent({ facilityNumber, onBack, initialDate }: {
 
 export default function EmarPage() {
   const [, navigate] = useLocation();
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
   const facilityNumber = me?.facilityNumber ?? "";
   useEffect(() => { if (me === null) navigate("/facility-portal"); }, [me, navigate]);
   if (me === null) return null;

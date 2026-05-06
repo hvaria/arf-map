@@ -15,13 +15,8 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { toLocalEpochMs } from "@/lib/datetime";
 import { FormField, onSubmitKey } from "@/components/portal/FormField";
+import { useSession } from "@/hooks/useSession";
 import { Plus, ShieldCheck, Check, AlertCircle, Clock, ArrowLeft } from "lucide-react";
-
-interface SessionUser {
-  id: number;
-  facilityNumber: string;
-  username: string;
-}
 
 interface ComplianceItem {
   id: number;
@@ -394,11 +389,7 @@ export function ComplianceContent({ facilityNumber, onBack }: { facilityNumber: 
 export default function CompliancePage() {
   const [, navigate] = useLocation();
 
-  const { data: me } = useQuery<SessionUser | null>({
-    queryKey: ["/api/facility/me"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useSession();
 
   const facilityNumber = me?.facilityNumber ?? "";
 

@@ -14,6 +14,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { getQueryFn } from "@/lib/queryClient";
 
+// Superset of every consumer's needs — narrower types in callers should
+// destructure rather than re-declare. Optional fields reflect that the
+// backend may not populate them on every read.
 export interface Resident {
   id: number;
   firstName: string;
@@ -22,6 +25,14 @@ export interface Resident {
   roomNumber?: string | null;
   bedNumber?: string | null;
   primaryDx?: string | null;
+  dob?: number | null;
+  gender?: string | null;
+  admissionDate?: number | null;
+  dischargeDate?: number | null;
+  levelOfCare?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
+  fundingSource?: string | null;
 }
 
 interface ListResponse {
@@ -31,19 +42,20 @@ interface ListResponse {
 
 export function useResidents(
   facilityNumber: string,
-  opts: { activeOnly?: boolean } = { activeOnly: true },
+  opts: { activeOnly?: boolean; enabled?: boolean } = {},
 ) {
+  const { activeOnly = true, enabled = true } = opts;
   const query = useQuery<ListResponse | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/residents`],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!facilityNumber,
+    enabled: enabled && !!facilityNumber,
     staleTime: 60_000,
   });
 
   const all = useMemo(() => query.data?.data ?? [], [query.data]);
   const visible = useMemo(
-    () => (opts.activeOnly === false ? all : all.filter((r) => !r.status || r.status === "active")),
-    [all, opts.activeOnly],
+    () => (activeOnly === false ? all : all.filter((r) => !r.status || r.status === "active")),
+    [all, activeOnly],
   );
 
   return { ...query, residents: visible, all };
