@@ -189,8 +189,9 @@ export function MedicationFormDialog({
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label>Drug Name</Label>
+            <Label htmlFor="med-drug-name">Drug Name</Label>
             <Input
+              id="med-drug-name"
               value={form.drugName}
               onChange={(e) => set("drugName", e.target.value)}
               placeholder="e.g. Lisinopril"
@@ -201,8 +202,9 @@ export function MedicationFormDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Dosage</Label>
+              <Label htmlFor="med-dosage">Dosage</Label>
               <Input
+                id="med-dosage"
                 value={form.dosage}
                 onChange={(e) => set("dosage", e.target.value)}
                 placeholder="e.g. 10 mg"
@@ -211,9 +213,9 @@ export function MedicationFormDialog({
               {errors.dosage && <p className="text-xs text-destructive">{errors.dosage}</p>}
             </div>
             <div className="space-y-1.5">
-              <Label>Route</Label>
+              <Label htmlFor="med-route">Route</Label>
               <Select value={form.route} onValueChange={(v) => set("route", v)}>
-                <SelectTrigger aria-invalid={!!errors.route}>
+                <SelectTrigger id="med-route" aria-label="Route" aria-invalid={!!errors.route}>
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
@@ -228,12 +230,12 @@ export function MedicationFormDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Frequency</Label>
+              <Label htmlFor="med-frequency">Frequency</Label>
               <Select
                 value={!form.frequency || form.frequency === "other" ? undefined : form.frequency}
                 onValueChange={onFrequencyChange}
               >
-                <SelectTrigger aria-invalid={!!errors.frequency}>
+                <SelectTrigger id="med-frequency" aria-label="Frequency" aria-invalid={!!errors.frequency}>
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
@@ -250,8 +252,9 @@ export function MedicationFormDialog({
               )}
             </div>
             <div className="space-y-1.5">
-              <Label>Prescriber</Label>
+              <Label htmlFor="med-prescriber">Prescriber</Label>
               <Input
+                id="med-prescriber"
                 value={form.prescriberName}
                 onChange={(e) => set("prescriberName", e.target.value)}
                 placeholder="Dr. Smith"

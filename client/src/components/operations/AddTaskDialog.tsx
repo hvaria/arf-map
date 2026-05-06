@@ -86,16 +86,23 @@ export function AddTaskDialog({
     onSuccess: () => {
       toast({ title: "Task added" });
       // Refresh anything that surfaces tasks: calendar feed, dashboard
-      // counts, resident task lists.
+      // counts, resident task lists (both legacy /api/ops/residents/:id/...
+      // and /api/ops/facilities/:fac/residents/:id/daily-tasks shapes).
       void qc.invalidateQueries({
         predicate: (q) => {
           const k = q.queryKey[0];
-          return (
-            typeof k === "string" &&
-            (k.startsWith(`/api/ops/facilities/${facilityNumber}/calendar`) ||
-              k.startsWith(`/api/ops/facilities/${facilityNumber}/dashboard`) ||
-              k.startsWith(`/api/ops/residents/`))
-          );
+          if (typeof k !== "string") return false;
+          if (k.startsWith(`/api/ops/facilities/${facilityNumber}/calendar`)) return true;
+          if (k.startsWith(`/api/ops/facilities/${facilityNumber}/dashboard`)) return true;
+          if (k.startsWith(`/api/ops/residents/`)) return true;
+          // Resident-scoped daily-tasks under the facility namespace.
+          if (
+            k.startsWith(`/api/ops/facilities/${facilityNumber}/residents/`) &&
+            (k.endsWith("/daily-tasks") || k.includes("/daily-tasks?"))
+          ) {
+            return true;
+          }
+          return false;
         },
       });
       onOpenChange(false);

@@ -68,8 +68,14 @@ interface CarePlan {
   goal: string;
   intervention: string;
   frequency: string;
-  residentSignedAt: number | null;
-  familySignedAt: number | null;
+  // Server stores presence as text; signatureDate is a single shared timestamp
+  // updated by whichever signer signed most recently. Display logic treats the
+  // signature *string* as the authoritative "is signed" flag and falls back to
+  // signatureDate / updatedAt for display.
+  digitalSignatureResident?: string | null;
+  digitalSignatureFamily?: string | null;
+  signatureDate?: number | null;
+  updatedAt?: number | null;
 }
 
 interface DailyTask {
@@ -406,6 +412,111 @@ function CreateCarePlanDialog({
   );
 }
 
+function SignCarePlanDialog({
+  open,
+  onOpenChange,
+  signerType,
+  carePlanId,
+  facilityNumber,
+  residentId,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  signerType: "resident" | "family" | null;
+  carePlanId: number | undefined;
+  facilityNumber: string;
+  residentId: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setConfirmed(false);
+    }
+  }, [open]);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (!signerType || !carePlanId) throw new Error("Missing signer context");
+      const signature = name.trim();
+      if (signature.length === 0) throw new Error("Type your full name to sign");
+      const res = await apiRequest("POST", `/api/ops/care-plans/${carePlanId}/sign`, {
+        signerType,
+        signature,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/care-plan`],
+      });
+      toast({ title: signerType === "resident" ? "Resident signature recorded" : "Family signature recorded" });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not sign", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const trimmed = name.trim();
+  const canSubmit = trimmed.length > 0 && confirmed && !mutation.isPending;
+  const heading = signerType === "family" ? "Family signature" : "Resident signature";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{heading}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Type the {signerType === "family" ? "family member's" : "resident's"} full name as a digital signature
+            confirming review and consent of this care plan.
+          </p>
+          <div className="space-y-1.5">
+            <Label htmlFor="careplan-signature">Full name</Label>
+            <Input
+              id="careplan-signature"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Jane Doe"
+              autoFocus
+            />
+          </div>
+          <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              I confirm the {signerType === "family" ? "family member" : "resident"} has reviewed and consented
+              to this care plan, and that this typed name is intended as a legal signature.
+            </span>
+          </label>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => mutation.mutate()}
+              disabled={!canSubmit}
+            >
+              {mutation.isPending ? "Signing..." : "Sign"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ReportIncidentInlineDialog({
   open,
   onOpenChange,
@@ -423,10 +534,16 @@ function ReportIncidentInlineDialog({
   const [form, setForm] = useState({ incidentType: "", incidentDate: today, description: "", immediateActionTaken: "", reportedBy: "Staff" });
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  const trimmedDescription = form.description.trim();
+  const trimmedType = form.incidentType.trim();
+  const canSubmit = !!trimmedType && trimmedDescription.length > 0;
+
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/incidents`, {
         ...form,
+        description: trimmedDescription,
+        immediateActionTaken: form.immediateActionTaken.trim(),
         residentId: Number(residentId),
         incidentDate: new Date(form.incidentDate).getTime(),
         injuryInvolved: 0,
@@ -472,8 +589,20 @@ function ReportIncidentInlineDialog({
             <Input type="date" value={form.incidentDate} onChange={(e) => set("incidentDate", e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label>Description</Label>
-            <Textarea value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Describe what happened" rows={3} />
+            <Label>
+              Description <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              value={form.description}
+              onChange={(e) => set("description", e.target.value)}
+              placeholder="Describe what happened"
+              rows={3}
+              aria-invalid={!trimmedDescription}
+              aria-required
+            />
+            {!trimmedDescription && (
+              <p className="text-xs text-muted-foreground">Required — describe what happened.</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Immediate Action Taken</Label>
@@ -488,7 +617,7 @@ function ReportIncidentInlineDialog({
             <Button
               variant="gradient"
               onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || !form.incidentType || !form.description}
+              disabled={mutation.isPending || !canSubmit}
             >
               {mutation.isPending ? "Reporting..." : "Report Incident"}
             </Button>
@@ -518,6 +647,7 @@ export function ResidentProfileContent({
   const [createCarePlanOpen, setCreateCarePlanOpen] = useState(false);
   const [addTaskOpen, setAddTaskOpen] = useState(false);
   const [reportIncidentOpen, setReportIncidentOpen] = useState(false);
+  const [signOpen, setSignOpen] = useState<null | "resident" | "family">(null);
   const residentIdStr = String(residentId);
 
   const { data: residentEnvelope, isLoading } = useQuery<{ success: boolean; data: Resident } | null>({
@@ -595,20 +725,6 @@ export function ResidentProfileContent({
     },
   });
 
-  const signCarePlanMutation = useMutation({
-    mutationFn: async (signType: "resident" | "family") => {
-      const res = await apiRequest(
-        "PATCH",
-        `/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/care-plan/sign`,
-        { signType }
-      );
-      return res.json();
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}/care-plan`] });
-      toast({ title: "Signed successfully" });
-    },
-  });
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -756,28 +872,36 @@ export function ResidentProfileContent({
                 <FieldRow label="Intervention" value={carePlan.intervention} />
                 <FieldRow label="Frequency" value={carePlan.frequency} />
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <Button
                   size="sm"
-                  variant={carePlan.residentSignedAt ? "secondary" : "outline"}
-                  onClick={() => signCarePlanMutation.mutate("resident")}
-                  disabled={!!carePlan.residentSignedAt || signCarePlanMutation.isPending}
+                  variant={carePlan.digitalSignatureResident ? "secondary" : "outline"}
+                  onClick={() => setSignOpen("resident")}
+                  disabled={!!carePlan.digitalSignatureResident}
                 >
-                  {carePlan.residentSignedAt
-                    ? `Resident Signed ${new Date(carePlan.residentSignedAt).toLocaleDateString()}`
+                  {carePlan.digitalSignatureResident
+                    ? `Resident Signed${carePlan.signatureDate ? ` ${new Date(carePlan.signatureDate).toLocaleDateString()}` : ""}`
                     : "Resident Sign"}
                 </Button>
                 <Button
                   size="sm"
-                  variant={carePlan.familySignedAt ? "secondary" : "outline"}
-                  onClick={() => signCarePlanMutation.mutate("family")}
-                  disabled={!!carePlan.familySignedAt || signCarePlanMutation.isPending}
+                  variant={carePlan.digitalSignatureFamily ? "secondary" : "outline"}
+                  onClick={() => setSignOpen("family")}
+                  disabled={!!carePlan.digitalSignatureFamily}
                 >
-                  {carePlan.familySignedAt
-                    ? `Family Signed ${new Date(carePlan.familySignedAt).toLocaleDateString()}`
+                  {carePlan.digitalSignatureFamily
+                    ? `Family Signed${carePlan.signatureDate ? ` ${new Date(carePlan.signatureDate).toLocaleDateString()}` : ""}`
                     : "Family Sign"}
                 </Button>
               </div>
+              <SignCarePlanDialog
+                open={signOpen !== null}
+                onOpenChange={(v) => !v && setSignOpen(null)}
+                signerType={signOpen}
+                carePlanId={carePlan.id}
+                facilityNumber={facilityNumber}
+                residentId={residentIdStr}
+              />
             </>
           )}
 

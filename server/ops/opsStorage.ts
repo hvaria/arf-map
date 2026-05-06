@@ -608,16 +608,22 @@ export async function listIncidents(
   const { page, limit, type, residentId } = opts;
   const offset = (page - 1) * limit;
 
-  const params: (string | number)[] = [facilityNumber];
-  let where = "facility_number = $1";
-  if (type) { params.push(type); where += ` AND incident_type = $${params.length}`; }
-  if (residentId !== undefined) { params.push(residentId); where += ` AND resident_id = $${params.length}`; }
+  // Use Drizzle so the returned rows come back in camelCase
+  // (incidentDate, incidentType, supervisorNotified, …) — matching the
+  // frontend interface. The earlier raw pool.query returned snake_case
+  // fields, which silently turned every incidentDate into undefined and
+  // crashed downstream `relativeTime(inc.incidentDate)` calls with
+  // "Invalid time value".
+  const conds = [eq(opsIncidents.facilityNumber, facilityNumber)];
+  if (type) conds.push(eq(opsIncidents.incidentType, type));
+  if (residentId !== undefined) conds.push(eq(opsIncidents.residentId, residentId));
+  const where = conds.length === 1 ? conds[0] : and(...conds);
 
-  const [rowsResult, countResult] = await Promise.all([
-    pool.query(`SELECT * FROM ops_incidents WHERE ${where} ORDER BY incident_date DESC LIMIT ${limit} OFFSET ${offset}`, params),
-    pool.query(`SELECT COUNT(*)::int as count FROM ops_incidents WHERE ${where}`, params),
+  const [rows, countRows] = await Promise.all([
+    db.select().from(opsIncidents).where(where!).orderBy(desc(opsIncidents.incidentDate)).limit(limit).offset(offset),
+    db.select({ count: sql<number>`COUNT(*)::int` }).from(opsIncidents).where(where!),
   ]);
-  return { incidents: rowsResult.rows, total: countResult.rows[0]?.count ?? 0 };
+  return { incidents: rows as OpsIncident[], total: countRows[0]?.count ?? 0 };
 }
 
 export async function createIncident(data: InsertOpsIncident): Promise<OpsIncident> {

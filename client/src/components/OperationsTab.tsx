@@ -205,7 +205,11 @@ function parseScheduledTimeToToday(scheduled: string): number | null {
   return d.getTime();
 }
 
-function relativeTime(ts: number): string {
+function relativeTime(ts: number | null | undefined): string {
+  // Defensive: any nullish or non-finite value short-circuits to a placeholder
+  // instead of throwing "Invalid time value". A single bad row should never
+  // crash the alerts useMemo and blank the whole tab.
+  if (ts == null || !Number.isFinite(ts)) return "—";
   const diff = ts - Date.now();
   const abs = Math.abs(diff);
   if (abs < 60_000) return diff >= 0 ? "in <1 min" : "<1 min ago";
@@ -603,6 +607,10 @@ class SubViewErrorBoundary extends React.Component<
     this.state = { hasError: false };
   }
   static getDerivedStateFromError(): SubViewEBState { return { hasError: true }; }
+  componentDidCatch(error: Error) {
+    // eslint-disable-next-line no-console
+    console.error("Operations sub-view crashed:", error);
+  }
   render() {
     if (this.state.hasError) {
       return (
@@ -616,6 +624,48 @@ class SubViewErrorBoundary extends React.Component<
           <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
             Something went wrong loading this section. Please go back and try again.
           </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ── Tab-level error boundary ───────────────────────────────────────────────────
+// Catches render errors anywhere inside OperationsTab (KPIs, alerts, calendar,
+// sub-views) so a single bad data row can't blank the whole tab and bubble up
+// past the auth-bearing parent.
+
+interface OpsEBState { hasError: boolean }
+
+class OperationsErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  OpsEBState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(): OpsEBState { return { hasError: true }; }
+  componentDidCatch(error: Error) {
+    // eslint-disable-next-line no-console
+    console.error("OperationsTab crashed:", error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="space-y-4 py-8">
+          <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive">
+            Something went wrong loading Operations. Try reloading the page —
+            your session is still active.
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => this.setState({ hasError: false })}
+          >
+            Try again
+          </Button>
         </div>
       );
     }
@@ -787,7 +837,7 @@ function TrackerSubView({
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function OperationsTab({ facilityNumber }: { facilityNumber: string }) {
+function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   const [subView, setSubView] = useState<SubView | null>(null);
   // Day-scoped sub-views (currently just emar) read this to open on the
   // correct date when navigation comes from a calendar chip.
@@ -1118,12 +1168,13 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       if (!inc.familyNotified) missing.push("family");
       if (!inc.physicianNotified) missing.push("physician");
       if (missing.length === 0) continue;
+      const typeLabel = (inc.incidentType ?? "incident").replace(/_/g, " ");
       out.push({
         id: `inc-notify-${inc.id}`,
         tier: "regulatory",
         urgency: "open",
         icon: AlertTriangle,
-        title: `${inc.incidentType.replace(/_/g, " ")}${inc.residentName ? ` · ${inc.residentName}` : ""}`,
+        title: `${typeLabel}${inc.residentName ? ` · ${inc.residentName}` : ""}`,
         detail: `Missing notification: ${missing.join(", ")}`,
         whenLabel: relativeTime(inc.incidentDate),
         actionLabel: "Open",
@@ -1134,12 +1185,13 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
 
     for (const inc of incidents) {
       if (!inc.lic624Required || inc.lic624Submitted) continue;
+      const typeLabel = (inc.incidentType ?? "incident").replace(/_/g, " ");
       out.push({
         id: `inc-lic-${inc.id}`,
         tier: "regulatory",
         urgency: "approaching",
         icon: ShieldCheck,
-        title: `LIC 624 needed · ${inc.incidentType.replace(/_/g, " ")}`,
+        title: `LIC 624 needed · ${typeLabel}`,
         detail: inc.residentName ?? "Reportable incident",
         whenLabel: relativeTime(inc.incidentDate),
         actionLabel: "File",
@@ -1218,13 +1270,14 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
 
     for (const n of notes) {
       if (n.priority !== "urgent" || n.status !== "open") continue;
+      const body = n.body ?? "";
       out.push({
         id: `note-${n.id}`,
         tier: "care",
         urgency: "open",
         icon: MessageSquare,
         title: "Urgent note awaiting acknowledgement",
-        detail: n.body.slice(0, 80) + (n.body.length > 80 ? "…" : ""),
+        detail: body.slice(0, 80) + (body.length > 80 ? "…" : ""),
         whenLabel: relativeTime(n.createdAt),
         actionLabel: "Open",
         subView: "notes",
@@ -1281,12 +1334,13 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
       if (inc.status !== "open") continue;
       if (!inc.reportedBy) continue;
       if (inc.reportedBy.toLowerCase() !== usernameLc) continue;
+      const typeLabel = (inc.incidentType ?? "incident").replace(/_/g, " ");
       out.push({
         id: `mine-inc-${inc.id}`,
         tier: "regulatory",
         urgency: "open",
         icon: AlertTriangle,
-        title: `${inc.incidentType.replace(/_/g, " ")}${inc.residentName ? ` · ${inc.residentName}` : ""}`,
+        title: `${typeLabel}${inc.residentName ? ` · ${inc.residentName}` : ""}`,
         detail: "You reported this — still open",
         whenLabel: relativeTime(inc.incidentDate),
         actionLabel: "Open",
@@ -1297,16 +1351,17 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
 
     for (const n of notes) {
       if (n.status !== "open") continue;
-      const isMine = n.authorDisplayName.toLowerCase() === usernameLc;
+      const isMine = (n.authorDisplayName ?? "").toLowerCase() === usernameLc;
       const needsAck = n.priority === "urgent" && n.ackRequired === 1;
       if (!isMine && !needsAck) continue;
+      const body = n.body ?? "";
       out.push({
         id: `mine-note-${n.id}`,
         tier: "care",
         urgency: needsAck ? "open" : "scheduled",
         icon: MessageSquare,
         title: needsAck ? "Acknowledge urgent note" : "Your note",
-        detail: n.body.slice(0, 80) + (n.body.length > 80 ? "…" : ""),
+        detail: body.slice(0, 80) + (body.length > 80 ? "…" : ""),
         whenLabel: relativeTime(n.createdAt),
         actionLabel: "Open",
         subView: "notes",
@@ -1661,5 +1716,13 @@ export default function OperationsTab({ facilityNumber }: { facilityNumber: stri
         facilityNumber={facilityNumber}
       />
     </div>
+  );
+}
+
+export default function OperationsTab({ facilityNumber }: { facilityNumber: string }) {
+  return (
+    <OperationsErrorBoundary>
+      <OperationsTabInner facilityNumber={facilityNumber} />
+    </OperationsErrorBoundary>
   );
 }
