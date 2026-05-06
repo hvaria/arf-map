@@ -375,8 +375,12 @@ const paymentSchema = z.object({
   recordedBy: z.string().optional(),
 });
 
+// facilityNumber is intentionally NOT in the body schema — the server pulls
+// it from the authenticated session in the route handler. Letting clients
+// claim a facility in the request body is a scope risk; before this fix
+// the frontend never sent it, so the schema rejected every Add Staff /
+// Add Shift submit (Group A latent contract bug).
 const staffSchema = z.object({
-  facilityNumber: z.string().min(1),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: z.string().email().optional(),
@@ -386,10 +390,9 @@ const staffSchema = z.object({
   licenseNumber: z.string().optional(),
   licenseExpiry: z.number().int().optional(),
   status: z.string().optional(),
-});
+}).strict();
 
 const shiftSchema = z.object({
-  facilityNumber: z.string().min(1),
   staffId: z.number().int(),
   shiftDate: z.number().int(),
   shiftType: z.string().min(1),
@@ -399,36 +402,17 @@ const shiftSchema = z.object({
   status: z.string().optional(),
   coveredById: z.number().int().optional(),
   notes: z.string().optional(),
-});
+}).strict();
 
-// Server-enforced enum so the frontend's COMPLIANCE_TYPES list and the
-// dashboard's compliance-overdue rollup share one vocabulary. Adding a
-// new type here is the canonical extension point.
-const COMPLIANCE_ITEM_TYPES = [
-  "lic_624_quarterly_report",
-  "fire_drill",
-  "earthquake_drill",
-  "elopement_drill",
-  "staff_cpr_certification",
-  "staff_first_aid_certification",
-  "tb_test_renewal",
-  "criminal_background_clearance",
-  "facility_inspection",
-  "license_renewal",
-  "insurance_renewal",
-  "policy_review",
-  "other",
-] as const;
-
+// Group A contract fix: facilityNumber pulled from session (not body),
+// itemType kept permissive (the FE COMPLIANCE_TYPES list and the BE list
+// don't overlap — aligning them is a separate BA-5 product decision),
+// dueDate is required because ops_compliance_calendar.due_date is NOT NULL
+// at the DB layer. BE-9 future-date refine applies on top.
 const complianceItemSchema = z.object({
-  facilityNumber: z.string().min(1),
-  itemType: z.enum(COMPLIANCE_ITEM_TYPES, {
-    errorMap: () => ({ message: "Pick a valid compliance type" }),
-  }),
-  description: z.string().min(1),
-  // BE-9: due date must be today or later when creating a NEW item.
-  // Compare to local-midnight so timezone drift doesn't reject valid dates.
-  dueDate: z.number().int().refine(
+  itemType: z.string().min(1, "Pick a compliance type"),
+  description: z.string().min(1, "Add a brief description"),
+  dueDate: z.number().int({ message: "Pick a due date" }).refine(
     (ts) => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -439,7 +423,7 @@ const complianceItemSchema = z.object({
   assignedTo: z.string().optional(),
   status: z.string().optional(),
   reminderDaysBefore: z.number().int().optional(),
-});
+}).strict();
 
 const completeComplianceSchema = z.object({
   completedDate: z.number().int(),
@@ -1946,12 +1930,20 @@ opsRouter.get("/facilities/:facilityNumber/staff", async (req, res) => {
 // POST /staff
 opsRouter.post("/staff", async (req, res) => {
   try {
+    const facilityNumber = getFacilityNumber(req);
     const parsed = staffSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
     const now = Date.now();
-    const member = await ops.createStaff({ ...parsed.data, createdAt: now, updatedAt: now });
+    // Inject facilityNumber from session — never trust client to claim a
+    // facility in the body (Group A contract fix).
+    const member = await ops.createStaff({
+      ...parsed.data,
+      facilityNumber,
+      createdAt: now,
+      updatedAt: now,
+    });
     res.status(201).json({ success: true, data: member });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -2005,11 +1997,16 @@ opsRouter.get("/facilities/:facilityNumber/schedule", async (req, res) => {
 // POST /shifts
 opsRouter.post("/shifts", async (req, res) => {
   try {
+    const facilityNumber = getFacilityNumber(req);
     const parsed = shiftSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const shift = await ops.createShift({ ...parsed.data, createdAt: Date.now() });
+    const shift = await ops.createShift({
+      ...parsed.data,
+      facilityNumber,
+      createdAt: Date.now(),
+    });
     res.status(201).json({ success: true, data: shift });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -2048,11 +2045,16 @@ opsRouter.get("/facilities/:facilityNumber/compliance", async (req, res) => {
 // POST /compliance
 opsRouter.post("/compliance", async (req, res) => {
   try {
+    const facilityNumber = getFacilityNumber(req);
     const parsed = complianceItemSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const item = await ops.createComplianceItem({ ...parsed.data, createdAt: Date.now() });
+    const item = await ops.createComplianceItem({
+      ...parsed.data,
+      facilityNumber,
+      createdAt: Date.now(),
+    });
     res.status(201).json({ success: true, data: item });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });

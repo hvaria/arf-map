@@ -11,21 +11,19 @@ import StatsPage from "./pages/StatsPage";
 import LoginPage from "./pages/jobseeker/LoginPage";
 import DashboardPage from "./pages/jobseeker/DashboardPage";
 import NotFound from "./pages/not-found";
-// Portal — Facility Operations Module
-import PortalDashboard from "./pages/portal/PortalDashboard";
-import ResidentsPage from "./pages/portal/ResidentsPage";
-import ResidentProfilePage from "./pages/portal/ResidentProfilePage";
-import EmarPage from "./pages/portal/EmarPage";
-import IncidentsPage from "./pages/portal/IncidentsPage";
-import CrmPage from "./pages/portal/CrmPage";
-import AdmissionsPage from "./pages/portal/AdmissionsPage";
-import BillingPage from "./pages/portal/BillingPage";
-import StaffPage from "./pages/portal/StaffPage";
-import CompliancePage from "./pages/portal/CompliancePage";
-import NotesPortalPage from "./pages/portal/NotesPortalPage";
-// Portal — Tracker Module routes
+// Portal — Tracker Module routes (live)
 import TrackerLandingPage from "./pages/tracker/TrackerLandingPage";
 import TrackerHomePage from "./pages/tracker/TrackerHomePage";
+
+// NOTE on the Operations Module routes:
+// The individual `/portal/*` pages (PortalDashboard, ResidentsPage, EmarPage,
+// IncidentsPage, CrmPage, AdmissionsPage, BillingPage, StaffPage,
+// CompliancePage, NotesPortalPage) used to be live as standalone routes.
+// They are NOT live anymore — the canonical entry is /facility-portal,
+// which renders OperationsTab inline and embeds those modules' *Content
+// exports (ResidentsContent, EmarContent, etc.) directly.
+// The page files are kept because OperationsTab still imports the
+// *Content named exports from them.
 
 function AppRouter() {
   return (
@@ -39,18 +37,6 @@ function AppRouter() {
         {/* Job seeker auth + dashboard routes */}
         <Route path="/jobseeker/login" component={LoginPage} />
         <Route path="/jobseeker/dashboard" component={DashboardPage} />
-        {/* Portal — Facility Operations Module routes */}
-        <Route path="/portal" component={PortalDashboard} />
-        <Route path="/portal/residents" component={ResidentsPage} />
-        <Route path="/portal/residents/:id" component={ResidentProfilePage} />
-        <Route path="/portal/emar" component={EmarPage} />
-        <Route path="/portal/incidents" component={IncidentsPage} />
-        <Route path="/portal/crm" component={CrmPage} />
-        <Route path="/portal/admissions/:id" component={AdmissionsPage} />
-        <Route path="/portal/billing" component={BillingPage} />
-        <Route path="/portal/staff" component={StaffPage} />
-        <Route path="/portal/compliance" component={CompliancePage} />
-        <Route path="/portal/notes" component={NotesPortalPage} />
         {/* Tracker Module — landing + per-tracker home (with optional tab segment) */}
         <Route path="/portal/tracker" component={TrackerLandingPage} />
         <Route path="/portal/tracker/:slug" component={TrackerHomePage} />

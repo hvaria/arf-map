@@ -68,7 +68,7 @@ function AddComplianceDialog({
   const { toast } = useToast();
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    type: "",
+    itemType: "",
     description: "",
     dueDate: "",
     assignedTo: "",
@@ -91,9 +91,12 @@ function AddComplianceDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
+      // Body matches the server schema exactly: itemType (not "type") and
+      // dueDate as a number, never null. facilityNumber is injected by the
+      // server from session.
       const res = await apiRequest("POST", `/api/ops/compliance`, {
         ...form,
-        dueDate: form.dueDate ? toLocalEpochMs(form.dueDate) : null,
+        dueDate: toLocalEpochMs(form.dueDate),
       });
       return res.json();
     },
@@ -101,7 +104,7 @@ function AddComplianceDialog({
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/compliance`] });
       toast({ title: "Compliance item added" });
       onOpenChange(false);
-      setForm({ type: "", description: "", dueDate: "", assignedTo: "" });
+      setForm({ itemType: "", description: "", dueDate: "", assignedTo: "" });
       setShowErrors(false);
     },
     onError: (err: Error) => {
@@ -114,13 +117,15 @@ function AddComplianceDialog({
   const dueDateMs = form.dueDate ? toLocalEpochMs(form.dueDate) : null;
   const todayMidnight = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
   const errors = {
-    type: !form.type ? "Pick a compliance type" : undefined,
+    itemType: !form.itemType ? "Pick a compliance type" : undefined,
     dueDate:
-      dueDateMs !== null && dueDateMs < todayMidnight
-        ? "Due date must be today or later"
-        : undefined,
+      dueDateMs === null
+        ? "Pick a due date"
+        : dueDateMs < todayMidnight
+          ? "Due date must be today or later"
+          : undefined,
   };
-  const isValid = !errors.type && !errors.dueDate;
+  const isValid = !errors.itemType && !errors.dueDate;
   const submit = () => {
     if (!isValid || mutation.isPending) {
       setShowErrors(true);
@@ -136,8 +141,8 @@ function AddComplianceDialog({
           <DialogTitle>Add Compliance Item</DialogTitle>
         </DialogHeader>
         <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
-          <FormField label="Type" required error={showErrors ? errors.type : undefined}>
-            <Select value={form.type} onValueChange={(v) => set("type", v)}>
+          <FormField label="Type" required error={showErrors ? errors.itemType : undefined}>
+            <Select value={form.itemType} onValueChange={(v) => set("itemType", v)}>
               <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
               <SelectContent>
                 {COMPLIANCE_TYPES.map((t) => (
@@ -155,7 +160,7 @@ function AddComplianceDialog({
             />
           </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Due Date" error={showErrors ? errors.dueDate : undefined}>
+            <FormField label="Due Date" required error={showErrors ? errors.dueDate : undefined}>
               <Input
                 type="date"
                 value={form.dueDate}
