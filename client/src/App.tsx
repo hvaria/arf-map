@@ -1,4 +1,5 @@
-import { Switch, Route, Router } from "wouter";
+import { useEffect } from "react";
+import { Switch, Route, Router, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
@@ -14,6 +15,19 @@ import NotFound from "./pages/not-found";
 // Portal — Tracker Module routes (live)
 import TrackerLandingPage from "./pages/tracker/TrackerLandingPage";
 import TrackerHomePage from "./pages/tracker/TrackerHomePage";
+
+// Old /portal/* URLs are no longer live (everything is reached via
+// /facility-portal). Redirect bookmarks, shared links, and any internal
+// nav that still references the old paths so users don't hit NotFound.
+// Tracker routes (/portal/tracker*) match earlier in the Switch, so this
+// redirect only catches the legacy operations-module paths.
+function RedirectToFacilityPortal() {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    navigate("/facility-portal", { replace: true });
+  }, [navigate]);
+  return null;
+}
 
 // NOTE on the Operations Module routes:
 // The individual `/portal/*` pages (PortalDashboard, ResidentsPage, EmarPage,
@@ -41,6 +55,10 @@ function AppRouter() {
         <Route path="/portal/tracker" component={TrackerLandingPage} />
         <Route path="/portal/tracker/:slug" component={TrackerHomePage} />
         <Route path="/portal/tracker/:slug/:tab" component={TrackerHomePage} />
+        {/* Legacy /portal/* deep-links → /facility-portal. Must come after the
+            tracker routes above so those still match first. */}
+        <Route path="/portal" component={RedirectToFacilityPortal} />
+        <Route path="/portal/:rest*" component={RedirectToFacilityPortal} />
         <Route component={NotFound} />
       </Switch>
     </Router>
