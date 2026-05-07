@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Save, Check, Loader2 } from "lucide-react";
 import {
   ResidentSelector,
 } from "./selectors/ResidentSelector";
@@ -29,6 +30,9 @@ import {
   makeClientId,
   useCreateTrackerEntry,
 } from "@/lib/tracker/useTrackerMutation";
+import { cn } from "@/lib/utils";
+import { VitalsDetailedForm } from "./renderers/VitalsDetailedForm";
+import { ToiletingDetailedForm } from "./renderers/ToiletingDetailedForm";
 import {
   getPayloadSchema,
   type FieldDefinition,
@@ -80,8 +84,54 @@ export function DetailedEntryForm({
   shift: Shift;
   onSuccess?: () => void;
 }) {
+  // Dispatch to specialized renderers when the definition opts in. This keeps
+  // the shell config-driven — tracker authors only need to set
+  // `renderer: 'vitals-range' | 'toileting'` on the definition.
+  if (definition.renderer === "vitals-range") {
+    return (
+      <VitalsDetailedForm
+        definition={definition}
+        date={date}
+        shift={shift}
+        onSuccess={onSuccess}
+      />
+    );
+  }
+  if (definition.renderer === "toileting") {
+    return (
+      <ToiletingDetailedForm
+        definition={definition}
+        date={date}
+        shift={shift}
+        onSuccess={onSuccess}
+      />
+    );
+  }
+
+  return (
+    <GenericDetailedEntryForm
+      definition={definition}
+      date={date}
+      shift={shift}
+      onSuccess={onSuccess}
+    />
+  );
+}
+
+function GenericDetailedEntryForm({
+  definition,
+  date,
+  shift,
+  onSuccess,
+}: {
+  definition: SerializedTrackerDefinition;
+  date: number;
+  shift: Shift;
+  onSuccess?: () => void;
+}) {
   const { toast } = useToast();
   const createMutation = useCreateTrackerEntry(definition.slug);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   // Persist a single clientId for the lifetime of this form instance —
   // the backend uses it as the idempotency key on retries.
@@ -240,6 +290,8 @@ export function DetailedEntryForm({
           clientIdRef.current = makeClientId();
           setValues(initial);
           setErrors({});
+          setSavedFlash(true);
+          window.setTimeout(() => setSavedFlash(false), 1100);
           onSuccess?.();
         },
         onError: (err) => {
@@ -272,8 +324,30 @@ export function DetailedEntryForm({
       ))}
 
       <div className="flex items-center gap-2 pt-2">
-        <Button type="submit" disabled={createMutation.isPending}>
-          {createMutation.isPending ? "Saving…" : "Save entry"}
+        <Button
+          type="submit"
+          disabled={createMutation.isPending}
+          className={cn(
+            "min-w-[140px] gap-1.5 transition-colors",
+            savedFlash && "bg-emerald-600 hover:bg-emerald-600",
+          )}
+        >
+          {createMutation.isPending ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Saving…
+            </>
+          ) : savedFlash ? (
+            <>
+              <Check className="h-4 w-4" />
+              Saved
+            </>
+          ) : (
+            <>
+              <Save className="h-4 w-4" />
+              Save entry
+            </>
+          )}
         </Button>
         <Button
           type="button"

@@ -154,6 +154,21 @@ export type HydratedTrackerEntryVersionRow =
   Omit<TrackerEntryVersionRow, "payloadSnapshot"> & { payloadSnapshot: unknown };
 
 /**
+ * Version row enriched with the actor's human-readable display name + role,
+ * resolved at read time via LEFT JOIN against `ops_staff` (preferred when
+ * `changedByStaffId` is non-null) and `facility_accounts` (fallback). We do
+ * not denormalize these onto `tracker_entry_versions` because:
+ *   (a) staff/account names can change later — denormalization would drift,
+ *   (b) versions are infrequently read,
+ *   (c) keeps the table schema light.
+ */
+export type HydratedTrackerEntryVersionRowWithActor =
+  HydratedTrackerEntryVersionRow & {
+    changedByDisplayName: string;
+    changedByRole: string;
+  };
+
+/**
  * Trackers store payloads as TEXT (JSON). House style on Notes parses on the
  * way out so route handlers can return the row as-is. Match that here.
  */
@@ -171,15 +186,6 @@ function parsePayload(raw: string): unknown {
     // Defensive: shouldn't happen because we always JSON.stringify on insert.
     return raw;
   }
-}
-
-function hydrateVersion(
-  row: TrackerEntryVersionRow,
-): HydratedTrackerEntryVersionRow {
-  return {
-    ...row,
-    payloadSnapshot: parsePayload(row.payloadSnapshot),
-  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -768,20 +774,90 @@ export async function softDeleteEntry(
  * Returns `null` when the entry itself is missing/wrong-tenant so the router
  * can distinguish "entry not visible" (404) from "entry has zero versions"
  * (200 + []).
+ *
+ * Each row is enriched with `changedByDisplayName` + `changedByRole` via a
+ * single LEFT JOIN against `ops_staff` (preferred) and `facility_accounts`
+ * (fallback). No N+1: one query returns the full page. Fallbacks if both
+ * joined rows are missing — e.g. account deleted — preserve the row with
+ * sentinel values rather than failing the response.
  */
 export async function listVersions(
   entryId: number,
   facilityNumber: string,
-): Promise<HydratedTrackerEntryVersionRow[] | null> {
+): Promise<HydratedTrackerEntryVersionRowWithActor[] | null> {
   const entry = await getEntryById(entryId, facilityNumber);
   if (!entry) return null;
 
-  const rows = await db
-    .select()
-    .from(trackerEntryVersions)
-    .where(eq(trackerEntryVersions.entryId, entryId))
-    .orderBy(desc(trackerEntryVersions.versionNumber));
-  return rows.map(hydrateVersion);
+  // Raw SQL because Drizzle joins across module-owned tables (ops_staff,
+  // facility_accounts) would require importing those table objects here and
+  // we keep tracker storage decoupled from the ops/auth modules. The shape is
+  // tight enough that hand-rolled SQL is the simpler tradeoff.
+  const result = await pool.query<{
+    id: string | number;
+    entry_id: string | number;
+    version_number: number;
+    payload_snapshot: string;
+    changed_by_facility_account_id: string | number;
+    changed_by_staff_id: string | number | null;
+    changed_at: string | number;
+    change_reason: string | null;
+    staff_first_name: string | null;
+    staff_last_name: string | null;
+    staff_role: string | null;
+    account_username: string | null;
+    account_role: string | null;
+  }>(
+    `SELECT
+       v.id,
+       v.entry_id,
+       v.version_number,
+       v.payload_snapshot,
+       v.changed_by_facility_account_id,
+       v.changed_by_staff_id,
+       v.changed_at,
+       v.change_reason,
+       s.first_name AS staff_first_name,
+       s.last_name  AS staff_last_name,
+       s.role       AS staff_role,
+       a.username   AS account_username,
+       a.role       AS account_role
+     FROM tracker_entry_versions v
+     LEFT JOIN ops_staff         s ON s.id = v.changed_by_staff_id
+     LEFT JOIN facility_accounts a ON a.id = v.changed_by_facility_account_id
+     WHERE v.entry_id = $1
+     ORDER BY v.version_number DESC`,
+    [entryId],
+  );
+
+  return result.rows.map((r) => {
+    const staffName =
+      r.staff_first_name && r.staff_last_name
+        ? `${r.staff_first_name} ${r.staff_last_name}`.trim()
+        : null;
+    const displayName =
+      (r.changed_by_staff_id !== null && staffName) ||
+      r.account_username ||
+      "Unknown";
+    const role =
+      (r.changed_by_staff_id !== null && r.staff_role) ||
+      r.account_role ||
+      "unknown";
+
+    const hydrated: HydratedTrackerEntryVersionRowWithActor = {
+      id: Number(r.id),
+      entryId: Number(r.entry_id),
+      versionNumber: r.version_number,
+      payloadSnapshot: parsePayload(r.payload_snapshot),
+      changedByFacilityAccountId: Number(r.changed_by_facility_account_id),
+      changedByStaffId:
+        r.changed_by_staff_id === null ? null : Number(r.changed_by_staff_id),
+      changedAt: Number(r.changed_at),
+      changeReason: r.change_reason,
+      changedByDisplayName: displayName,
+      changedByRole: role,
+    };
+    return hydrated;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

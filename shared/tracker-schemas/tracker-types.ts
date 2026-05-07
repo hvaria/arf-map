@@ -181,6 +181,14 @@ export type QuickGridConfig = z.infer<typeof quickGridConfigSchema>;
 
 export type TrackerMode = "quick" | "detailed" | "history";
 
+/**
+ * Identifier for a specialized client-side renderer. When set, the generic
+ * `DetailedEntryForm` defers to a custom component instead of rendering the
+ * declarative `detailedFields`. The `detailedFields` array is still consulted
+ * for envelope fields (resident, occurredAt) and history-tab summarisation.
+ */
+export type TrackerRenderer = "vitals-range" | "toileting";
+
 export interface TrackerDefinition {
   /** Stable identifier, e.g. "adl". Matches `tracker_definitions.slug`. */
   slug: string;
@@ -200,6 +208,12 @@ export interface TrackerDefinition {
   /** Which tabs the tracker shell renders. */
   modes: TrackerMode[];
   defaultMode: "quick" | "detailed";
+  /**
+   * When set, the client `DetailedEntryForm` switches to a specialized
+   * component instead of rendering generic fields. The renderer is matched by
+   * string id so the value is JSON-safe and can travel over the wire.
+   */
+  renderer?: TrackerRenderer;
   /** Required when `modes` includes "quick". */
   quickGrid?: QuickGridConfig;
   /** Always required — also used to render history detail rows. */

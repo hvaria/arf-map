@@ -1,9 +1,10 @@
 /**
  * Tracker registry — public entry point for the Tracker Module config system.
  *
- * Phase B foundation ships exactly one tracker (ADL). Adding trackers 2..25
- * is a matter of importing the new definition and appending it to
- * `TRACKER_REGISTRY` below.
+ * Adding a new tracker is a matter of importing its definition and appending
+ * it to `TRACKER_REGISTRY` below. The server's `seedTrackerDefinitions` loop
+ * reads from this registry on boot, and the client's tracker picker reads
+ * from the wire-serialized form of it.
  */
 
 import type { ZodTypeAny } from "zod";
@@ -13,6 +14,14 @@ import {
   adlEntryPayloadSchema,
 } from "./adl";
 import {
+  VITALS_DEFINITION,
+  vitalsEntryPayloadSchema,
+} from "./vitals";
+import {
+  TOILETING_DEFINITION,
+  toiletingEntryPayloadSchema,
+} from "./toileting";
+import {
   serializeDefinitionForClient,
   type SerializedTrackerDefinition,
   type TrackerDefinition,
@@ -21,9 +30,44 @@ import {
 // Re-export the core types/helpers so consumers only need to import from
 // "@shared/tracker-schemas" (or "../shared/tracker-schemas" on the server).
 export * from "./tracker-types";
+
+// ─── ADL ────────────────────────────────────────────────────────────────────
 export { adlEntryPayloadSchema, ADL_DEFINITION } from "./adl";
 export type { AdlEntryPayload, AdlGoalId, AdlStatus } from "./adl";
 export { ADL_GOAL_IDS, ADL_STATUS_VALUES } from "./adl";
+
+// ─── Vitals ─────────────────────────────────────────────────────────────────
+export {
+  vitalsEntryPayloadSchema,
+  VITALS_DEFINITION,
+  VITAL_TYPES,
+  VITAL_TYPE_LABEL,
+  VITAL_TYPE_UNIT,
+} from "./vitals";
+export type { VitalType, VitalsEntryPayload } from "./vitals";
+
+// ─── Toileting ──────────────────────────────────────────────────────────────
+export {
+  toiletingEntryPayloadSchema,
+  TOILETING_DEFINITION,
+  BRISTOL_TYPES,
+  BRISTOL_META,
+  URINE_COLORS,
+  URINE_COLOR_META,
+  URINE_OUTPUTS,
+  URINE_SMELLS,
+  URINE_METHODS,
+} from "./toileting";
+export type {
+  BristolType,
+  BristolMeta,
+  UrineColor,
+  UrineColorMeta,
+  UrineOutput,
+  UrineSmell,
+  UrineMethod,
+  ToiletingEntryPayload,
+} from "./toileting";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry
@@ -35,7 +79,15 @@ export { ADL_GOAL_IDS, ADL_STATUS_VALUES } from "./adl";
  */
 export const TRACKER_REGISTRY: Record<string, TrackerDefinition> = {
   adl: ADL_DEFINITION,
+  vitals: VITALS_DEFINITION,
+  toileting: TOILETING_DEFINITION,
 };
+
+// Silence unused-import warnings for re-exports that are surfaced via
+// `export *` consumers — referencing them here keeps the bundler honest.
+void adlEntryPayloadSchema;
+void vitalsEntryPayloadSchema;
+void toiletingEntryPayloadSchema;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

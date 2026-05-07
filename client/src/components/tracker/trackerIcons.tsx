@@ -12,12 +12,16 @@ import {
   ListChecks,
   Activity,
   HeartPulse,
+  Heart,
   Pill,
   Utensils,
   Bath,
   Bed,
   AlertTriangle,
   Stethoscope,
+  Droplets,
+  Droplet,
+  Save,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,12 +30,16 @@ const ICON_MAP: Record<string, LucideIcon> = {
   ListChecks,
   Activity,
   HeartPulse,
+  Heart,
   Pill,
   Utensils,
   Bath,
   Bed,
   AlertTriangle,
   Stethoscope,
+  Droplets,
+  Droplet,
+  Save,
 };
 
 export function resolveTrackerIcon(name: string | undefined): LucideIcon {

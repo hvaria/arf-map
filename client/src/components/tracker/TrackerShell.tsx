@@ -49,12 +49,12 @@ export function TrackerShell({
   const showResidentFilter = tab === "history";
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 animate-in fade-in duration-200">
       <Button
         variant="ghost"
         size="sm"
         onClick={onBack}
-        className="gap-1.5 -ml-2"
+        className="gap-1.5 -ml-2 transition-transform active:scale-95"
         aria-label="Back to overview"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -95,7 +95,7 @@ export function TrackerShell({
               id={`tracker-tab-${mode}`}
               onClick={() => onTabChange(mode)}
               className={cn(
-                "min-h-[40px] px-4 rounded-sm text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400",
+                "min-h-[44px] px-4 rounded-sm text-sm font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-indigo-400 active:scale-95",
                 active
                   ? "bg-indigo-600 text-white shadow-sm"
                   : "text-muted-foreground hover:bg-indigo-50",
@@ -111,6 +111,7 @@ export function TrackerShell({
         role="tabpanel"
         id={`tracker-panel-${tab}`}
         aria-labelledby={`tracker-tab-${tab}`}
+        className="animate-in fade-in duration-150"
       >
         {tab === "quick" && (
           <QuickEntryGrid
