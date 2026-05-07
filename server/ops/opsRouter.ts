@@ -534,6 +534,20 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/daily-tasks", async (re
   }
 });
 
+// GET /facilities/:facilityNumber/overdue-tasks
+// Facility-wide list of pending tasks whose task_date is before today.
+// Drives the dashboard "Overdue Tasks" KPI sub-view so the user can act on
+// each row without first picking a resident.
+opsRouter.get("/facilities/:facilityNumber/overdue-tasks", async (req, res) => {
+  try {
+    const { facilityNumber } = req.params;
+    const tasks = await ops.getOverdueTasksForFacility(facilityNumber);
+    res.json({ success: true, data: tasks });
+  } catch (e) {
+    res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
 // GET /facilities/:facilityNumber/residents/:id/medications
 opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", async (req, res) => {
   try {

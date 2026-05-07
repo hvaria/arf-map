@@ -48,7 +48,7 @@ import {
   UserPlus, Receipt, ShieldCheck,
   MessageSquare, Bell, ArrowRight, Clock, Sparkles,
   CheckCircle2, Inbox, UserCog, Keyboard, TrendingUp,
-  Calendar as CalendarIcon,
+  Calendar as CalendarIcon, Activity,
 } from "lucide-react";
 import { ResidentsContent } from "@/components/operations/ResidentsContent";
 import { EmarContent } from "@/components/operations/EmarContent";
@@ -57,6 +57,7 @@ import { CrmContent } from "@/components/operations/CrmContent";
 import { BillingContent } from "@/components/operations/BillingContent";
 import { StaffContent } from "@/components/operations/StaffContent";
 import { ComplianceContent } from "@/components/operations/ComplianceContent";
+import { TasksContent } from "@/components/operations/TasksContent";
 import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
 import OpsCalendar from "@/components/OpsCalendar";
 // Tracker module — embedded as a sub-view (no per-tracker URL anymore).
@@ -69,6 +70,7 @@ import {
 import { TrackerEmpty } from "@/components/tracker/TrackerEmpty";
 import { useTrackerDefinitions } from "@/lib/tracker/useTrackerDefinitions";
 import { useTrackerDefinition } from "@/lib/tracker/useTrackerDefinition";
+import { useTrackerEntries } from "@/lib/tracker/useTrackerEntries";
 import { startOfDay, type TrackerFilters } from "@/components/tracker/TrackerFilterBar";
 import { deriveCurrentShift } from "@/components/tracker/selectors/ShiftToggle";
 import type {
@@ -148,6 +150,7 @@ interface NoteListItem {
 type SubView =
   | "residents"
   | "emar"
+  | "tasks"
   | "incidents"
   | "crm"
   | "billing"
@@ -934,6 +937,25 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     staleTime: 30_000,
   });
 
+  // ADL tracker entries logged in the current shift today — drives the
+  // "Tracker" KPI tile. Bounded by [todayStart, todayEnd] so the count
+  // resets cleanly on a date change. Reuses the same hook the tracker
+  // sub-view uses, so cache stays warm when the user drills in.
+  const todayStartMs = startOfDay(Date.now());
+  const todayEndMs = todayStartMs + 86_400_000;
+  const currentShift = deriveCurrentShift();
+  const trackerEntriesQuery = useTrackerEntries({
+    slug: "adl",
+    from: todayStartMs,
+    to: todayEndMs,
+    shift: currentShift,
+    limit: 50,
+    enabled,
+  });
+  const trackerThisShiftCount =
+    trackerEntriesQuery.data?.pages?.[0]?.data?.items?.length ?? 0;
+  const trackerLoading = trackerEntriesQuery.isLoading;
+
   const dashboard = dashEnv?.data ?? null;
   const medPasses = medEnv?.data ?? [];
   const incidents = incEnv?.data ?? [];
@@ -1033,6 +1055,21 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     }).length;
     const openIncidents = incidents.filter((i) => i.status === "open").length;
 
+    // Staff with a license expiring inside the 30-day window. Computed
+    // client-side from the existing /staff query so we don't add a second
+    // backend round-trip just for this count.
+    const now = Date.now();
+    const licenseHorizonMs = APPROACHING_LICENSE_DAYS * 24 * 60 * 60 * 1000;
+    const expiringLicenses = staff.filter((s) => {
+      if (s.licenseExpiry == null) return false;
+      const ms = s.licenseExpiry - now;
+      return ms >= 0 && ms <= licenseHorizonMs;
+    }).length;
+    const expiredLicenses = staff.filter((s) => {
+      if (s.licenseExpiry == null) return false;
+      return s.licenseExpiry < now;
+    }).length;
+
     // Sub-label tone is unified: count-driven phrasing when there's
     // something to act on ("N <noun>"), "All clear" when there isn't.
     // residents and meds carry contextual sub-labels because their counts
@@ -1070,7 +1107,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         subtitle: dashboard.overdueTasks > 0 ? `${dashboard.overdueTasks} overdue` : "All clear",
         icon: ClipboardList,
         tone: dashboard.overdueTasks > 0 ? "danger" : "ok",
-        subView: "residents",
+        subView: "tasks",
       },
       {
         key: "incidents",
@@ -1113,8 +1150,34 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         tone: dashboard.overdueCompliance > 0 ? "warn" : "ok",
         subView: "compliance",
       },
+      {
+        key: "staff",
+        label: "Expiring Licenses",
+        count: expiringLicenses,
+        subtitle:
+          expiredLicenses > 0
+            ? `${expiredLicenses} already expired`
+            : expiringLicenses > 0
+              ? `Within ${APPROACHING_LICENSE_DAYS} days`
+              : "All clear",
+        icon: UserCog,
+        tone: expiredLicenses > 0 ? "danger" : expiringLicenses > 0 ? "warn" : "ok",
+        subView: "staff",
+      },
+      {
+        key: "tracker",
+        label: "ADL Entries",
+        count: trackerThisShiftCount,
+        subtitle:
+          trackerThisShiftCount > 0
+            ? `${trackerThisShiftCount} logged this shift`
+            : "None yet this shift",
+        icon: Activity,
+        tone: trackerThisShiftCount > 0 ? "info" : "warn",
+        subView: "tracker",
+      },
     ];
-  }, [dashboard, medPasses, incidents]);
+  }, [dashboard, medPasses, incidents, staff, trackerThisShiftCount]);
 
   // Lens-filtered KPIs.
   const orderedKpis: KpiTile[] = useMemo(() => {
@@ -1406,6 +1469,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   const subViewContent: React.ReactNode =
     subView === "residents"  ? <ResidentsContent  facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "emar"       ? <EmarContent       facilityNumber={facilityNumber} onBack={subViewBack} initialDate={subViewDate ?? undefined} /> :
+    subView === "tasks"      ? <TasksContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "incidents"  ? <IncidentsContent  facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "crm"        ? <CrmContent        facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={subViewBack} /> :
@@ -1632,15 +1696,18 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           full operational state is visible in one scan without competing
           with the urgent action list above. */}
       <section aria-label="Key indicators">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        {/* 9 KPIs are too cramped at lg (1024px), so we keep lg at 5 columns
+            (5+4 layout) and only collapse to a single row at xl+ where the
+            tile content stays readable. */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-3">
           {dashLoading
-            ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
+            ? Array.from({ length: 9 }).map((_, i) => <KpiSkeleton key={i} />)
             : orderedKpis.length > 0
               ? orderedKpis.map((t) => (
                   <KpiCard key={t.label} tile={t} onClick={() => goToSubView(t.subView)} />
                 ))
               : (
-                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-7 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-5 xl:col-span-9 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                   {!facilityNumber
                     ? "Facility not found. Please log out and back in."
                     : "Could not load operations data. Try refreshing the page."}

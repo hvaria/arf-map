@@ -180,6 +180,68 @@ export async function getDailyTasks(residentId: number, facilityNumber: string, 
   return db.select().from(opsDailyTasks).where(conditions);
 }
 
+// Facility-wide aggregator for the dashboard "Overdue Tasks" sub-view.
+// Mirrors the dashboard count's overdue rule (status='pending' AND
+// task_date < todayStart) and joins resident names so the UI can render
+// each row without a second round-trip per resident.
+export interface OverdueTaskRow {
+  id: number;
+  residentId: number;
+  residentName: string;
+  roomNumber: string | null;
+  taskName: string;
+  taskType: string;
+  scheduledTime: string | null;
+  shift: string | null;
+  assignedTo: string | null;
+  status: string;
+  taskDate: number;
+}
+
+export async function getOverdueTasksForFacility(facilityNumber: string): Promise<OverdueTaskRow[]> {
+  const todayStart = (() => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.getTime(); })();
+  const result = await pool.query<{
+    id: number;
+    resident_id: number;
+    first_name: string | null;
+    last_name: string | null;
+    room_number: string | null;
+    task_name: string;
+    task_type: string;
+    scheduled_time: string | null;
+    shift: string | null;
+    assigned_to: string | null;
+    status: string;
+    task_date: number;
+  }>(
+    `SELECT t.id, t.resident_id, t.task_name, t.task_type, t.scheduled_time,
+            t.shift, t.assigned_to, t.status, t.task_date,
+            r.first_name, r.last_name, r.room_number
+       FROM ops_daily_tasks t
+       LEFT JOIN ops_residents r ON t.resident_id = r.id
+      WHERE t.facility_number = $1
+        AND t.status = 'pending'
+        AND t.task_date < $2
+      ORDER BY t.task_date ASC, t.scheduled_time ASC NULLS LAST, t.id ASC`,
+    [facilityNumber, todayStart],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    residentId: row.resident_id,
+    residentName: row.first_name
+      ? `${row.first_name} ${row.last_name ?? ""}`.trim()
+      : "Unknown resident",
+    roomNumber: row.room_number,
+    taskName: row.task_name,
+    taskType: row.task_type,
+    scheduledTime: row.scheduled_time,
+    shift: row.shift,
+    assignedTo: row.assigned_to,
+    status: row.status,
+    taskDate: row.task_date,
+  }));
+}
+
 export async function completeTask(id: number, notes: string, completedAt: number): Promise<boolean> {
   const rows = await db.update(opsDailyTasks).set({ status: "completed", completionNotes: notes, completedAt }).where(eq(opsDailyTasks.id, id)).returning({ id: opsDailyTasks.id });
   return rows.length > 0;
