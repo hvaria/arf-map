@@ -225,6 +225,14 @@ export async function cleanTrackerData(
      )`,
     [ns],
   );
+  // tracker_alerts is populated by the alert evaluator that rides on every
+  // entry mutation. Tests that exercise vitals/toileting trackers will
+  // leave rows here; clean them before tracker_entries (no FK, but pairs
+  // logically) so reruns stay deterministic.
+  await pool.query(
+    `DELETE FROM tracker_alerts WHERE facility_number = ANY($1::text[])`,
+    [ns],
+  );
   await pool.query(
     `DELETE FROM tracker_audit_log WHERE facility_number = ANY($1::text[])`,
     [ns],

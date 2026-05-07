@@ -13,6 +13,10 @@
 import { z } from "zod";
 
 import {
+  type AlertRule,
+  vitalsCriticalRule,
+} from "./alerts";
+import {
   type HistorySummary,
   type HistoryTone,
   type TrackerDefinition,
@@ -183,6 +187,7 @@ export const VITALS_DEFINITION: TrackerDefinition = {
   ],
   payloadSchema: vitalsEntryPayloadSchema,
   historySummary: vitalsHistorySummary,
+  alerts: buildVitalsAlerts(),
   requiresResident: true,
   supportsBulk: false,
   shiftAware: true,
@@ -296,4 +301,66 @@ function num(v: unknown): number | undefined {
 
 function fmt(v: number | undefined): string {
   return v === undefined ? "—" : String(v);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alert rules. Every clinical vital with a "critical" classifier band fires a
+// critical alert on out-of-range readings. Reuses the shared classifier so
+// rule severity stays in lockstep with input coloring + history badges.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildVitalsAlerts(): AlertRule[] {
+  return [
+    vitalsCriticalRule({
+      id: "vitals.bp.critical",
+      label: "BP critical (≥180 systolic or ≥120 diastolic)",
+      vitalType: "bp",
+      message: (p) =>
+        `BP ${num(p.systolic) ?? "?"}/${num(p.diastolic) ?? "?"} — hypertensive crisis`,
+      detail: () => "Systolic ≥180 or diastolic ≥120. Notify nurse / 911 per facility protocol.",
+    }),
+    vitalsCriticalRule({
+      id: "vitals.pulse.critical",
+      label: "Pulse critical (<50 or >120 bpm)",
+      vitalType: "pulse",
+      message: (p) => `Pulse ${num(p.value) ?? "?"} bpm — bradycardia/tachycardia`,
+      detail: () => "Pulse outside 50–120 bpm. Reassess and document decision.",
+    }),
+    vitalsCriticalRule({
+      id: "vitals.temperature.critical",
+      label: "Temperature critical (>103°F or <95°F)",
+      vitalType: "temperature",
+      message: (p) =>
+        `Temp ${num(p.value) ?? "?"}°${p.unit === "C" ? "C" : "F"} — fever or hypothermic`,
+      detail: () => "Outside 95–103°F. Hydration check, cooling measures, notify nurse.",
+    }),
+    vitalsCriticalRule({
+      id: "vitals.oxygen.critical",
+      label: "O₂ saturation critical (<90%)",
+      vitalType: "oxygen",
+      message: (p) => `O₂ ${num(p.value) ?? "?"}% — significant hypoxia`,
+      detail: () => "Below 90%. Reposition, supplemental O₂, escalate to nurse.",
+    }),
+    vitalsCriticalRule({
+      id: "vitals.glucose.critical",
+      label: "Glucose critical (<70 or >250 mg/dL)",
+      vitalType: "glucose",
+      message: (p) => `Glucose ${num(p.value) ?? "?"} mg/dL — hypo/hyperglycemia`,
+      detail: () => "Outside 70–250 mg/dL. Follow facility hypo/hyperglycemia protocol.",
+    }),
+    vitalsCriticalRule({
+      id: "vitals.respiratory.critical",
+      label: "Respiratory rate critical (<8 or >30 rpm)",
+      vitalType: "respiratory",
+      message: (p) => `Resp ${num(p.value) ?? "?"} rpm — distress`,
+      detail: () => "Outside 8–30 rpm. Auscultate, document, escalate.",
+    }),
+    vitalsCriticalRule({
+      id: "vitals.pain.critical",
+      label: "Pain severe (≥8/10)",
+      vitalType: "pain",
+      message: (p) => `Pain ${num(p.value) ?? "?"}/10 — severe`,
+      detail: () => "Document, notify nurse, follow PRN pain protocol.",
+    }),
+  ];
 }

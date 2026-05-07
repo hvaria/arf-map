@@ -71,6 +71,8 @@ import { TrackerEmpty } from "@/components/tracker/TrackerEmpty";
 import { useTrackerDefinitions } from "@/lib/tracker/useTrackerDefinitions";
 import { useTrackerDefinition } from "@/lib/tracker/useTrackerDefinition";
 import { useTrackerEntries } from "@/lib/tracker/useTrackerEntries";
+import { useTrackerAlerts } from "@/lib/tracker/useTrackerAlerts";
+import { TrackerAlertsCard } from "@/components/tracker/TrackerAlertsCard";
 import { startOfDay, type TrackerFilters } from "@/components/tracker/TrackerFilterBar";
 import { deriveCurrentShift } from "@/components/tracker/selectors/ShiftToggle";
 import type {
@@ -692,6 +694,7 @@ function TrackerSubView({
   slug,
   tab,
   filters,
+  alertCountsBySlug,
   onSelectTracker,
   onTabChange,
   onFiltersChange,
@@ -700,6 +703,8 @@ function TrackerSubView({
   slug: string | null;
   tab: TrackerMode;
   filters: TrackerFilters;
+  /** Active alert counts keyed by tracker slug — surfaces the red badge on each card. */
+  alertCountsBySlug: Map<string, number>;
   onSelectTracker: (slug: string, def: SerializedTrackerDefinition) => void;
   onTabChange: (next: TrackerMode) => void;
   onFiltersChange: (
@@ -782,6 +787,7 @@ function TrackerSubView({
               <TrackerCard
                 key={def.slug}
                 definition={def}
+                activeAlertCount={alertCountsBySlug.get(def.slug) ?? 0}
                 onSelect={(s) => onSelectTracker(s, def)}
               />
             ))}
@@ -836,6 +842,8 @@ function TrackerSubView({
       filters={filters}
       onFiltersChange={onFiltersChange}
       onBack={onBack}
+      activeAlertCount={alertCountsBySlug.get(defEnv.data.slug) ?? 0}
+      onViewAllAlerts={onBack}
     />
   );
 }
@@ -955,6 +963,25 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   const trackerThisShiftCount =
     trackerEntriesQuery.data?.pages?.[0]?.data?.items?.length ?? 0;
   const trackerLoading = trackerEntriesQuery.isLoading;
+
+  // Active tracker alerts — used both for the unified alerts list (only the
+  // criticals merge into "Needs attention") and as the per-slug count source
+  // for the tracker picker badges. Same query the dedicated card uses, so
+  // React Query dedupes.
+  const trackerAlertsQuery = useTrackerAlerts(
+    { status: "active", limit: 100 },
+    { enabled, staleTime: 30_000 },
+  );
+  const activeTrackerAlerts = trackerAlertsQuery.data?.data?.items ?? [];
+
+  // Slug → active alert count map for TrackerCard badges.
+  const trackerAlertCountsBySlug = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of activeTrackerAlerts) {
+      map.set(a.trackerSlug, (map.get(a.trackerSlug) ?? 0) + 1);
+    }
+    return map;
+  }, [activeTrackerAlerts]);
 
   const dashboard = dashEnv?.data ?? null;
   const medPasses = medEnv?.data ?? [];
@@ -1354,6 +1381,26 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
       });
     }
 
+    // Critical tracker alerts merge into the unified list as `tier: clinical`
+    // with `urgency: overdue` so they sort to the top alongside late meds.
+    // Warn / info tracker alerts stay in the dedicated <TrackerAlertsCard />
+    // to avoid drowning the Needs-attention panel.
+    for (const ta of activeTrackerAlerts) {
+      if (ta.severity !== "critical") continue;
+      out.push({
+        id: `trk-alert-${ta.id}`,
+        tier: "clinical",
+        urgency: "overdue",
+        icon: AlertTriangle,
+        title: ta.message,
+        detail: ta.detail ?? `Tracker: ${ta.trackerSlug}`,
+        whenLabel: relativeTime(ta.createdAt),
+        actionLabel: "Review",
+        subView: "tracker",
+        sortKey: ta.createdAt,
+      });
+    }
+
     out.sort((a, b) => {
       const tierA = TIER_RANK[a.tier] + (lens.tierBoost[a.tier] ?? 0);
       const tierB = TIER_RANK[b.tier] + (lens.tierBoost[b.tier] ?? 0);
@@ -1364,7 +1411,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     });
 
     return out;
-  }, [medPasses, incidents, overdueCompliance, allCompliance, staff, notes, lens]);
+  }, [medPasses, incidents, overdueCompliance, allCompliance, staff, notes, activeTrackerAlerts, lens]);
 
   const alertsLoading =
     medLoading || incLoading || ovdLoading || compLoading || staffLoading || notesLoading;
@@ -1480,6 +1527,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         slug={selectedTrackerSlug}
         tab={trackerTab}
         filters={trackerFilters}
+        alertCountsBySlug={trackerAlertCountsBySlug}
         onSelectTracker={(slug, def) => {
           setSelectedTrackerSlug(slug);
           // Seed tab from the definition's defaultMode (falls back to quick).
@@ -1691,6 +1739,12 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           </CardContent>
         </Card>
       </section>
+
+      {/* Tracker alerts — surfaces tracker-rule firings (vitals out-of-range,
+          toileting concerns, etc.) with Acknowledge / Resolve actions. Lives
+          right under "Needs attention" so the two alert surfaces sit
+          together; criticals also merge into the unified panel above. */}
+      <TrackerAlertsCard facilityNumber={facilityNumber} />
 
       {/* Zone A: KPIs — overview tiles, kept on a single row at lg+ so the
           full operational state is visible in one scan without competing

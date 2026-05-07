@@ -1,6 +1,7 @@
 /** Landing-page card for a single tracker definition. */
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { ArrowRight, AlertOctagon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveTrackerIcon } from "./trackerIcons";
 import type {
@@ -42,12 +43,16 @@ const CATEGORY_THEME: Record<
 export function TrackerCard({
   definition,
   onSelect,
+  activeAlertCount = 0,
 }: {
   definition: SerializedTrackerDefinition;
   onSelect: (slug: string) => void;
+  /** Active alerts for this tracker. Shown as a red badge when > 0. */
+  activeAlertCount?: number;
 }) {
   const Icon = resolveTrackerIcon(definition.icon);
   const theme = CATEGORY_THEME[definition.category];
+  const hasAlerts = activeAlertCount > 0;
   return (
     <button
       type="button"
@@ -57,7 +62,11 @@ export function TrackerCard({
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-400",
         "active:scale-[0.98]",
       )}
-      aria-label={`Open ${definition.name} tracker`}
+      aria-label={
+        hasAlerts
+          ? `Open ${definition.name} tracker — ${activeAlertCount} active alert${activeAlertCount === 1 ? "" : "s"}`
+          : `Open ${definition.name} tracker`
+      }
     >
       <Card
         className={cn(
@@ -90,9 +99,20 @@ export function TrackerCard({
                   {definition.description}
                 </p>
               )}
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mt-2">
-                {definition.category.replace(/-/g, " ")}
-              </p>
+              <div className="flex items-center justify-between gap-2 mt-2">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {definition.category.replace(/-/g, " ")}
+                </p>
+                {hasAlerts && (
+                  <Badge
+                    variant="outline"
+                    className="h-5 text-[10px] font-semibold tabular-nums gap-1 bg-red-100 text-red-700 border-red-200"
+                  >
+                    <AlertOctagon className="h-3 w-3" aria-hidden="true" />
+                    {activeAlertCount} alert{activeAlertCount === 1 ? "" : "s"}
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
         </CardContent>

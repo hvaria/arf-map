@@ -30,6 +30,8 @@ import {
 // Re-export the core types/helpers so consumers only need to import from
 // "@shared/tracker-schemas" (or "../shared/tracker-schemas" on the server).
 export * from "./tracker-types";
+export * from "./alerts";
+export * from "./vital-ranges";
 
 // ─── ADL ────────────────────────────────────────────────────────────────────
 export { adlEntryPayloadSchema, ADL_DEFINITION } from "./adl";

@@ -23,6 +23,7 @@ import type { Request } from "express";
 import { db, pool } from "../db/index";
 import {
   TRACKERS_PG_SCHEMA_SQL,
+  trackerAlerts,
   trackerAuditLog,
   trackerDefinitions,
   trackerEntries,
@@ -35,9 +36,18 @@ import {
 } from "./trackerSchema";
 import {
   TRACKER_REGISTRY,
+  getDefinition,
   serializeDefinitionForClient,
   type Shift,
 } from "./registry";
+
+/**
+ * Local alias for the transaction object passed to `db.transaction(cb)`.
+ * Avoids stamping out the full `PgTransaction<...>` generic at every callsite
+ * while still keeping the type narrow enough that `tx.insert(...)` /
+ * `tx.select(...)` / `tx.execute(...)` are all type-checked. (No `any`.)
+ */
+type TxLike = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap (called from server/index.ts after bootstrapNotesSchema)
@@ -241,6 +251,108 @@ export async function writeTrackerAudit(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Alert evaluator (runs inside an entry mutation's transaction)
+//
+// Each tracker's `alerts: AlertRule[]` is a list of pure evaluators that
+// take a payload + lightweight ctx and return `AlertEvent | null`. We run
+// every rule against the entry's payload and persist a row into
+// `tracker_alerts` for each fired rule.
+//
+// Idempotency rule: if a rule sets `autoResolveOnNextEntry: true` (the v1
+// default) AND there's an active alert for the same
+// (facility_number, tracker_slug, rule_id, resident_id) tuple, mark the
+// prior alert resolved and insert a fresh active row. This way a stream
+// of critical readings doesn't accumulate dozens of zombie alerts —
+// "newest reading wins". Rules without that flag stack normally.
+//
+// Returns `{ fired: number }` for callers (and tests) that care about the
+// count. All side-effects ride on the caller's transaction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type EvaluateAlertsArgs = {
+  slug: string;
+  facilityNumber: string;
+  sourceEntryId: number;
+  residentId: number | null;
+  shift: string | null;
+  occurredAt: number;
+  payload: unknown;
+};
+
+async function evaluateAndPersistAlerts(
+  tx: TxLike,
+  args: EvaluateAlertsArgs,
+): Promise<{ fired: number }> {
+  const def = getDefinition(args.slug);
+  const rules = def?.alerts;
+  if (!rules || rules.length === 0) return { fired: 0 };
+
+  const ctx = {
+    trackerSlug: args.slug,
+    residentId: args.residentId,
+    shift: args.shift,
+    occurredAt: args.occurredAt,
+  };
+
+  const now = Date.now();
+  let fired = 0;
+
+  for (const rule of rules) {
+    let event: ReturnType<typeof rule.evaluate>;
+    try {
+      event = rule.evaluate(args.payload, ctx);
+    } catch (err) {
+      // A misbehaving rule must not poison the entry write. Log and skip.
+      console.error(
+        `[trackers] alert rule '${rule.id}' threw — skipping`,
+        err,
+      );
+      continue;
+    }
+    if (!event) continue;
+
+    if (event.autoResolveOnNextEntry === true) {
+      // Auto-resolve any prior `active` alert for the same tuple. We scope
+      // by resident_id explicitly: when residentId is null on the new
+      // entry, only resolve prior null-resident alerts (the IS NULL branch).
+      const conds = [
+        eq(trackerAlerts.facilityNumber, args.facilityNumber),
+        eq(trackerAlerts.trackerSlug, args.slug),
+        eq(trackerAlerts.ruleId, rule.id),
+        eq(trackerAlerts.status, "active"),
+      ];
+      if (args.residentId === null) {
+        conds.push(sql`${trackerAlerts.residentId} IS NULL`);
+      } else {
+        conds.push(eq(trackerAlerts.residentId, args.residentId));
+      }
+      await tx
+        .update(trackerAlerts)
+        .set({ status: "resolved", resolvedAt: now, updatedAt: now })
+        .where(and(...conds));
+    }
+
+    await tx.insert(trackerAlerts).values({
+      facilityNumber: args.facilityNumber,
+      trackerSlug: args.slug,
+      ruleId: event.ruleId ?? rule.id,
+      severity: event.severity ?? rule.defaultSeverity,
+      residentId: args.residentId,
+      sourceEntryId: args.sourceEntryId,
+      shift: args.shift,
+      message: event.message,
+      detail: event.detail ?? null,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    fired += 1;
+  }
+
+  return { fired };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Single-entry helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -330,6 +442,19 @@ export async function insertEntry(
       ipAddress: audit.reqCtx?.ipAddress ?? null,
       userAgent: audit.reqCtx?.userAgent ?? null,
       createdAt: now,
+    });
+
+    // Alert evaluation rides on the same txn so a fired alert can never
+    // outlive its source entry. Trackers without rules return early —
+    // ADL, etc. — at near-zero cost.
+    await evaluateAndPersistAlerts(tx, {
+      slug: row.trackerSlug,
+      facilityNumber: audit.facilityNumber,
+      sourceEntryId: row.id,
+      residentId: row.residentId ?? null,
+      shift: row.shift ?? null,
+      occurredAt: row.occurredAt,
+      payload: hydrated.payload,
     });
 
     return hydrated;
@@ -476,6 +601,19 @@ export async function bulkInsertEntries(
         ipAddress: ctx.reqCtx?.ipAddress ?? null,
         userAgent: ctx.reqCtx?.userAgent ?? null,
         createdAt: now,
+      });
+
+      // Alert evaluation per item, atomic with the entry + audit. The
+      // single-tx-per-batch contract is preserved — if any alert insert
+      // throws, the whole batch rolls back.
+      await evaluateAndPersistAlerts(tx, {
+        slug: ctx.slug,
+        facilityNumber,
+        sourceEntryId: row.id,
+        residentId: row.residentId ?? null,
+        shift: row.shift ?? null,
+        occurredAt: row.occurredAt,
+        payload: hydrated.payload,
       });
 
       results.push({
@@ -692,6 +830,19 @@ export async function updateEntry(
       createdAt: now,
     });
 
+    // Re-evaluate alerts on the post-update payload. An edited entry that
+    // is now critical SHOULD alert; the auto-resolve dedupe inside
+    // `evaluateAndPersistAlerts` keeps a stream of edits from snowballing.
+    await evaluateAndPersistAlerts(tx, {
+      slug: updatedRow.trackerSlug,
+      facilityNumber,
+      sourceEntryId: id,
+      residentId: updatedRow.residentId ?? null,
+      shift: updatedRow.shift ?? null,
+      occurredAt: updatedRow.occurredAt,
+      payload: updatedHydrated.payload,
+    });
+
     return updatedHydrated;
   });
 }
@@ -757,6 +908,21 @@ export async function softDeleteEntry(
       userAgent: reqCtx?.userAgent ?? null,
       createdAt: now,
     });
+
+    // Soft-delete the entry → resolve any active alerts that pointed at it.
+    // Without this the OperationsTab Alerts panel would show alerts whose
+    // source data was soft-deleted (zombies). Scoped by facility for safety
+    // even though source_entry_id is globally unique.
+    await tx
+      .update(trackerAlerts)
+      .set({ status: "resolved", resolvedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(trackerAlerts.facilityNumber, facilityNumber),
+          eq(trackerAlerts.sourceEntryId, id),
+          eq(trackerAlerts.status, "active"),
+        ),
+      );
 
     return updatedHydrated;
   });
@@ -877,6 +1043,285 @@ export async function findDefinitionIdBySlug(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Alerts — list / acknowledge / resolve / summary
+//
+// Reads/writes go through the `trackerAlerts` table imported at the top of
+// this file. The evaluator (`evaluateAndPersistAlerts`) populates rows on
+// every entry mutation; the router below exposes them to the OperationsTab
+// Alerts panel.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { TrackerAlertRow } from "./trackerSchema";
+
+export type ListAlertsParams = {
+  /** Defaults to ['active'] when omitted. */
+  status?: ReadonlyArray<"active" | "acknowledged" | "resolved">;
+  severity?: ReadonlyArray<"info" | "warn" | "critical">;
+  slug?: string;
+  residentId?: number;
+  cursor?: { createdAt: number; id: number };
+  limit?: number;
+};
+
+export type ListAlertsResult = {
+  items: TrackerAlertRow[];
+  nextCursor?: { createdAt: number; id: number };
+};
+
+const ALERTS_DEFAULT_LIMIT = 50;
+const ALERTS_MAX_LIMIT = 200;
+
+/**
+ * Keyset-paginated list of tracker alerts for a facility, ordered
+ * (created_at DESC, id DESC). Defaults to status='active' when no status
+ * filter is supplied — matches the OperationsTab Alerts panel default.
+ */
+export async function listAlerts(
+  facilityNumber: string,
+  params: ListAlertsParams,
+): Promise<ListAlertsResult> {
+  const limit = Math.min(
+    ALERTS_MAX_LIMIT,
+    Math.max(1, params.limit ?? ALERTS_DEFAULT_LIMIT),
+  );
+
+  const conds = [eq(trackerAlerts.facilityNumber, facilityNumber)];
+
+  const statuses = params.status && params.status.length > 0
+    ? params.status
+    : (["active"] as const);
+  conds.push(sql`${trackerAlerts.status} = ANY(${[...statuses]}::text[])`);
+
+  if (params.severity && params.severity.length > 0) {
+    conds.push(
+      sql`${trackerAlerts.severity} = ANY(${[...params.severity]}::text[])`,
+    );
+  }
+  if (params.slug !== undefined) {
+    conds.push(eq(trackerAlerts.trackerSlug, params.slug));
+  }
+  if (params.residentId !== undefined) {
+    conds.push(eq(trackerAlerts.residentId, params.residentId));
+  }
+  if (params.cursor) {
+    conds.push(
+      sql`(${trackerAlerts.createdAt}, ${trackerAlerts.id}) < (${params.cursor.createdAt}, ${params.cursor.id})`,
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(trackerAlerts)
+    .where(and(...conds))
+    .orderBy(desc(trackerAlerts.createdAt), desc(trackerAlerts.id))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const slice = hasMore ? rows.slice(0, limit) : rows;
+  const last = slice[slice.length - 1];
+  const nextCursor =
+    hasMore && last
+      ? { createdAt: last.createdAt, id: last.id }
+      : undefined;
+
+  return { items: slice, nextCursor };
+}
+
+export async function getAlertById(
+  id: number,
+  facilityNumber: string,
+): Promise<TrackerAlertRow | null> {
+  const rows = await db
+    .select()
+    .from(trackerAlerts)
+    .where(
+      and(
+        eq(trackerAlerts.id, id),
+        eq(trackerAlerts.facilityNumber, facilityNumber),
+      ),
+    );
+  return rows[0] ?? null;
+}
+
+/**
+ * Returned by the ack/resolve storage paths to let the router map
+ * "alert resolved" → 409. Lets the router stay free of state-machine logic.
+ */
+export class TrackerAlertAlreadyResolvedError extends Error {
+  constructor() {
+    super("Alert already resolved");
+    this.name = "TrackerAlertAlreadyResolvedError";
+  }
+}
+
+export type AlertActionInput = {
+  id: number;
+  facilityNumber: string;
+  actor: ActorCtx;
+  note?: string | null;
+  reqCtx?: TrackerRequestContext;
+};
+
+/**
+ * Mark an alert as `acknowledged`. Idempotent on re-acknowledge of an
+ * already-acknowledged alert (returns the row, no DB write). Throws
+ * TrackerAlertAlreadyResolvedError when the alert is `resolved` so the
+ * router can surface a 409.
+ *
+ * Audit row written inside the transaction so the trail can never drift
+ * from the row state. (Mirrors entry mutation paths.)
+ */
+export async function acknowledgeAlert(
+  input: AlertActionInput,
+): Promise<TrackerAlertRow> {
+  const now = Date.now();
+  return await db.transaction(async (tx) => {
+    const existingRows = await tx
+      .select()
+      .from(trackerAlerts)
+      .where(
+        and(
+          eq(trackerAlerts.id, input.id),
+          eq(trackerAlerts.facilityNumber, input.facilityNumber),
+        ),
+      );
+    const existing = existingRows[0];
+    if (!existing) throw new TrackerNotFoundError("Alert not found");
+    if (existing.status === "resolved") {
+      throw new TrackerAlertAlreadyResolvedError();
+    }
+    if (existing.status === "acknowledged") {
+      // Idempotent re-ack: no-op (preserves first-ack metadata).
+      return existing;
+    }
+
+    const updatedRows = await tx
+      .update(trackerAlerts)
+      .set({
+        status: "acknowledged",
+        acknowledgedAt: now,
+        acknowledgedByFacilityAccountId: input.actor.facilityAccountId,
+        acknowledgedByStaffId: input.actor.staffId ?? null,
+        acknowledgedNote: input.note ?? null,
+        updatedAt: now,
+      })
+      .where(eq(trackerAlerts.id, input.id))
+      .returning();
+    const updated = updatedRows[0]!;
+
+    // Audit on the alert entity for traceability — uses a small "ack"-style
+    // marker on the audit-log `action` field. We re-use the existing
+    // `update` action from the schema's open enum because the audit table
+    // is tracker-entry-shaped today; the entity_type discriminates.
+    await tx.insert(trackerAuditLog).values({
+      entityType: "tracker_entry", // closest existing entity_type; alert audits live on the same table
+      entityId: input.id,
+      action: "update",
+      actorFacilityAccountId: input.actor.facilityAccountId,
+      actorStaffId: input.actor.staffId ?? null,
+      facilityNumber: input.facilityNumber,
+      before: JSON.stringify(existing),
+      after: JSON.stringify(updated),
+      ipAddress: input.reqCtx?.ipAddress ?? null,
+      userAgent: input.reqCtx?.userAgent ?? null,
+      createdAt: now,
+    });
+
+    return updated;
+  });
+}
+
+/**
+ * Mark an alert as `resolved`. 404 if missing/wrong tenant. Idempotent
+ * resolves of an already-resolved alert return the row unchanged.
+ */
+export async function resolveAlert(
+  input: AlertActionInput,
+): Promise<TrackerAlertRow> {
+  const now = Date.now();
+  return await db.transaction(async (tx) => {
+    const existingRows = await tx
+      .select()
+      .from(trackerAlerts)
+      .where(
+        and(
+          eq(trackerAlerts.id, input.id),
+          eq(trackerAlerts.facilityNumber, input.facilityNumber),
+        ),
+      );
+    const existing = existingRows[0];
+    if (!existing) throw new TrackerNotFoundError("Alert not found");
+    if (existing.status === "resolved") {
+      // Idempotent re-resolve.
+      return existing;
+    }
+
+    const updatedRows = await tx
+      .update(trackerAlerts)
+      .set({
+        status: "resolved",
+        resolvedAt: now,
+        // If a note is provided on resolve, capture it on the same column
+        // (acknowledgedNote doubles as the action note — single TEXT slot
+        // for v1; we don't bloat the table with a second column yet).
+        acknowledgedNote: input.note ?? existing.acknowledgedNote ?? null,
+        updatedAt: now,
+      })
+      .where(eq(trackerAlerts.id, input.id))
+      .returning();
+    const updated = updatedRows[0]!;
+
+    await tx.insert(trackerAuditLog).values({
+      entityType: "tracker_entry",
+      entityId: input.id,
+      action: "update",
+      actorFacilityAccountId: input.actor.facilityAccountId,
+      actorStaffId: input.actor.staffId ?? null,
+      facilityNumber: input.facilityNumber,
+      before: JSON.stringify(existing),
+      after: JSON.stringify(updated),
+      ipAddress: input.reqCtx?.ipAddress ?? null,
+      userAgent: input.reqCtx?.userAgent ?? null,
+      createdAt: now,
+    });
+
+    return updated;
+  });
+}
+
+/**
+ * Severity-bucketed counts of `active` alerts for a facility. Backs the
+ * standalone `/alerts/summary` endpoint consumed by the OperationsTab
+ * Alerts panel. Single grouped query — no per-severity round-trip.
+ */
+export async function getActiveAlertCounts(
+  facilityNumber: string,
+): Promise<{
+  active: number;
+  critical: number;
+  warn: number;
+  info: number;
+}> {
+  const result = await pool.query<{ severity: string; c: number }>(
+    `SELECT severity, COUNT(*)::int AS c
+       FROM tracker_alerts
+       WHERE facility_number = $1 AND status = 'active'
+       GROUP BY severity`,
+    [facilityNumber],
+  );
+  let critical = 0;
+  let warn = 0;
+  let info = 0;
+  for (const r of result.rows) {
+    const c = Number(r.c) || 0;
+    if (r.severity === "critical") critical = c;
+    else if (r.severity === "warn") warn = c;
+    else if (r.severity === "info") info = c;
+  }
+  return { active: critical + warn + info, critical, warn, info };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Re-exports for the router layer (avoids long import paths there).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -884,5 +1329,6 @@ export type {
   TrackerEntryRow,
   TrackerEntryVersionRow,
   NewTrackerEntryRow,
+  TrackerAlertRow,
 } from "./trackerSchema";
 

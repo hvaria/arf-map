@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 
+import { type AlertRule } from "./alerts";
 import {
   type HistorySummary,
   type HistoryTone,
@@ -256,6 +257,7 @@ export const TOILETING_DEFINITION: TrackerDefinition = {
   ],
   payloadSchema: toiletingEntryPayloadSchema,
   historySummary: toiletingHistorySummary,
+  alerts: buildToiletingAlerts(),
   requiresResident: true,
   supportsBulk: false,
   shiftAware: true,
@@ -326,4 +328,93 @@ export function toiletingHistorySummary(payload: unknown): HistorySummary {
   }
 
   return { primary: "Toileting" };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alert rules. Bristol type 1/7 (severe constipation / severe diarrhea) and
+// urine "alert" category (red / severe dehydration) fire critical alerts.
+// Urine "warning" category (amber / brown) fires a warn alert.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildToiletingAlerts(): AlertRule[] {
+  return [
+    {
+      id: "toileting.bm.severe-diarrhea",
+      defaultSeverity: "critical",
+      label: "BM Bristol Type 7 (watery — severe diarrhea)",
+      evaluate(payload) {
+        if (typeof payload !== "object" || payload === null) return null;
+        const p = payload as Record<string, unknown>;
+        if (p.event_type !== "bm" || p.bristol !== 7) return null;
+        return {
+          ruleId: "toileting.bm.severe-diarrhea",
+          severity: "critical",
+          message: "Bristol Type 7 — watery stool, severe diarrhea",
+          detail: "Hydration check, infection precautions, notify nurse if persistent.",
+          autoResolveOnNextEntry: true,
+        };
+      },
+    },
+    {
+      id: "toileting.bm.severe-constipation",
+      defaultSeverity: "critical",
+      label: "BM Bristol Type 1 (hard lumps — severe constipation)",
+      evaluate(payload) {
+        if (typeof payload !== "object" || payload === null) return null;
+        const p = payload as Record<string, unknown>;
+        if (p.event_type !== "bm" || p.bristol !== 1) return null;
+        return {
+          ruleId: "toileting.bm.severe-constipation",
+          severity: "critical",
+          message: "Bristol Type 1 — separate hard lumps, severe constipation",
+          detail: "Review fluid intake + bowel regimen, notify nurse.",
+          autoResolveOnNextEntry: true,
+        };
+      },
+    },
+    {
+      id: "toileting.urine.severe-dehydration",
+      defaultSeverity: "critical",
+      label: "Urine red — severe dehydration / blood",
+      evaluate(payload) {
+        if (typeof payload !== "object" || payload === null) return null;
+        const p = payload as Record<string, unknown>;
+        if (p.event_type !== "urine") return null;
+        const meta =
+          typeof p.color === "string"
+            ? URINE_COLOR_META[p.color as UrineColor]
+            : undefined;
+        if (!meta || meta.category !== "alert") return null;
+        return {
+          ruleId: "toileting.urine.severe-dehydration",
+          severity: "critical",
+          message: `Urine ${meta.title.toLowerCase()} — ${meta.description.toLowerCase()}`,
+          detail: "Possible blood or severe dehydration. Notify nurse immediately.",
+          autoResolveOnNextEntry: true,
+        };
+      },
+    },
+    {
+      id: "toileting.urine.dehydrated",
+      defaultSeverity: "warn",
+      label: "Urine amber/brown — dehydrated",
+      evaluate(payload) {
+        if (typeof payload !== "object" || payload === null) return null;
+        const p = payload as Record<string, unknown>;
+        if (p.event_type !== "urine") return null;
+        const meta =
+          typeof p.color === "string"
+            ? URINE_COLOR_META[p.color as UrineColor]
+            : undefined;
+        if (!meta || meta.category !== "warning") return null;
+        return {
+          ruleId: "toileting.urine.dehydrated",
+          severity: "warn",
+          message: `Urine ${meta.title.toLowerCase()} — ${meta.description.toLowerCase()}`,
+          detail: "Encourage fluids, monitor next void, document.",
+          autoResolveOnNextEntry: true,
+        };
+      },
+    },
+  ];
 }

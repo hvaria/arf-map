@@ -19,6 +19,8 @@
 
 import { z, type ZodTypeAny } from "zod";
 
+import type { AlertRule } from "./alerts";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums (Zod + inferred TS types)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,6 +251,15 @@ export interface TrackerDefinition {
    * Versions drawer renders a shallow JSON diff.
    */
   historySummary?: (payload: unknown) => HistorySummary;
+  /**
+   * Optional per-tracker alert rules. Evaluated on every entry insert/update
+   * by the server; triggered alerts persist to `tracker_alerts`. Rules carry
+   * an `evaluate` function which is NOT JSON-safe and is stripped before
+   * wire transfer — both server and client read their local registry copy.
+   *
+   * See `shared/tracker-schemas/alerts.ts` for the rule type and helpers.
+   */
+  alerts?: AlertRule[];
   /** Defaults to true when omitted. Some trackers (Cleaning, Pest) won't require a resident. */
   requiresResident?: boolean;
   /** Defaults to true when `quickGrid` is present. */
@@ -265,30 +276,45 @@ export interface TrackerDefinition {
  * The same shape as `TrackerDefinition` minus the non-JSON-safe Zod schema.
  * This is what the wire payload (and the client-side registry view) looks like.
  */
+/**
+ * Wire-safe alert rule shape — `evaluate` stripped, identifying fields kept
+ * so the client can show the rule label / severity in admin UIs.
+ */
+export type SerializedAlertRule = Omit<AlertRule, "evaluate">;
+
 export type SerializedTrackerDefinition = Omit<
   TrackerDefinition,
-  "payloadSchema" | "historySummary"
->;
+  "payloadSchema" | "historySummary" | "alerts"
+> & {
+  alerts?: SerializedAlertRule[];
+};
 
 /**
- * Strip non-JSON-safe fields (`payloadSchema`, `historySummary`) so the
- * result is wire-safe. Use this anywhere a `TrackerDefinition` crosses the
- * network or `JSON.stringify` boundary.
+ * Strip non-JSON-safe fields (`payloadSchema`, `historySummary`, plus each
+ * alert rule's `evaluate` function) so the result is wire-safe. Use this
+ * anywhere a `TrackerDefinition` crosses the network or `JSON.stringify`
+ * boundary.
  *
- * The client imports its own local copy of every per-tracker Zod schema and
- * `historySummary` function from `@shared/tracker-schemas`; neither is ever
- * deserialized from the wire.
+ * The client imports its own local copy of every per-tracker Zod schema,
+ * `historySummary` function, and alert evaluator from
+ * `@shared/tracker-schemas`; none are ever deserialized from the wire.
  */
 export function serializeDefinitionForClient(
   def: TrackerDefinition,
 ): SerializedTrackerDefinition {
-  // Object-rest discard: drop the function + Zod fields, keep everything else.
   const {
     payloadSchema: _payloadSchema,
     historySummary: _historySummary,
+    alerts,
     ...rest
   } = def;
   void _payloadSchema;
   void _historySummary;
-  return rest;
+  return {
+    ...rest,
+    alerts: alerts?.map(({ evaluate: _evaluate, ...alertRest }) => {
+      void _evaluate;
+      return alertRest;
+    }),
+  };
 }

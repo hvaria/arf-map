@@ -92,6 +92,43 @@ export const TRACKERS_PG_SCHEMA_SQL = `
     ON tracker_audit_log (entity_type, entity_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS tracker_audit_facility_idx
     ON tracker_audit_log (facility_number, created_at DESC);
+
+  -- Tracker alerts. Mirrors tracker_audit_log style — BIGSERIAL ids,
+  -- BIGINT epoch-ms, TEXT enums, soft FKs only. Populated by the alert
+  -- evaluator that runs inside the same transaction as each tracker entry
+  -- mutation (insert / bulk insert / update / soft-delete).
+  --
+  -- severity:        'info' | 'warn' | 'critical'   (Zod-enforced at write)
+  -- status:          'active' | 'acknowledged' | 'resolved'
+  -- source_entry_id is a soft FK into tracker_entries — when an entry is
+  -- soft-deleted its active alerts are flipped to 'resolved' so the panel
+  -- doesn't surface zombies.
+  CREATE TABLE IF NOT EXISTS tracker_alerts (
+    id                                       BIGSERIAL PRIMARY KEY,
+    facility_number                          TEXT NOT NULL,
+    tracker_slug                             TEXT NOT NULL,
+    rule_id                                  TEXT NOT NULL,
+    severity                                 TEXT NOT NULL,
+    resident_id                              BIGINT,
+    source_entry_id                          BIGINT NOT NULL,
+    shift                                    TEXT,
+    message                                  TEXT NOT NULL,
+    detail                                   TEXT,
+    status                                   TEXT NOT NULL DEFAULT 'active',
+    acknowledged_by_facility_account_id      BIGINT,
+    acknowledged_by_staff_id                 BIGINT,
+    acknowledged_at                          BIGINT,
+    acknowledged_note                        TEXT,
+    resolved_at                              BIGINT,
+    created_at                               BIGINT NOT NULL,
+    updated_at                               BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS tracker_alerts_facility_status_idx
+    ON tracker_alerts (facility_number, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS tracker_alerts_resident_idx
+    ON tracker_alerts (resident_id, created_at DESC) WHERE resident_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS tracker_alerts_entry_idx
+    ON tracker_alerts (source_entry_id);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +198,27 @@ export const trackerAuditLog = pgTable("tracker_audit_log", {
   createdAt:                ts("created_at").notNull(),
 });
 
+export const trackerAlerts = pgTable("tracker_alerts", {
+  id:                                  serial("id").primaryKey(),
+  facilityNumber:                      text("facility_number").notNull(),
+  trackerSlug:                         text("tracker_slug").notNull(),
+  ruleId:                              text("rule_id").notNull(),
+  severity:                            text("severity").notNull(),
+  residentId:                          fk("resident_id"),
+  sourceEntryId:                       fk("source_entry_id").notNull(),
+  shift:                               text("shift"),
+  message:                             text("message").notNull(),
+  detail:                              text("detail"),
+  status:                              text("status").notNull().default("active"),
+  acknowledgedByFacilityAccountId:     fk("acknowledged_by_facility_account_id"),
+  acknowledgedByStaffId:               fk("acknowledged_by_staff_id"),
+  acknowledgedAt:                      ts("acknowledged_at"),
+  acknowledgedNote:                    text("acknowledged_note"),
+  resolvedAt:                          ts("resolved_at"),
+  createdAt:                           ts("created_at").notNull(),
+  updatedAt:                           ts("updated_at").notNull(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 //
@@ -182,6 +240,9 @@ export type NewTrackerEntryVersionRow = typeof trackerEntryVersions.$inferInsert
 
 export type TrackerAuditLogRow        = typeof trackerAuditLog.$inferSelect;
 export type NewTrackerAuditLogRow     = typeof trackerAuditLog.$inferInsert;
+
+export type TrackerAlertRow           = typeof trackerAlerts.$inferSelect;
+export type NewTrackerAlertRow        = typeof trackerAlerts.$inferInsert;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod enums (shared between client & server).
@@ -222,3 +283,18 @@ export const trackerAuditEntityTypeSchema = z.enum([
   "tracker_definition",
 ]);
 export type TrackerAuditEntityType = z.infer<typeof trackerAuditEntityTypeSchema>;
+
+// Alert status vocabulary. Open enum on the DB side (just TEXT) so future
+// states (e.g. 'snoozed') don't require a migration; Zod here is the source
+// of truth at runtime.
+export const trackerAlertStatusSchema = z.enum([
+  "active",
+  "acknowledged",
+  "resolved",
+]);
+export type TrackerAlertStatus = z.infer<typeof trackerAlertStatusSchema>;
+
+// Mirrors `AlertSeverity` in @shared/tracker-schemas/alerts. Re-declared
+// here as a Zod enum so server-side query parsing has a runtime validator.
+export const trackerAlertSeveritySchema = z.enum(["info", "warn", "critical"]);
+export type TrackerAlertSeverity = z.infer<typeof trackerAlertSeveritySchema>;

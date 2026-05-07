@@ -12,7 +12,7 @@ import { QuickEntryGrid } from "./QuickEntryGrid";
 import { DetailedEntryForm } from "./DetailedEntryForm";
 import { HistoryTab } from "./HistoryTab";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, AlertOctagon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   SerializedTrackerDefinition,
@@ -36,6 +36,17 @@ export interface TrackerShellProps {
   ) => void;
   /** Called when the user clicks the back-to-trackers chevron. */
   onBack: () => void;
+  /**
+   * Active alert count for this tracker. When > 0 the shell renders a banner
+   * above the tab strip pointing to the Operations overview's alerts card.
+   */
+  activeAlertCount?: number;
+  /**
+   * Optional handler for the "view all" banner action. Defaults to onBack —
+   * the OperationsTab's <TrackerAlertsCard /> lives on the overview, so
+   * unwinding the tracker sub-view surfaces it.
+   */
+  onViewAllAlerts?: () => void;
 }
 
 export function TrackerShell({
@@ -45,6 +56,8 @@ export function TrackerShell({
   filters,
   onFiltersChange,
   onBack,
+  activeAlertCount = 0,
+  onViewAllAlerts,
 }: TrackerShellProps) {
   const showResidentFilter = tab === "history";
 
@@ -77,6 +90,34 @@ export function TrackerShell({
         showResidentFilter={showResidentFilter}
         onChange={onFiltersChange}
       />
+
+      {activeAlertCount > 0 && (
+        <div
+          className="rounded-md border border-red-200 bg-red-50/70 px-3 py-2 flex items-center justify-between gap-2 text-sm"
+          role="status"
+          aria-label={`${activeAlertCount} active alert${activeAlertCount === 1 ? "" : "s"} for ${definition.name}`}
+        >
+          <div className="flex items-center gap-2 text-red-800 min-w-0">
+            <AlertOctagon className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="font-medium tabular-nums">
+              {activeAlertCount} active alert{activeAlertCount === 1 ? "" : "s"}
+            </span>
+            <span className="text-red-700/80 truncate">
+              for {definition.name}
+            </span>
+          </div>
+          {onViewAllAlerts && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onViewAllAlerts}
+              className="h-7 text-xs text-red-800 hover:bg-red-100"
+            >
+              View all
+            </Button>
+          )}
+        </div>
+      )}
 
       <div
         role="tablist"
