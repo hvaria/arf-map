@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import {
   shiftSchema,
+  type HistorySummary,
   type TrackerDefinition,
 } from "./tracker-types";
 
@@ -133,7 +134,68 @@ export const ADL_DEFINITION: TrackerDefinition = {
     },
   ],
   payloadSchema: adlEntryPayloadSchema,
+  historySummary: adlHistorySummary,
   requiresResident: true,
   supportsBulk: true,
   shiftAware: true,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// History summary — promotes the goal label + status, surfaces the optional
+// note prominently when present (the most common reason caregivers attach a
+// note is a refusal — surveyors and admins want that visible at a glance).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ADL_GOAL_LABEL: Record<string, string> = {
+  bathing:    "Bathing",
+  dressing:   "Dressing",
+  grooming:   "Grooming",
+  toileting:  "Toileting",
+  continence: "Continence",
+  eating:     "Eating",
+  mobility:   "Mobility",
+  transfers:  "Transfers",
+};
+
+const ADL_STATUS_LABEL: Record<string, string> = {
+  C:  "Completed",
+  I:  "Incomplete",
+  NA: "Not Applicable",
+};
+
+export function adlHistorySummary(payload: unknown): HistorySummary {
+  if (typeof payload !== "object" || payload === null) {
+    return { primary: "ADL (unknown)" };
+  }
+  const p = payload as Record<string, unknown>;
+  const goalId = typeof p.goal_id === "string" ? p.goal_id : undefined;
+  const status = typeof p.status === "string" ? p.status : undefined;
+  const note =
+    typeof p.note === "string" && p.note.trim() !== "" ? p.note.trim() : undefined;
+
+  const goalLabel = goalId
+    ? ADL_GOAL_LABEL[goalId] ?? goalId
+    : "ADL goal";
+  const statusLabel = status
+    ? ADL_STATUS_LABEL[status] ?? status
+    : "?";
+
+  // Tone follows status — Incomplete reads as elevated for the same reason
+  // the cell is amber in the grid.
+  const tone =
+    status === "I" ? "elevated" : status === "NA" ? "info" : "normal";
+
+  // When a note is attached, fold it into the primary line — short notes
+  // don't deserve a separate row, and surveyors scan for them in the
+  // headline field.
+  const primary = note
+    ? `${goalLabel} · ${statusLabel} — “${truncate(note, 80)}”`
+    : `${goalLabel} · ${statusLabel}`;
+
+  return { primary, tone };
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).trimEnd() + "…";
+}

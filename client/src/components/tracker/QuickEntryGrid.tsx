@@ -27,6 +27,7 @@ import {
 } from "@/lib/tracker/useTrackerEntries";
 import { TrackerLoading } from "./TrackerLoading";
 import { TrackerEmpty } from "./TrackerEmpty";
+import { CellNotePopover } from "./CellNotePopover";
 import type {
   QuickGridCellColor,
   Shift,
@@ -55,6 +56,18 @@ interface CellState {
   clientId: string;
   /** "Save in flight" → disable extra clicks. */
   pending: boolean;
+  /**
+   * id of the most-recent SAVED entry behind this cell. Set on successful POST
+   * (or seeded from the latest server entry). Stays stable across PATCHes
+   * (versioned edits keep the same row id). Cleared optimistically while a
+   * fresh tap is in flight (since the new entry's id isn't known yet).
+   */
+  entryId: number | null;
+  /**
+   * Most-recent saved note for this cell, if any. Drives the visual indicator
+   * on the cell (dot + solid icon tint) and pre-fills the popover textarea.
+   */
+  note: string | null;
 }
 
 export function QuickEntryGrid({
@@ -130,9 +143,14 @@ export function QuickEntryGrid({
         for (const r of residents) {
           const k = key(goal.id, r.id);
           const persistedEntry = latest.get(k);
-          const persisted =
-            (persistedEntry?.payload as { status?: string } | undefined)
-              ?.status ?? null;
+          const payload = persistedEntry?.payload as
+            | { status?: string; note?: string }
+            | undefined;
+          const persisted = payload?.status ?? null;
+          const persistedNote =
+            typeof payload?.note === "string" && payload.note.length > 0
+              ? payload.note
+              : null;
           const prev = existing[k];
           if (prev?.pending) {
             // Keep optimistic state; reuse the same clientId.
@@ -142,6 +160,8 @@ export function QuickEntryGrid({
               value: persisted,
               clientId: prev?.clientId ?? makeClientId(),
               pending: false,
+              entryId: persistedEntry?.id ?? null,
+              note: persistedNote,
             };
           }
         }
@@ -190,6 +210,24 @@ export function QuickEntryGrid({
     return cycle[(idx + 1) % cycle.length];
   }
 
+  /**
+   * Update local cell state after the note popover saves a new note.
+   * The PATCH endpoint preserves the entry id; we only refresh `note` here.
+   * The entries list cache is invalidated by the popover's mutation hook so
+   * History/Versions reflect the edit on next read.
+   */
+  function onNoteSaved(goalId: string, residentId: number, savedNote: string) {
+    const k = key(goalId, residentId);
+    setCellMap((m) => {
+      const prev = m[k];
+      if (!prev) return m;
+      return {
+        ...m,
+        [k]: { ...prev, note: savedNote.length > 0 ? savedNote : null },
+      };
+    });
+  }
+
   function onCellTap(goalId: string, residentId: number) {
     const k = key(goalId, residentId);
     const state = cellMap[k];
@@ -199,7 +237,16 @@ export function QuickEntryGrid({
 
     setCellMap((m) => ({
       ...m,
-      [k]: { ...state, value: nv, pending: true },
+      [k]: {
+        ...state,
+        value: nv,
+        pending: true,
+        // The new entry hasn't landed yet; clear the prior entry's id and note
+        // so we don't accidentally PATCH the OLD row while the cell visually
+        // represents a NEW one.
+        entryId: null,
+        note: null,
+      },
     }));
 
     createMutation.mutate(
@@ -212,15 +259,26 @@ export function QuickEntryGrid({
       },
       {
         onSuccess: (resp) => {
+          // Capture the just-saved entry's id + any note already on it. For
+          // duplicate (idempotency short-circuit) responses this reflects the
+          // pre-existing row's state; for fresh writes the note will be empty
+          // (POST never carries a note — that's added later via the popover).
+          const serverPayload = resp.data.payload as
+            | { status?: string; note?: string }
+            | null
+            | undefined;
+          const savedNote =
+            typeof serverPayload?.note === "string" &&
+            serverPayload.note.length > 0
+              ? serverPayload.note
+              : null;
+          const savedEntryId = resp.data.id;
+
           if (resp.duplicate) {
             // Server already had a row for this clientId and short-circuited
             // — our optimistic `nv` never landed. Reconcile the cell to the
             // server's authoritative status and rotate the clientId so the
             // next tap is treated as a brand-new write.
-            const serverPayload = resp.data.payload as
-              | { status?: string }
-              | null
-              | undefined;
             const serverStatus =
               typeof serverPayload?.status === "string"
                 ? serverPayload.status
@@ -232,6 +290,8 @@ export function QuickEntryGrid({
                 value: serverStatus,
                 pending: false,
                 clientId: makeClientId(),
+                entryId: savedEntryId,
+                note: savedNote,
               },
             }));
             toast({
@@ -249,6 +309,8 @@ export function QuickEntryGrid({
                 value: nv,
                 pending: false,
                 clientId: makeClientId(),
+                entryId: savedEntryId,
+                note: savedNote,
               },
             }));
           }
@@ -261,13 +323,17 @@ export function QuickEntryGrid({
           // Network / server error — the write never landed (or its outcome
           // is unknown). Keep the SAME clientId so a retry is idempotent: if
           // the original request eventually reaches the DB, the retry maps
-          // to the same row instead of creating a duplicate.
+          // to the same row instead of creating a duplicate. Restore the
+          // pre-tap entryId/note so the popover keeps pointing at the
+          // previously-attached entry (if any).
           setCellMap((m) => ({
             ...m,
             [k]: {
               ...m[k],
               value: previous,
               pending: false,
+              entryId: state.entryId,
+              note: state.note,
             },
           }));
           toast({
@@ -325,24 +391,55 @@ export function QuickEntryGrid({
                     const cellClass = value
                       ? COLOR_STYLES[colorKey ?? "muted"]
                       : EMPTY_CELL;
+                    const showNoteAffordance =
+                      !!value &&
+                      !!state &&
+                      !state.pending &&
+                      state.entryId !== null;
                     return (
                       <td key={r.id} className="px-1.5 py-1 align-top">
-                        <button
-                          type="button"
-                          onClick={() => onCellTap(goal.id, r.id)}
-                          disabled={!state || state.pending}
-                          aria-label={`${goal.label} for ${r.firstName} ${r.lastName}: ${
-                            value ? labels[value] ?? value : "not set"
-                          }`}
-                          title={value ? labels[value] ?? value : "Tap to set"}
-                          className={cn(
-                            "w-full min-h-[44px] rounded-md border text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400",
-                            cellClass,
-                            state?.pending && "opacity-60",
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => onCellTap(goal.id, r.id)}
+                            disabled={!state || state.pending}
+                            aria-label={`${goal.label} for ${r.firstName} ${r.lastName}: ${
+                              value ? labels[value] ?? value : "not set"
+                            }${state?.note ? " (note attached)" : ""}`}
+                            title={
+                              value ? labels[value] ?? value : "Tap to set"
+                            }
+                            className={cn(
+                              "w-full min-h-[44px] rounded-md border text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400",
+                              cellClass,
+                              showNoteAffordance && "pr-8",
+                              state?.pending && "opacity-60",
+                            )}
+                          >
+                            {value ?? "—"}
+                          </button>
+                          {showNoteAffordance && state && state.entryId !== null && (
+                            <CellNotePopover
+                              slug={definition.slug}
+                              entryId={state.entryId}
+                              note={state.note}
+                              existingPayload={{
+                                goal_id: goal.id,
+                                shift,
+                                status: value,
+                              }}
+                              residentName={`${r.firstName} ${r.lastName}`}
+                              goalLabel={goal.label}
+                              statusLabel={
+                                value ? labels[value] ?? value : ""
+                              }
+                              shift={shift}
+                              onSaved={(savedNote) =>
+                                onNoteSaved(goal.id, r.id, savedNote)
+                              }
+                            />
                           )}
-                        >
-                          {value ?? "—"}
-                        </button>
+                        </div>
                       </td>
                     );
                   })}
@@ -380,27 +477,54 @@ export function QuickEntryGrid({
                 const cellClass = value
                   ? COLOR_STYLES[colorKey ?? "muted"]
                   : EMPTY_CELL;
+                const showNoteAffordance =
+                  !!value &&
+                  !!state &&
+                  !state.pending &&
+                  state.entryId !== null;
                 return (
                   <li
                     key={goal.id}
                     className="flex items-center justify-between gap-2"
                   >
                     <span className="text-sm">{goal.label}</span>
-                    <button
-                      type="button"
-                      onClick={() => onCellTap(goal.id, r.id)}
-                      disabled={!state || state.pending}
-                      aria-label={`${goal.label}: ${
-                        value ? labels[value] ?? value : "not set"
-                      }`}
-                      className={cn(
-                        "min-h-[44px] min-w-[64px] px-3 rounded-md border text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400",
-                        cellClass,
-                        state?.pending && "opacity-60",
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => onCellTap(goal.id, r.id)}
+                        disabled={!state || state.pending}
+                        aria-label={`${goal.label}: ${
+                          value ? labels[value] ?? value : "not set"
+                        }${state?.note ? " (note attached)" : ""}`}
+                        className={cn(
+                          "min-h-[44px] min-w-[64px] px-3 rounded-md border text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400",
+                          cellClass,
+                          showNoteAffordance && "pr-9",
+                          state?.pending && "opacity-60",
+                        )}
+                      >
+                        {value ?? "—"}
+                      </button>
+                      {showNoteAffordance && state && state.entryId !== null && (
+                        <CellNotePopover
+                          slug={definition.slug}
+                          entryId={state.entryId}
+                          note={state.note}
+                          existingPayload={{
+                            goal_id: goal.id,
+                            shift,
+                            status: value,
+                          }}
+                          residentName={`${r.firstName} ${r.lastName}`}
+                          goalLabel={goal.label}
+                          statusLabel={value ? labels[value] ?? value : ""}
+                          shift={shift}
+                          onSaved={(savedNote) =>
+                            onNoteSaved(goal.id, r.id, savedNote)
+                          }
+                        />
                       )}
-                    >
-                      {value ?? "—"}
-                    </button>
+                    </div>
                   </li>
                 );
               })}
