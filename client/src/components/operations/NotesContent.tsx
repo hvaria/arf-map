@@ -35,7 +35,6 @@ import {
   Megaphone,
   Stethoscope,
   Layers,
-  ExternalLink,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -97,8 +96,8 @@ export function NotesContent({
   surface?: NotesSurface;
   /**
    * Optional callback fired when the active filter (group/search/archived)
-   * changes. Used by the bell drawer to build deep-link URLs to the
-   * dedicated /facility-portal/notes page.
+   * changes. Used by the bell drawer to seed the in-place full-view modal
+   * with the user's current filter state.
    */
   onStateChange?: (s: { group: GroupKey; q: string; archived: boolean }) => void;
 }) {
@@ -186,20 +185,8 @@ export function NotesContent({
       {/* ── Composer (always visible) ────────────────────────────── */}
       <Composer activeGroup={group} residents={residents} />
 
-      {/* ── Primary group chips + "View all" deep link ───────────── */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex-1 min-w-0">
-          <GroupChips value={group} onChange={setGroup} />
-        </div>
-        <a
-          href="#/facility-portal/notes"
-          className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:underline shrink-0"
-          aria-label="Open the dedicated Notes page"
-        >
-          View all notes
-          <ExternalLink className="h-3 w-3" />
-        </a>
-      </div>
+      {/* ── Primary group chips ──────────────────────────────────── */}
+      <GroupChips value={group} onChange={setGroup} />
 
       {/* ── Secondary controls: search + archived toggle ─────────── */}
       <div className="flex items-center gap-2 flex-wrap">
