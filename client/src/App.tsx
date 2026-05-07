@@ -11,6 +11,7 @@ import JobSeekerPage from "./pages/JobSeekerPage";
 import StatsPage from "./pages/StatsPage";
 import LoginPage from "./pages/jobseeker/LoginPage";
 import DashboardPage from "./pages/jobseeker/DashboardPage";
+import NotesPage from "./pages/notes/NotesPage";
 import NotFound from "./pages/not-found";
 
 // /facility-portal is the only canonical operations route. All `/portal/*`
@@ -34,6 +35,9 @@ function AppRouter() {
         <Route path="/" component={MapPage} />
         <Route path="/stats" component={StatsPage} />
         <Route path="/facility-portal" component={FacilityPortal} />
+        {/* Dedicated split-pane Notes page (Slice 1 of the Notes redesign).
+            Mounted above the catch-all and below the portal entry. */}
+        <Route path="/facility-portal/notes" component={NotesPage} />
         <Route path="/job-seeker" component={JobSeekerPage} />
         {/* Job seeker auth + dashboard routes */}
         <Route path="/jobseeker/login" component={LoginPage} />

@@ -109,6 +109,7 @@ The core data is California CCLD licensed-care facilities. There are two modes:
   - `FacilityPortal` — facility owner dashboard (profile, job postings, applicants tab).
   - `JobSeekerPage` — public-facing job seeker landing with registration.
   - `jobseeker/DashboardPage` — authenticated job seeker dashboard (my interests, profile).
+  - `pages/notes/NotesPage` — dedicated split-pane Notes reader at `#/facility-portal/notes`. URL-driven state (`?group&noteId&q&archived`); resizable splitter persists to `localStorage["notes.paneWidth"]` (clamped 280–640px). Shares the embedded feed's existing `Composer`, `ReplyBox`, mutation patterns, and the `/api/ops/notes` REST contract via `client/src/components/notes/`; the embedded `<NotesContent>` feed inside Operations tab is unchanged and now deep-links here. Auth-gated by the same facility session — redirects to `/facility-portal` on 401.
 - **Map**: `MapView.tsx` wraps MapLibre GL. Facility pins are clustered; clicking a cluster zooms in; clicking a pin opens `FacilityPanel`.
 - **UI components**: Shadcn/ui (`client/src/components/ui/`) — do not edit these directly; regenerate with the shadcn CLI.
 
