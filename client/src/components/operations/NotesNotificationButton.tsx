@@ -18,12 +18,16 @@
  * without coupling to the bell's local state.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { NotesContent } from "@/components/operations/NotesContent";
-import { MessageSquare } from "lucide-react";
+import { NotesIdentityHeader } from "@/components/notes/NotesIdentityHeader";
+import { MessageSquare, ExternalLink } from "lucide-react";
+import { useFeatureFlag } from "@/lib/featureFlags";
+import { track } from "@/lib/telemetry";
+import type { GroupKey } from "@/components/notes/shared";
 
 interface NoteListItem {
   id: number;
@@ -39,13 +43,39 @@ interface ListResponse {
 // Match OperationsTab's notes-count query so React Query dedupes.
 const QUERY_KEY = `/api/ops/notes?status=open&limit=50`;
 
+interface DrawerFilterState {
+  group: GroupKey;
+  q: string;
+  archived: boolean;
+}
+
+/**
+ * Build the deep-link URL for the dedicated /facility-portal/notes page,
+ * preserving the drawer's current filter state. Defaults are omitted from
+ * the query string so the canonical "All / open" shape stays minimal.
+ */
+export function buildDedicatedPageUrl(state: DrawerFilterState): string {
+  const params = new URLSearchParams();
+  if (state.group !== "all") params.set("group", state.group);
+  if (state.q) params.set("q", state.q);
+  if (state.archived) params.set("archived", "1");
+  const qs = params.toString();
+  return qs ? `#/facility-portal/notes?${qs}` : "#/facility-portal/notes";
+}
+
 export function NotesNotificationButton({
   facilityNumber,
 }: {
   facilityNumber: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [filterState, setFilterState] = useState<DrawerFilterState>({
+    group: "all",
+    q: "",
+    archived: false,
+  });
   const enabled = !!facilityNumber;
+  const dedicatedPageEnabled = useFeatureFlag("notes_dedicated_page");
 
   // Allow OperationsTab keyboard shortcut g+n + alert actions to open the
   // drawer without lifting state.
@@ -66,8 +96,25 @@ export function NotesNotificationButton({
     (n) => n.priority === "urgent" && n.status === "open",
   ).length;
 
+  // Stable callback so NotesContent doesn't re-fire useEffect every render.
+  const handleStateChange = useCallback((s: DrawerFilterState) => {
+    setFilterState(s);
+  }, []);
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) {
+      track("notes.surface.opened", {
+        surface: "drawer",
+        facilityNumber,
+      });
+    }
+  };
+
+  const fullViewUrl = buildDedicatedPageUrl(filterState);
+
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetTrigger asChild>
         <button
           type="button"
@@ -94,32 +141,34 @@ export function NotesNotificationButton({
         side="right"
         className="p-0 w-full sm:max-w-lg lg:max-w-xl flex flex-col"
       >
-        <div
-          className="flex items-center gap-2 px-5 py-3 border-b shrink-0"
-          style={{
-            background: "linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%)",
-            borderColor: "#E0E7FF",
-          }}
-        >
-          <MessageSquare className="h-5 w-5" style={{ color: "#818CF8" }} />
-          <div className="min-w-0">
-            <h2
-              className="text-base font-semibold leading-tight"
-              style={{ color: "#1E1B4B" }}
-            >
-              Team notes
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {urgentCount > 0
-                ? `${urgentCount} urgent · awaiting acknowledgement`
-                : "Shift handoffs, memos, and follow-ups"}
-            </p>
-          </div>
-        </div>
+        <NotesIdentityHeader
+          variant="compact"
+          facilityNumber={facilityNumber}
+          urgentCount={urgentCount}
+          rightSlot={
+            dedicatedPageEnabled ? (
+              <a
+                href={fullViewUrl}
+                onClick={() => setOpen(false)}
+                className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 hover:text-indigo-900 hover:underline"
+                aria-label="Open the dedicated Notes page"
+                data-testid="notes-drawer-open-full-view"
+              >
+                Open full view
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : null
+          }
+        />
 
         {enabled && (
           <div className="flex-1 overflow-y-auto px-4 py-4">
-            <NotesContent facilityNumber={facilityNumber} embedded />
+            <NotesContent
+              facilityNumber={facilityNumber}
+              embedded
+              surface="drawer"
+              onStateChange={handleStateChange}
+            />
           </div>
         )}
       </SheetContent>

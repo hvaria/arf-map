@@ -52,6 +52,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useResidents } from "@/hooks/useResidents";
+import { track, type NotesSurface } from "@/lib/telemetry";
 
 // Lifted shared model + composer pieces. The dedicated Notes page at
 // /facility-portal/notes consumes the same shared module + composer/* set.
@@ -79,6 +80,8 @@ export function NotesContent({
   facilityNumber,
   onBack,
   embedded = false,
+  surface = "drawer",
+  onStateChange,
 }: {
   facilityNumber: string;
   onBack?: () => void;
@@ -87,6 +90,17 @@ export function NotesContent({
    * Used by OperationsTab to inline the notes feed inside the overview.
    */
   embedded?: boolean;
+  /**
+   * Telemetry surface tag for note view/ack events. Defaults to "drawer"
+   * since the only current consumer using `embedded` is the bell drawer.
+   */
+  surface?: NotesSurface;
+  /**
+   * Optional callback fired when the active filter (group/search/archived)
+   * changes. Used by the bell drawer to build deep-link URLs to the
+   * dedicated /facility-portal/notes page.
+   */
+  onStateChange?: (s: { group: GroupKey; q: string; archived: boolean }) => void;
 }) {
   const [group, setGroup] = useState<GroupKey>("all");
   const [searchInput, setSearchInput] = useState("");
@@ -98,6 +112,13 @@ export function NotesContent({
     const t = setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  // Surface filter state to a parent (drawer) so it can build deep-link
+  // URLs to the dedicated page. Fires whenever any of the three tracked
+  // bits change.
+  useEffect(() => {
+    onStateChange?.({ group, q: search, archived: showArchived });
+  }, [group, search, showArchived, onStateChange]);
 
   const queryUrl = useMemo(
     () => buildListUrl(group, search, showArchived),
@@ -238,6 +259,8 @@ export function NotesContent({
               note={note}
               showGroupBadge={group === "all"}
               residents={residents}
+              surface={surface}
+              facilityNumber={facilityNumber}
             />
           ))}
         </div>
@@ -298,10 +321,14 @@ function NoteCard({
   note,
   showGroupBadge,
   residents,
+  surface,
+  facilityNumber,
 }: {
   note: NoteListItem;
   showGroupBadge: boolean;
   residents: Resident[];
+  surface: NotesSurface;
+  facilityNumber: string;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -328,6 +355,12 @@ function NoteCard({
     onSuccess: () => {
       setOptimisticAcked(true);
       queryClient.invalidateQueries({ queryKey: [`/api/ops/notes/${note.id}`] });
+      track("notes.note.acked", {
+        surface,
+        noteId: note.id,
+        group: categoryToGroup(note.category),
+        facilityNumber,
+      });
     },
     onError: (e: Error) =>
       toast({ title: "Ack failed", description: e.message, variant: "destructive" }),
@@ -481,7 +514,21 @@ function NoteCard({
           variant="ghost"
           size="sm"
           className="h-8 text-xs gap-1.5"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() =>
+            setExpanded((v) => {
+              // Fire telemetry only on the false → true transition (a real
+              // "view"). Collapsing back is not interesting.
+              if (!v) {
+                track("notes.note.viewed", {
+                  surface,
+                  noteId: note.id,
+                  group: categoryToGroup(note.category),
+                  facilityNumber,
+                });
+              }
+              return !v;
+            })
+          }
         >
           <MessageSquare className="h-3.5 w-3.5" />
           {expanded ? "Hide thread" : "Reply"}

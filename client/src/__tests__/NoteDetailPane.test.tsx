@@ -37,7 +37,13 @@ vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
+// Mock telemetry so the page-surface payload shape can be asserted.
+vi.mock("@/lib/telemetry", () => ({
+  track: vi.fn(),
+}));
+
 import { apiRequest } from "@/lib/queryClient";
+import { track } from "@/lib/telemetry";
 import { NoteDetailPane } from "../components/notes/NoteDetailPane";
 import { ReplyBox } from "../components/notes/composer/ReplyBox";
 import type {
@@ -167,6 +173,74 @@ describe("NoteDetailPane — ack optimism reset (Blocker 2 fix)", () => {
 
     // Sanity: there should be no "Acked" button visible.
     expect(screen.queryByRole("button", { name: /Acked/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("NoteDetailPane — telemetry payload parity (Blocker 2 fix)", () => {
+  it("emits notes.note.viewed with full props (surface, noteId, group, facilityNumber) on the page surface", async () => {
+    // Resident-category note → categoryToGroup -> "residents". Use a
+    // distinctive facilityNumber so we can assert it propagates.
+    detailMap.set("/api/ops/notes/77", () =>
+      makeDetail(77, {
+        note: makeNote(77, {
+          category: "resident_update",
+          facilityNumber: "F-XYZ",
+        }),
+      }),
+    );
+
+    renderWith(<NoteDetailPane noteId={77} />);
+
+    // Wait for detail to settle and the viewed event to fire.
+    await waitFor(() => {
+      expect(track).toHaveBeenCalledWith(
+        "notes.note.viewed",
+        expect.objectContaining({
+          surface: "page",
+          noteId: 77,
+          group: "residents",
+          facilityNumber: "F-XYZ",
+        }),
+      );
+    });
+
+    // Sanity: only ONE viewed event for this note (ref dedup), even though
+    // detailQuery.data is part of the effect deps.
+    const viewedCalls = vi
+      .mocked(track)
+      .mock.calls.filter((c) => c[0] === "notes.note.viewed");
+    expect(viewedCalls.length).toBe(1);
+  });
+
+  it("emits notes.note.acked with full props matching the drawer payload shape", async () => {
+    detailMap.set("/api/ops/notes/88", () =>
+      makeDetail(88, {
+        note: makeNote(88, {
+          category: "facility_announcement",
+          facilityNumber: "F-ACK",
+        }),
+      }),
+    );
+    vi.mocked(apiRequest).mockResolvedValue({
+      json: async () => ({ ok: true }),
+    } as unknown as Response);
+
+    renderWith(<NoteDetailPane noteId={88} />);
+
+    const ackBtn = await screen.findByRole("button", { name: /^Ack$/i });
+    await userEvent.click(ackBtn);
+
+    await waitFor(() => {
+      expect(track).toHaveBeenCalledWith(
+        "notes.note.acked",
+        expect.objectContaining({
+          surface: "page",
+          noteId: 88,
+          group: "memos", // facility_announcement → memos
+          facilityNumber: "F-ACK",
+        }),
+      );
+    });
   });
 });
 

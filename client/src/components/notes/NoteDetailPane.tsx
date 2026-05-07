@@ -11,13 +11,14 @@
  * `predicate: (q) => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/api/ops/notes")`
  * so the embedded feed and the dedicated page stay in sync.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/telemetry";
 import {
   DetailEmptyState,
   DetailErrorState,
@@ -26,7 +27,7 @@ import {
 import { NoteDetailBody } from "./NoteDetailBody";
 import { NoteDetailHeader } from "./NoteDetailHeader";
 import { NoteRepliesThread } from "./NoteRepliesThread";
-import type { DetailResponse } from "./shared";
+import { categoryToGroup, type DetailResponse } from "./shared";
 
 const NOTES_INVALIDATE_PREDICATE = (q: { queryKey: readonly unknown[] }) => {
   const k = q.queryKey[0];
@@ -65,6 +66,28 @@ export function NoteDetailPane({
     setOptimisticAcked(false);
   }, [noteId]);
 
+  // Fire `notes.note.viewed` once per note selection, AFTER detail resolves so
+  // the payload includes group + facilityNumber (matching the drawer surface
+  // shape). The ref dedups: we re-run when detail data refreshes for the same
+  // noteId, but we only fire the event on the first resolution per noteId.
+  const lastTrackedNoteId = useRef<number | null>(null);
+  useEffect(() => {
+    if (noteId === null) {
+      lastTrackedNoteId.current = null;
+      return;
+    }
+    if (lastTrackedNoteId.current === noteId) return;
+    const note = detailQuery.data?.data?.note;
+    if (!note) return; // wait for detail to resolve before tracking
+    lastTrackedNoteId.current = noteId;
+    track("notes.note.viewed", {
+      surface: "page",
+      noteId,
+      group: categoryToGroup(note.category),
+      facilityNumber: note.facilityNumber,
+    });
+  }, [noteId, detailQuery.data]);
+
   const ackMutation = useMutation({
     mutationFn: async () => {
       if (noteId === null) return;
@@ -77,6 +100,18 @@ export function NoteDetailPane({
         queryClient.invalidateQueries({
           queryKey: [`/api/ops/notes/${noteId}`],
         });
+        // The Ack button only renders after detail loads, so `note` is
+        // expected to be truthy here. Skip telemetry entirely if it isn't —
+        // we'd rather drop an event than emit a degraded payload.
+        const note = detailQuery.data?.data?.note;
+        if (note) {
+          track("notes.note.acked", {
+            surface: "page",
+            noteId,
+            group: categoryToGroup(note.category),
+            facilityNumber: note.facilityNumber,
+          });
+        }
       }
     },
     onError: (e: Error) =>

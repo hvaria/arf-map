@@ -4,6 +4,8 @@
  * Covers:
  *   - Auth gate: an unauthenticated session redirects to /facility-portal.
  *   - Authenticated render path: NotesPageShell mounts.
+ *   - Slice 2: the `notes_dedicated_page` flag, when false, redirects an
+ *     authenticated user to /facility-portal; when true, the shell renders.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, waitFor, cleanup } from "@testing-library/react";
@@ -32,6 +34,12 @@ vi.mock("@/components/notes/NotesPageShell", () => ({
   ),
 }));
 
+// Mock the feature-flag hook so we can drive its return value per test.
+const useFeatureFlagMock = vi.fn(() => true);
+vi.mock("@/lib/featureFlags", () => ({
+  useFeatureFlag: () => useFeatureFlagMock(),
+}));
+
 import { useQuery } from "@tanstack/react-query";
 import NotesPage from "../pages/notes/NotesPage";
 
@@ -46,6 +54,9 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default to the flag being ON so existing auth-gate tests still see the
+  // shell rendering as before.
+  useFeatureFlagMock.mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -103,6 +114,54 @@ describe("NotesPage — auth gate", () => {
       );
     });
 
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("NotesPage — Slice 2 beta-flag gate", () => {
+  it("redirects an authenticated user to /facility-portal when the flag is OFF", async () => {
+    useFeatureFlagMock.mockReturnValue(false);
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        id: 1,
+        facilityNumber: "197600123",
+        username: "owner@facility.com",
+        email: "owner@facility.com",
+        emailVerified: 1,
+      },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    const { queryByTestId } = renderPage();
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/facility-portal", {
+        replace: true,
+      });
+    });
+
+    // Shell must NOT render while flag is off.
+    expect(queryByTestId("notes-page-shell")).not.toBeInTheDocument();
+  });
+
+  it("renders the shell when the flag is ON for an authenticated user", async () => {
+    useFeatureFlagMock.mockReturnValue(true);
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        id: 1,
+        facilityNumber: "197600123",
+        username: "owner@facility.com",
+        email: "owner@facility.com",
+        emailVerified: 1,
+      },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    const { getByTestId } = renderPage();
+
+    await waitFor(() => {
+      expect(getByTestId("notes-page-shell")).toBeInTheDocument();
+    });
     expect(navigateMock).not.toHaveBeenCalled();
   });
 });
