@@ -189,6 +189,21 @@ export type TrackerMode = "quick" | "detailed" | "history";
  */
 export type TrackerRenderer = "vitals-range" | "toileting";
 
+/**
+ * Compact, human-readable summary of a tracker entry — used by the History tab
+ * row "what happened" cell and by the Versions drawer per-version preview. The
+ * optional `badge` + `tone` let trackers surface clinical urgency inline (e.g.
+ * Vitals shows "BP 200/130" with a red "Critical" badge; Toileting shows
+ * "Urine: amber" with an amber "Dehydrated" badge). Trackers without a custom
+ * summary fall back to a generic key/value renderer in the History tab.
+ */
+export type HistoryTone = "normal" | "elevated" | "critical" | "info";
+export interface HistorySummary {
+  primary: string;
+  badge?: string;
+  tone?: HistoryTone;
+}
+
 export interface TrackerDefinition {
   /** Stable identifier, e.g. "adl". Matches `tracker_definitions.slug`. */
   slug: string;
@@ -223,6 +238,17 @@ export interface TrackerDefinition {
    * over the wire — see `serializeDefinitionForClient`.
    */
   payloadSchema: ZodTypeAny;
+  /**
+   * Optional per-tracker formatter for the History tab row "what happened"
+   * cell and the Versions drawer per-version preview. Returns a primary
+   * label + optional badge + optional tone. Functions are NOT JSON-safe and
+   * are stripped before serializing to the client — the client imports its
+   * own local copy of each tracker's `historySummary` from the registry.
+   *
+   * If omitted, the History tab renders a generic key/value list and the
+   * Versions drawer renders a shallow JSON diff.
+   */
+  historySummary?: (payload: unknown) => HistorySummary;
   /** Defaults to true when omitted. Some trackers (Cleaning, Pest) won't require a resident. */
   requiresResident?: boolean;
   /** Defaults to true when `quickGrid` is present. */
@@ -241,21 +267,28 @@ export interface TrackerDefinition {
  */
 export type SerializedTrackerDefinition = Omit<
   TrackerDefinition,
-  "payloadSchema"
+  "payloadSchema" | "historySummary"
 >;
 
 /**
- * Strip the Zod `payloadSchema` so the result is JSON-safe. Use this anywhere
- * a `TrackerDefinition` crosses the network or `JSON.stringify` boundary.
+ * Strip non-JSON-safe fields (`payloadSchema`, `historySummary`) so the
+ * result is wire-safe. Use this anywhere a `TrackerDefinition` crosses the
+ * network or `JSON.stringify` boundary.
  *
- * The client imports its own local copy of every per-tracker Zod schema; it
- * never deserializes a Zod schema from the wire.
+ * The client imports its own local copy of every per-tracker Zod schema and
+ * `historySummary` function from `@shared/tracker-schemas`; neither is ever
+ * deserialized from the wire.
  */
 export function serializeDefinitionForClient(
   def: TrackerDefinition,
 ): SerializedTrackerDefinition {
-  // Object-rest discard: drop `payloadSchema`, keep everything else.
-  const { payloadSchema: _payloadSchema, ...rest } = def;
+  // Object-rest discard: drop the function + Zod fields, keep everything else.
+  const {
+    payloadSchema: _payloadSchema,
+    historySummary: _historySummary,
+    ...rest
+  } = def;
   void _payloadSchema;
+  void _historySummary;
   return rest;
 }

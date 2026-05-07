@@ -9,7 +9,11 @@
 
 import { z } from "zod";
 
-import { type TrackerDefinition } from "./tracker-types";
+import {
+  type HistorySummary,
+  type HistoryTone,
+  type TrackerDefinition,
+} from "./tracker-types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bristol Stool Chart (1..7).
@@ -251,7 +255,75 @@ export const TOILETING_DEFINITION: TrackerDefinition = {
     },
   ],
   payloadSchema: toiletingEntryPayloadSchema,
+  historySummary: toiletingHistorySummary,
   requiresResident: true,
   supportsBulk: false,
   shiftAware: true,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// History summary — used by the History tab "what happened" cell and the
+// Versions drawer per-version preview. Bristol type 7 (watery) and urine
+// "amber"/"brown"/"red" surface as warning/critical badges so dehydration and
+// possible diarrhea/UTI patterns pop out at a glance.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const URINE_TONE: Record<UrineColorMeta["category"], HistoryTone> = {
+  good: "normal",
+  ok: "normal",
+  warning: "elevated",
+  alert: "critical",
+};
+
+const BRISTOL_TONE: Record<"constipation" | "normal" | "loose", HistoryTone> = {
+  normal: "normal",
+  constipation: "elevated",
+  loose: "elevated",
+};
+
+export function toiletingHistorySummary(payload: unknown): HistorySummary {
+  if (typeof payload !== "object" || payload === null) {
+    return { primary: "Toileting (unknown)" };
+  }
+  const p = payload as Record<string, unknown>;
+  const event = typeof p.event_type === "string" ? p.event_type : undefined;
+
+  if (event === "bm") {
+    const t = typeof p.bristol === "number" ? (p.bristol as BristolType) : undefined;
+    if (!t || !BRISTOL_META[t]) return { primary: "BM (unspecified)" };
+    const meta = BRISTOL_META[t];
+    return {
+      primary: `BM · Bristol Type ${t} — ${meta.title}`,
+      badge:
+        t === 7
+          ? "Severe diarrhea"
+          : t === 1
+            ? "Severe constipation"
+            : meta.category === "normal"
+              ? "Normal"
+              : meta.category === "constipation"
+                ? "Constipation"
+                : "Loose",
+      tone:
+        t === 7 || t === 1 ? "critical" : BRISTOL_TONE[meta.category],
+    };
+  }
+
+  if (event === "urine") {
+    const color = typeof p.color === "string" ? p.color : undefined;
+    const output = typeof p.output === "string" ? p.output : undefined;
+    const meta = color ? URINE_COLOR_META[color as UrineColor] : undefined;
+    const colorLabel = meta?.title ?? color ?? "unknown";
+    const primary = output
+      ? `Urine · ${colorLabel} (${output})`
+      : `Urine · ${colorLabel}`;
+    if (!meta) return { primary };
+    return {
+      primary,
+      badge: meta.description,
+      tone: URINE_TONE[meta.category] ?? "info",
+    };
+  }
+
+  return { primary: "Toileting" };
+}

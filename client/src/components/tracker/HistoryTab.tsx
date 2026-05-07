@@ -30,14 +30,13 @@ import {
 import { TrackerEmpty } from "./TrackerEmpty";
 import { TrackerLoading } from "./TrackerLoading";
 import { endOfDay, type TrackerFilters } from "./TrackerFilterBar";
-import {
-  classifyVitalRange,
-  RANGE_CLASSES,
-  RANGE_LABEL,
-  type VitalRange,
-} from "@/lib/tracker/useVitalRange";
 import { cn } from "@/lib/utils";
-import type { SerializedTrackerDefinition } from "@shared/tracker-schemas";
+import {
+  getDefinition,
+  type HistorySummary,
+  type HistoryTone,
+  type SerializedTrackerDefinition,
+} from "@shared/tracker-schemas";
 
 interface VersionRow {
   id: number;
@@ -132,13 +131,14 @@ function formatTime(ms: number): string {
 }
 
 /**
- * Generic payload summarizer — shows the first 3 key/value pairs.
+ * Generic payload summarizer — first 3 key/value pairs. Used as the fallback
+ * when the tracker definition has no `historySummary` callback.
  *
- * No slug-branching: the config-driven shell rule forbids per-slug
- * `if` ladders here. If a tracker needs a richer summary, add a
- * `historySummary` config to `TrackerDefinition` instead.
+ * No slug-branching: the config-driven shell rule forbids per-slug `if`
+ * ladders here. Trackers that need a richer summary attach a `historySummary`
+ * function to their `TrackerDefinition`.
  */
-function summarizePayload(_slug: string, payload: unknown): string {
+function genericPayloadSummary(payload: unknown): string {
   if (!payload || typeof payload !== "object") return "";
   const p = payload as Record<string, unknown>;
   return Object.entries(p)
@@ -148,36 +148,54 @@ function summarizePayload(_slug: string, payload: unknown): string {
 }
 
 /**
- * For the Vitals tracker, classify the row's payload to colorize the detail
- * cell. Returns `undefined` for any other tracker — the caller falls back to
- * the plain summary.
+ * Resolve a tracker payload to a `HistorySummary` shape. Prefers the
+ * tracker's `historySummary` callback (looked up from the local registry —
+ * server strips it from the wire so we read our local copy here). Falls back
+ * to the generic key/value summarizer.
  */
-function vitalsRangeFromPayload(payload: unknown): VitalRange | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const p = payload as Record<string, unknown>;
-  const t = p.vital_type;
-  if (typeof t !== "string") return undefined;
-  if (t === "bp") {
-    return classifyVitalRange("bp", p.systolic as number | undefined, {
-      secondary: p.diastolic as number | undefined,
-    });
+function resolveHistorySummary(
+  slug: string,
+  payload: unknown,
+): HistorySummary {
+  const localDef = getDefinition(slug);
+  if (localDef?.historySummary) {
+    return localDef.historySummary(payload);
   }
-  if (
-    t === "pulse" ||
-    t === "weight" ||
-    t === "oxygen" ||
-    t === "glucose" ||
-    t === "respiratory" ||
-    t === "pain"
-  ) {
-    return classifyVitalRange(t, p.value as number | undefined);
-  }
-  if (t === "temperature") {
-    return classifyVitalRange("temperature", p.value as number | undefined, {
-      unit: p.unit === "C" ? "C" : "F",
-    });
-  }
-  return undefined;
+  return { primary: genericPayloadSummary(payload) };
+}
+
+/** Tailwind class fragments per `HistoryTone` for the inline badge. */
+const TONE_BADGE: Record<HistoryTone, string> = {
+  normal: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  elevated: "bg-amber-50 text-amber-800 border-amber-200",
+  critical: "bg-red-50 text-red-700 border-red-300",
+  info: "bg-slate-50 text-slate-700 border-slate-200",
+};
+
+function HistorySummaryCell({
+  slug,
+  payload,
+}: {
+  slug: string;
+  payload: unknown;
+}) {
+  const summary = resolveHistorySummary(slug, payload);
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <span>{summary.primary}</span>
+      {summary.badge && (
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-[10px]",
+            TONE_BADGE[summary.tone ?? "info"],
+          )}
+        >
+          {summary.badge}
+        </Badge>
+      )}
+    </span>
+  );
 }
 
 export function HistoryTab({
@@ -273,29 +291,10 @@ export function HistoryTab({
                 </td>
                 <td className="px-3 py-2">
                   <span className="inline-flex items-center gap-1.5 flex-wrap">
-                    {(() => {
-                      const range =
-                        definition.slug === "vitals"
-                          ? vitalsRangeFromPayload(e.payload)
-                          : undefined;
-                      if (range && range !== "unknown") {
-                        return (
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px]",
-                              RANGE_CLASSES[range].badge,
-                            )}
-                          >
-                            {RANGE_LABEL[range]}
-                          </Badge>
-                        );
-                      }
-                      return null;
-                    })()}
-                    <span>
-                      {summarizePayload(definition.slug, e.payload)}
-                    </span>
+                    <HistorySummaryCell
+                      slug={definition.slug}
+                      payload={e.payload}
+                    />
                     {e.status === "edited" && (
                       <Badge
                         variant="outline"
@@ -464,7 +463,10 @@ function VersionsDrawer({
                       </ul>
                     ) : (
                       <p className="text-xs text-muted-foreground mt-1.5">
-                        {summarizePayload(slug, v.payloadSnapshot)}
+                        <HistorySummaryCell
+                          slug={slug}
+                          payload={v.payloadSnapshot}
+                        />
                       </p>
                     )}
                   </li>

@@ -12,7 +12,16 @@
 
 import { z } from "zod";
 
-import { type TrackerDefinition } from "./tracker-types";
+import {
+  type HistorySummary,
+  type HistoryTone,
+  type TrackerDefinition,
+} from "./tracker-types";
+import {
+  classifyVitalRange,
+  RANGE_LABEL,
+  type VitalRange,
+} from "./vital-ranges";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Canonical vital types. The order here is what the form's vital-type select
@@ -173,7 +182,118 @@ export const VITALS_DEFINITION: TrackerDefinition = {
     },
   ],
   payloadSchema: vitalsEntryPayloadSchema,
+  historySummary: vitalsHistorySummary,
   requiresResident: true,
   supportsBulk: false,
   shiftAware: true,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// History summary — used by the History tab "what happened" cell and the
+// Versions drawer per-version preview. Reuses the shared range classifier so
+// the badge tone matches the live coloring on `VitalsRangeInput`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RANGE_TO_TONE: Record<VitalRange, HistoryTone> = {
+  normal: "normal",
+  elevated: "elevated",
+  critical: "critical",
+  unknown: "info",
+};
+
+export function vitalsHistorySummary(payload: unknown): HistorySummary {
+  // Defensive: payload may be malformed in older entries or unfamiliar shapes.
+  if (typeof payload !== "object" || payload === null) {
+    return { primary: "Vitals (unknown)" };
+  }
+  const p = payload as Record<string, unknown>;
+  const vt = typeof p.vital_type === "string" ? p.vital_type : undefined;
+  if (!vt) return { primary: "Vitals" };
+
+  switch (vt) {
+    case "bp": {
+      const sys = num(p.systolic);
+      const dia = num(p.diastolic);
+      const range = classifyVitalRange("bp", sys, { secondary: dia });
+      return {
+        primary: `BP ${fmt(sys)}/${fmt(dia)} mmHg`,
+        badge: RANGE_LABEL[range],
+        tone: RANGE_TO_TONE[range],
+      };
+    }
+    case "pulse": {
+      const v = num(p.value);
+      const range = classifyVitalRange("pulse", v);
+      return {
+        primary: `Pulse ${fmt(v)} bpm`,
+        badge: RANGE_LABEL[range],
+        tone: RANGE_TO_TONE[range],
+      };
+    }
+    case "weight": {
+      const v = num(p.value);
+      const u = typeof p.unit === "string" ? p.unit : "lb";
+      return { primary: `Weight ${fmt(v)} ${u}` };
+    }
+    case "temperature": {
+      const v = num(p.value);
+      const u = (p.unit === "C" ? "C" : "F") as "F" | "C";
+      const range = classifyVitalRange("temperature", v, { unit: u });
+      return {
+        primary: `Temp ${fmt(v)}°${u}`,
+        badge: RANGE_LABEL[range],
+        tone: RANGE_TO_TONE[range],
+      };
+    }
+    case "oxygen": {
+      const v = num(p.value);
+      const range = classifyVitalRange("oxygen", v);
+      return {
+        primary: `O₂ ${fmt(v)}%`,
+        badge: RANGE_LABEL[range],
+        tone: RANGE_TO_TONE[range],
+      };
+    }
+    case "glucose": {
+      const v = num(p.value);
+      const range = classifyVitalRange("glucose", v);
+      return {
+        primary: `Glucose ${fmt(v)} mg/dL`,
+        badge: RANGE_LABEL[range],
+        tone: RANGE_TO_TONE[range],
+      };
+    }
+    case "respiratory": {
+      const v = num(p.value);
+      const range = classifyVitalRange("respiratory", v);
+      return {
+        primary: `Resp ${fmt(v)} rpm`,
+        badge: RANGE_LABEL[range],
+        tone: RANGE_TO_TONE[range],
+      };
+    }
+    case "pain": {
+      const v = num(p.value);
+      const range = classifyVitalRange("pain", v);
+      return {
+        primary: `Pain ${fmt(v)}/10`,
+        badge: RANGE_LABEL[range],
+        tone: RANGE_TO_TONE[range],
+      };
+    }
+    default:
+      return { primary: `Vitals (${vt})` };
+  }
+}
+
+function num(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) {
+    return Number(v);
+  }
+  return undefined;
+}
+
+function fmt(v: number | undefined): string {
+  return v === undefined ? "—" : String(v);
+}
