@@ -17,9 +17,17 @@
  *   - Fires `notes.surface.opened` once on mount.
  *   - Provides a "Quick triage drawer" button to round-trip back to the
  *     portal + open the bell drawer (filter context intentionally dropped).
+ *
+ * Slice 2.5: an optional `mode="modal"` rendering used by the bell drawer's
+ * "Open full view" affordance. In modal mode the shell uses local state
+ * (seeded from `initialFilterState`) instead of URL state so opening the
+ * modal doesn't pollute the address bar; the `leftSlot` (Back to portal) and
+ * `rightSlot` (Quick triage drawer) affordances are replaced by a single
+ * Close (X) button in the rightSlot. Outer container drops `min-h-screen`
+ * for `h-full` so the shell fills the modal's height.
  */
-import { useEffect } from "react";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, ExternalLink, X } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
@@ -32,18 +40,69 @@ import { NoteGroupTabs } from "./NoteGroupTabs";
 import { NotesListPane } from "./NotesListPane";
 import { NoteDetailPane } from "./NoteDetailPane";
 import { NotesSplitPane } from "./NotesSplitPane";
-import type { ListResponse } from "./shared";
+import type { GroupKey, ListResponse } from "./shared";
+
+export type NotesPageShellMode = "page" | "modal";
+
+export interface NotesPageShellInitialState {
+  group: GroupKey;
+  q: string;
+  archived: 0 | 1;
+}
 
 export interface NotesPageShellProps {
   facilityNumber: string;
+  /** "page" (default) reads/writes URL state; "modal" uses local state only. */
+  mode?: NotesPageShellMode;
+  /** Seed value when `mode="modal"`. Ignored in "page" mode (URL is the source of truth). */
+  initialFilterState?: NotesPageShellInitialState;
+  /** Close handler. Required in modal mode; ignored in page mode. */
+  onClose?: () => void;
 }
 
 // Match the bell drawer + OperationsTab notes-count query so RQ dedupes.
 const URGENT_QUERY_KEY = `/api/ops/notes?status=open&limit=50`;
 
-export function NotesPageShell({ facilityNumber }: NotesPageShellProps) {
-  const url = useNotesUrlState();
+export function NotesPageShell({
+  facilityNumber,
+  mode = "page",
+  initialFilterState,
+  onClose,
+}: NotesPageShellProps) {
+  const urlState = useNotesUrlState();
   const [, navigate] = useLocation();
+
+  // Modal-mode local state. Seeded from `initialFilterState` (typically the
+  // bell drawer's live filter), but never written back to the drawer or the
+  // URL — closing the modal discards everything.
+  const [modalState, setModalState] = useState({
+    group: (initialFilterState?.group ?? "all") as GroupKey,
+    q: initialFilterState?.q ?? "",
+    archived: (initialFilterState?.archived ?? 0) as 0 | 1,
+    noteId: null as number | null,
+  });
+
+  // Adapter that exposes the same shape as `useNotesUrlState` for both modes.
+  // The inner panes/toolbar/tabs only need group/q/archived/noteId + setters.
+  const url =
+    mode === "page"
+      ? urlState
+      : {
+          group: modalState.group,
+          q: modalState.q,
+          archived: modalState.archived,
+          noteId: modalState.noteId,
+          setGroup: (g: GroupKey) =>
+            setModalState((s) => ({ ...s, group: g, noteId: null })),
+          setNoteId: (id: number | null) =>
+            setModalState((s) => ({ ...s, noteId: id })),
+          setSearch: (q: string) => setModalState((s) => ({ ...s, q })),
+          setArchived: (a: 0 | 1) => setModalState((s) => ({ ...s, archived: a })),
+          patch: () => {
+            // Modal mode never calls patch; included only to satisfy the
+            // shared shape with useNotesUrlState's NotesUrlStateApi.
+          },
+        };
 
   // Same query the drawer uses → React Query dedupes; no extra network.
   const { data: urgentEnvelope } = useQuery<ListResponse | null>({
@@ -102,8 +161,53 @@ export function NotesPageShell({ facilityNumber }: NotesPageShellProps) {
     />
   );
 
+  const isModal = mode === "modal";
+
+  // In modal mode the leftSlot is empty (no "back to portal" — there's no
+  // route to go back to) and the rightSlot is a Close X. In page mode the
+  // existing "Back to portal" + "Quick triage drawer" pair is preserved.
+  const leftSlot = isModal ? null : (
+    <a href="#/facility-portal">
+      <Button variant="ghost" size="sm" className="-ml-2">
+        <ArrowLeft className="h-4 w-4 mr-1.5" />
+        Back to portal
+      </Button>
+    </a>
+  );
+  const rightSlot = isModal ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onClose}
+      aria-label="Close full view"
+      data-testid="notes-modal-close"
+      className="text-xs"
+    >
+      Close
+      <X className="h-3.5 w-3.5 ml-1" />
+    </Button>
+  ) : (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={handleQuickTriage}
+      aria-label="Open the quick triage drawer"
+      data-testid="notes-page-quick-triage"
+      className="text-xs"
+    >
+      Quick triage drawer
+      <ExternalLink className="h-3 w-3 ml-1" />
+    </Button>
+  );
+
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div
+      className={
+        isModal
+          ? "h-full flex flex-col bg-background overflow-hidden"
+          : "min-h-screen flex flex-col bg-background"
+      }
+    >
       {/* Sticky page header */}
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="px-4 pt-3 pb-2">
@@ -111,27 +215,8 @@ export function NotesPageShell({ facilityNumber }: NotesPageShellProps) {
             variant="expanded"
             facilityNumber={facilityNumber}
             urgentCount={urgentCount}
-            leftSlot={
-              <a href="#/facility-portal">
-                <Button variant="ghost" size="sm" className="-ml-2">
-                  <ArrowLeft className="h-4 w-4 mr-1.5" />
-                  Back to portal
-                </Button>
-              </a>
-            }
-            rightSlot={
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleQuickTriage}
-                aria-label="Open the quick triage drawer"
-                data-testid="notes-page-quick-triage"
-                className="text-xs"
-              >
-                Quick triage drawer
-                <ExternalLink className="h-3 w-3 ml-1" />
-              </Button>
-            }
+            leftSlot={leftSlot}
+            rightSlot={rightSlot}
           />
         </div>
 
