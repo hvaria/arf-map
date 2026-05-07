@@ -92,4 +92,23 @@ describe("isFeatureEnabled('notes_dedicated_page')", () => {
       }),
     ).toBe(false);
   });
+
+  it("auto-enables in development mode (npm run dev override)", async () => {
+    // Simulate `npm run dev` (Vite sets MODE === "development"). Vitest's
+    // default MODE is "test", which is why all other tests in this file
+    // exercise the production rules.
+    const originalMode = (import.meta.env as Record<string, unknown>).MODE;
+    (import.meta.env as Record<string, unknown>).MODE = "development";
+    try {
+      const { isFeatureEnabled } = await import("../lib/featureFlags");
+      expect(
+        isFeatureEnabled("notes_dedicated_page", {
+          facilityNumber: "anything",
+          role: "facility_admin",
+        }),
+      ).toBe(true);
+    } finally {
+      (import.meta.env as Record<string, unknown>).MODE = originalMode;
+    }
+  });
 });

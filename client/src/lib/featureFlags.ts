@@ -7,9 +7,16 @@
  * `super_admin` role.
  *
  * Flag selection logic (notes_dedicated_page):
+ *   0. import.meta.env.MODE === "development"             → true   (dev override)
  *   1. role === "super_admin"                             → true
  *   2. facilityNumber in VITE_NOTES_DEDICATED_PAGE_FACILITIES → true
  *   3. otherwise                                          → false
+ *
+ * The dev-mode override (rule 0) auto-enables the flag during `npm run dev`
+ * so local testing doesn't require setting an env allowlist. It deliberately
+ * checks MODE === "development" rather than DEV: Vitest runs with
+ * MODE === "test" so the test suite continues to exercise rules 1–3.
+ * Production builds run with MODE === "production" and stay gated.
  *
  * Lookup is case-insensitive and tolerant of surrounding whitespace.
  *
@@ -36,6 +43,10 @@ function readAllowlist(envValue: string | undefined): string[] {
 export function isFeatureEnabled(flag: FeatureFlag, ctx: FlagContext): boolean {
   switch (flag) {
     case "notes_dedicated_page": {
+      // Dev-mode override — see file header. MODE is "development" only when
+      // serving via `npm run dev`; Vitest is "test" and prod builds are
+      // "production", so neither falls into this branch.
+      if (import.meta.env.MODE === "development") return true;
       if (ctx.role === "super_admin") return true;
       const allowlist = readAllowlist(
         import.meta.env.VITE_NOTES_DEDICATED_PAGE_FACILITIES as
