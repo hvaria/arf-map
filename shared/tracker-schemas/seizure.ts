@@ -195,7 +195,7 @@ export const SEIZURE_DEFINITION: TrackerDefinition = {
       label: "Intervention",
       required: false,
       helpText:
-        "Required when a rescue med was given or duration ≥ 5 minutes.",
+        "Required when a rescue med was given, duration ≥ 5 minutes, or seizure type is status epilepticus.",
       maxLength: 500,
     },
     {

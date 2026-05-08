@@ -161,6 +161,27 @@ describe("POST /api/ops/trackers/seizure/entries", () => {
     expect(res.body.error).toMatch(/intervention/);
   });
 
+  it("requires intervention when seizure_type=status_epilepticus regardless of duration (AC-5)", async () => {
+    const agent = await loginAgent(app, facilityA.username, facilityA.password);
+    const res = await agent
+      .post("/api/ops/trackers/seizure/entries")
+      .set(REQUIRED_HEADERS)
+      .send(
+        entryBody({
+          payload: {
+            seizure_type: "status_epilepticus",
+            duration_seconds: 90, // < 300, but the type itself triggers
+            shift: "AM",
+            witnessed: "yes",
+            supervisor_notified: "yes",
+            // intervention omitted
+          },
+        }),
+      );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/intervention/);
+  });
+
   it("requires intervention when rescue_med_given=yes (AC-5)", async () => {
     const agent = await loginAgent(app, facilityA.username, facilityA.password);
     const res = await agent

@@ -267,8 +267,13 @@ function drawResidentSections(
     drawTableHeader(doc);
 
     for (const row of group.rows) {
-      const needed = 22; // ~1 row of body text + padding
-      if (doc.page.height - PAGE_MARGIN_BOTTOM - doc.y < needed) {
+      // Compute the actual height the row will consume — the Detail column
+      // can wrap to multiple lines for long notes, and a fixed reservation
+      // would let the page-break trigger fire mid-row, desynchronizing the
+      // four absolute-positioned columns. heightOfString uses the same font
+      // sizing pdfkit will apply during the actual draw.
+      const rowHeight = computeRowHeight(doc, args.definition.slug, row);
+      if (doc.page.height - PAGE_MARGIN_BOTTOM - doc.y < rowHeight) {
         doc.addPage();
         drawTableHeader(doc);
       }
@@ -309,6 +314,30 @@ function drawTableHeader(doc: PDFKit.PDFDocument): void {
     .lineTo(doc.page.width - PAGE_MARGIN_X, ruleY)
     .stroke();
   doc.moveDown(0.2);
+}
+
+/**
+ * Compute the vertical space (in pdf points) a single row will consume. The
+ * caller uses this to decide whether to page-break before drawing — fixed
+ * heuristics desync columns when the Detail wraps. Mirrors `drawTableRow`
+ * font/size/width settings.
+ */
+function computeRowHeight(
+  doc: PDFKit.PDFDocument,
+  slug: string,
+  row: EntryExportRow,
+): number {
+  const localDef = getDefinition(slug);
+  const summary = localDef?.historySummary
+    ? localDef.historySummary(row.payload)
+    : { primary: genericPayloadSummary(row.payload), tone: undefined };
+  const editedSuffix = row.status === "edited" ? "  (edited)" : "";
+  const text = summary.primary + editedSuffix;
+
+  doc.font("Helvetica").fontSize(9);
+  const detailHeight = doc.heightOfString(text, { width: COL_W.detail });
+  // Single-line minimum is 14pt; padding adds the row separator buffer.
+  return Math.max(detailHeight, 14) + 4;
 }
 
 function drawTableRow(

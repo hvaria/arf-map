@@ -98,7 +98,8 @@ export const INVENTORY_DEFINITION: TrackerDefinition = {
       label: "Quantity",
       required: true,
       min: 0,
-      step: 1,
+      // Schema allows decimal counts (e.g. 0.5 boxes); step matches.
+      step: 0.01,
     },
     {
       kind: "text",
