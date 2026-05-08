@@ -34,6 +34,10 @@ import {
   seizureEntryPayloadSchema,
 } from "./seizure";
 import {
+  SLEEP_DEFINITION,
+  sleepEntryPayloadSchema,
+} from "./sleep";
+import {
   serializeDefinitionForClient,
   type SerializedTrackerDefinition,
   type TrackerDefinition,
@@ -123,6 +127,16 @@ export {
 } from "./seizure";
 export type { SeizureType, SeizureEntryPayload } from "./seizure";
 
+// ─── Sleep ──────────────────────────────────────────────────────────────────
+export {
+  sleepEntryPayloadSchema,
+  SLEEP_DEFINITION,
+  SLEEP_GOAL_IDS,
+  SLEEP_STATUS_VALUES,
+  sleepHistorySummary,
+} from "./sleep";
+export type { SleepGoalId, SleepStatus, SleepEntryPayload } from "./sleep";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,6 +152,7 @@ export const TRACKER_REGISTRY: Record<string, TrackerDefinition> = {
   hygiene: HYGIENE_DEFINITION,
   skin_check: SKIN_CHECK_DEFINITION,
   seizure: SEIZURE_DEFINITION,
+  sleep: SLEEP_DEFINITION,
 };
 
 // Silence unused-import warnings for re-exports that are surfaced via
@@ -148,6 +163,7 @@ void toiletingEntryPayloadSchema;
 void hygieneEntryPayloadSchema;
 void skinCheckEntryPayloadSchema;
 void seizureEntryPayloadSchema;
+void sleepEntryPayloadSchema;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
