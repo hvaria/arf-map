@@ -1232,11 +1232,17 @@ export async function listAlerts(
   const statuses = params.status && params.status.length > 0
     ? params.status
     : (["active"] as const);
-  conds.push(sql`${trackerAlerts.status} = ANY(${[...statuses]}::text[])`);
+  // sql.param(...) binds the JS array as a single PG array parameter. Without
+  // it, Drizzle expands the array into comma-separated bind params, producing
+  // `ANY(($1, $2)::text[])` — Postgres then tries to cast individual scalars
+  // to text[] and fails with "malformed array literal".
+  conds.push(
+    sql`${trackerAlerts.status} = ANY(${sql.param([...statuses])}::text[])`,
+  );
 
   if (params.severity && params.severity.length > 0) {
     conds.push(
-      sql`${trackerAlerts.severity} = ANY(${[...params.severity]}::text[])`,
+      sql`${trackerAlerts.severity} = ANY(${sql.param([...params.severity])}::text[])`,
     );
   }
   if (params.slug !== undefined) {
