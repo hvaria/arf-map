@@ -30,6 +30,10 @@ import {
   skinCheckEntryPayloadSchema,
 } from "./skin-check";
 import {
+  SEIZURE_DEFINITION,
+  seizureEntryPayloadSchema,
+} from "./seizure";
+import {
   serializeDefinitionForClient,
   type SerializedTrackerDefinition,
   type TrackerDefinition,
@@ -108,6 +112,17 @@ export type {
   SkinCheckEntryPayload,
 } from "./skin-check";
 
+// ─── Seizure ────────────────────────────────────────────────────────────────
+export {
+  seizureEntryPayloadSchema,
+  SEIZURE_DEFINITION,
+  SEIZURE_TYPES,
+  seizureHistorySummary,
+  SEIZURE_STATUS_EPILEPTICUS_SECS,
+  SEIZURE_PROLONGED_SECS,
+} from "./seizure";
+export type { SeizureType, SeizureEntryPayload } from "./seizure";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,6 +137,7 @@ export const TRACKER_REGISTRY: Record<string, TrackerDefinition> = {
   toileting: TOILETING_DEFINITION,
   hygiene: HYGIENE_DEFINITION,
   skin_check: SKIN_CHECK_DEFINITION,
+  seizure: SEIZURE_DEFINITION,
 };
 
 // Silence unused-import warnings for re-exports that are surfaced via
@@ -131,6 +147,7 @@ void vitalsEntryPayloadSchema;
 void toiletingEntryPayloadSchema;
 void hygieneEntryPayloadSchema;
 void skinCheckEntryPayloadSchema;
+void seizureEntryPayloadSchema;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
