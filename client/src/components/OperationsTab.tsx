@@ -556,7 +556,8 @@ function ShortcutHelp({ open, onOpenChange }: { open: boolean; onOpenChange: (v:
                 {r.keys.map((k, i) => (
                   <kbd
                     key={i}
-                    className="px-1.5 py-0.5 rounded border border-gray-200 bg-gray-50 text-xs font-mono"
+                    className="px-1.5 py-0.5 rounded border bg-stone-50 text-xs font-mono text-stone-700"
+                    style={{ borderColor: "var(--portal-border-subtle)" }}
                   >
                     {k}
                   </kbd>
@@ -814,12 +815,15 @@ function TrackerSubView({
         </Button>
         <header>
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-md bg-indigo-100 text-indigo-700 flex items-center justify-center">
+            <div
+              className="h-10 w-10 rounded-md bg-stone-50 border flex items-center justify-center text-stone-700"
+              style={{ borderColor: "var(--portal-border-subtle)" }}
+            >
               <ClipboardList className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold leading-tight">Trackers</h1>
-              <p className="text-sm text-muted-foreground mt-0.5">
+              <h1 className="text-[18px] font-semibold leading-tight text-stone-900">Trackers</h1>
+              <p className="text-[13px] text-muted-foreground mt-0.5">
                 Document daily care, vitals, ADLs, and more — pick a tracker
                 to start charting.
               </p>

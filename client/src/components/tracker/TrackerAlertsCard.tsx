@@ -49,41 +49,28 @@ const SEVERITY_RANK: Record<AlertSeverity, number> = {
 };
 
 interface SeverityTheme {
-  border: string;
-  rowBg: string;
-  iconBg: string;
-  iconColor: string;
   icon: React.ElementType;
+  /** Pill-style badge using portal status tokens — same idiom as URGENCY_BADGE. */
   badge: string;
   label: string;
 }
 
 const SEVERITY_THEME: Record<AlertSeverity, SeverityTheme> = {
   critical: {
-    border: "border-l-red-500",
-    rowBg: "bg-red-50/60",
-    iconBg: "bg-red-100",
-    iconColor: "text-red-700",
     icon: AlertOctagon,
-    badge: "bg-red-100 text-red-700 border-red-200",
+    badge:
+      "bg-[var(--portal-status-critical-bg)] text-[var(--portal-status-critical)] border-[var(--portal-status-critical-border)]",
     label: "Critical",
   },
   warn: {
-    border: "border-l-amber-500",
-    rowBg: "bg-amber-50/60",
-    iconBg: "bg-amber-100",
-    iconColor: "text-amber-700",
     icon: AlertTriangle,
-    badge: "bg-amber-100 text-amber-800 border-amber-200",
+    badge:
+      "bg-[var(--portal-status-warning-bg)] text-[var(--portal-status-warning)] border-[var(--portal-status-warning-border)]",
     label: "Warning",
   },
   info: {
-    border: "border-l-sky-500",
-    rowBg: "bg-sky-50/60",
-    iconBg: "bg-sky-100",
-    iconColor: "text-sky-700",
     icon: Info,
-    badge: "bg-sky-100 text-sky-700 border-sky-200",
+    badge: "bg-stone-50 text-stone-600 border-stone-200",
     label: "Info",
   },
 };
@@ -140,7 +127,7 @@ function NotePromptDialog({
         <div className="space-y-2">
           <label
             htmlFor="alert-note"
-            className="text-sm font-medium text-gray-700"
+            className="text-sm font-medium text-stone-700"
           >
             {description}
           </label>
@@ -217,72 +204,82 @@ function TrackerAlertRow({ alert, trackerName, resident }: AlertRowProps) {
   return (
     <li
       className={cn(
-        "flex flex-col gap-2 px-3 py-3 border-b border-gray-100 last:border-0",
+        "group flex items-start gap-3 px-5 py-3 hover:bg-stone-50/70 transition-colors border-b last:border-0",
         "animate-in fade-in slide-in-from-top-1 duration-200",
-        theme.rowBg,
       )}
+      style={{ borderColor: "var(--portal-border-subtle)" }}
     >
-      <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            "h-9 w-9 rounded-md flex items-center justify-center shrink-0",
-            theme.iconBg,
-            theme.iconColor,
-          )}
-          aria-hidden="true"
-        >
-          <Icon className="h-4 w-4" />
+      <div
+        className="h-7 w-7 rounded-md bg-stone-50 border flex items-center justify-center shrink-0"
+        style={{ borderColor: "var(--portal-border-subtle)" }}
+        aria-hidden="true"
+      >
+        <Icon className="h-3.5 w-3.5 text-stone-600" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[13px] font-medium text-stone-900 truncate">
+            {alert.message}
+          </span>
+          <Badge
+            variant="outline"
+            className={cn("h-5 text-[10px] font-medium px-1.5", theme.badge)}
+          >
+            {theme.label}
+          </Badge>
+          <Badge
+            variant="outline"
+            className="h-5 text-[10px] font-medium px-1.5 bg-stone-50 text-stone-600 border-stone-200 capitalize"
+          >
+            {trackerName}
+          </Badge>
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold leading-tight">
-              {alert.message}
+        <p className="text-[12px] text-muted-foreground truncate mt-0.5">
+          {residentLabel(resident)}
+          {alert.shift ? (
+            <>
+              {" "}
+              <span aria-hidden="true" className="text-stone-300">
+                ·
+              </span>{" "}
+              <span className="portal-num">{alert.shift}</span>
+            </>
+          ) : null}{" "}
+          <span aria-hidden="true" className="text-stone-300">
+            ·
+          </span>{" "}
+          <span className="portal-num">{relativeTime(alert.createdAt)}</span>
+          {isAcknowledged ? (
+            <span className="ml-2 inline-flex items-center gap-1 text-[var(--portal-status-ok)] font-medium">
+              <CheckCircle2 className="h-3 w-3" />
+              {isResolved ? "resolved" : "ack'd"}
             </span>
-            <Badge
-              variant="outline"
-              className="h-5 text-[10px] font-semibold capitalize"
-            >
-              {trackerName}
-            </Badge>
-            <span className="text-[11px] text-muted-foreground tabular-nums">
-              {relativeTime(alert.createdAt)}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {residentLabel(resident)}
-            {alert.shift ? ` · ${alert.shift}` : ""}
-            {isAcknowledged ? (
-              <span className="ml-2 inline-flex items-center gap-1 text-emerald-700 font-medium">
-                <CheckCircle2 className="h-3 w-3" />
-                {isResolved ? "resolved" : "ack'd"}
-              </span>
-            ) : null}
-          </p>
-          {alert.detail ? (
-            <p className="text-xs text-gray-700 mt-1 leading-relaxed">
-              {alert.detail}
-            </p>
           ) : null}
-        </div>
+        </p>
+        {alert.detail ? (
+          <p className="text-[12px] text-muted-foreground mt-1 leading-relaxed">
+            {alert.detail}
+          </p>
+        ) : null}
       </div>
 
       {!isResolved && (
-        <div className="flex items-center gap-2 pl-12">
+        <div className="flex items-center gap-1.5 shrink-0">
           <Button
             size="sm"
             variant="outline"
             disabled={ack.isPending || isAcknowledged}
             onClick={() => setAckOpen(true)}
             className={cn(
-              "h-9 min-h-[44px] text-xs gap-1.5",
-              flash === "ack" && "border-emerald-400 text-emerald-700",
+              "h-8 text-xs gap-1",
+              flash === "ack" && "border-[var(--portal-status-ok-border)] text-[var(--portal-status-ok)]",
             )}
             aria-label={`Acknowledge alert: ${alert.message}`}
           >
             {ack.isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
             ) : flash === "ack" || isAcknowledged ? (
-              <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+              <Check className="h-3.5 w-3.5 text-[var(--portal-status-ok)]" aria-hidden="true" />
             ) : null}
             {isAcknowledged ? "Acknowledged" : "Acknowledge"}
           </Button>
@@ -292,16 +289,16 @@ function TrackerAlertRow({ alert, trackerName, resident }: AlertRowProps) {
             disabled={resolve.isPending}
             onClick={() => setResolveOpen(true)}
             className={cn(
-              "h-9 min-h-[44px] text-xs gap-1.5",
+              "h-8 text-xs gap-1",
               flash === "resolved" &&
-                "border-emerald-400 text-emerald-700 line-through",
+                "border-[var(--portal-status-ok-border)] text-[var(--portal-status-ok)] line-through",
             )}
             aria-label={`Resolve alert: ${alert.message}`}
           >
             {resolve.isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
             ) : flash === "resolved" ? (
-              <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+              <Check className="h-3.5 w-3.5 text-[var(--portal-status-ok)]" aria-hidden="true" />
             ) : null}
             Resolve
           </Button>
@@ -414,72 +411,47 @@ export function TrackerAlertsCard({ facilityNumber }: TrackerAlertsCardProps) {
   }, [sorted]);
 
   const visible = showAll ? sorted : sorted.slice(0, 3);
-  const hasAlerts = counts.total > 0;
-
-  // Border tone follows highest-severity present.
-  const cardBorder = !hasAlerts
-    ? "border-l-gray-200"
-    : counts.critical > 0
-      ? "border-l-red-500"
-      : counts.warn > 0
-        ? "border-l-amber-500"
-        : "border-l-sky-500";
 
   return (
     <section aria-label="Tracker alerts">
-      <Card className={cn("border-l-4 transition-colors", cardBorder)}>
+      <Card>
         <CardContent className="p-0">
-          <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100 gap-2 flex-wrap">
-            <div className="flex items-center gap-2 min-w-0">
-              <Bell
-                className={cn(
-                  "h-4 w-4",
-                  counts.critical > 0
-                    ? "text-red-600"
-                    : counts.warn > 0
-                      ? "text-amber-600"
-                      : counts.info > 0
-                        ? "text-sky-600"
-                        : "text-gray-400",
-                )}
-              />
-              <h2 className="text-sm font-semibold">Tracker alerts</h2>
-              {hasAlerts && (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {counts.critical > 0 && (
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "h-5 text-[10px] font-semibold tabular-nums",
-                        SEVERITY_THEME.critical.badge,
-                      )}
-                    >
-                      {counts.critical} critical
-                    </Badge>
+          <div
+            className="portal-section-header"
+            style={{ borderColor: "var(--portal-border-subtle)" }}
+          >
+            <div className="portal-section-header__title">
+              <Bell className="h-3.5 w-3.5 text-stone-500" />
+              Tracker alerts
+              {counts.total > 0 && (
+                <Badge
+                  variant="outline"
+                  className="h-5 text-[10px] font-medium portal-num bg-stone-50 text-stone-600 border-stone-200"
+                >
+                  {counts.total}
+                </Badge>
+              )}
+              {counts.critical > 0 && (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "h-5 text-[10px] font-medium px-1.5 portal-num",
+                    SEVERITY_THEME.critical.badge,
                   )}
-                  {counts.warn > 0 && (
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "h-5 text-[10px] font-semibold tabular-nums",
-                        SEVERITY_THEME.warn.badge,
-                      )}
-                    >
-                      {counts.warn} warn
-                    </Badge>
+                >
+                  {counts.critical} critical
+                </Badge>
+              )}
+              {counts.warn > 0 && (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "h-5 text-[10px] font-medium px-1.5 portal-num",
+                    SEVERITY_THEME.warn.badge,
                   )}
-                  {counts.info > 0 && (
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "h-5 text-[10px] font-semibold tabular-nums",
-                        SEVERITY_THEME.info.badge,
-                      )}
-                    >
-                      {counts.info} info
-                    </Badge>
-                  )}
-                </div>
+                >
+                  {counts.warn} warn
+                </Badge>
               )}
             </div>
             {!isLoading && counts.total > 3 && (
@@ -490,33 +462,31 @@ export function TrackerAlertsCard({ facilityNumber }: TrackerAlertsCardProps) {
                 onClick={() => setShowAll((v) => !v)}
                 aria-expanded={showAll}
               >
-                {showAll
-                  ? "Show top 3"
-                  : `Show all ${counts.total} active`}
+                {showAll ? "Show top 3" : `Show all ${counts.total} active`}
               </Button>
             )}
           </div>
 
           {isLoading ? (
-            <div className="p-3 space-y-2">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
+            <div className="p-4 space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-3/4" />
             </div>
           ) : isError ? (
-            <div className="px-4 py-3 text-sm text-destructive">
+            <div className="px-5 py-4 text-[13px] text-destructive">
               Couldn't load tracker alerts. Try refreshing the page.
             </div>
           ) : counts.total === 0 ? (
-            <div className="px-4 py-4 flex items-center gap-3">
+            <div className="px-5 py-4 flex items-center gap-3">
               <CheckCircle2
-                className="h-5 w-5 text-emerald-500 shrink-0"
+                className="h-4 w-4 text-[var(--portal-status-ok)] shrink-0"
                 aria-hidden="true"
               />
               <div className="min-w-0">
-                <p className="text-sm font-semibold leading-tight">
+                <p className="text-[13px] font-medium leading-tight text-stone-900">
                   All clear
                 </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
+                <p className="text-[12px] text-muted-foreground mt-0.5">
                   No active tracker alerts. New criticals will surface here
                   automatically.
                 </p>
