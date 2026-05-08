@@ -38,6 +38,14 @@ import {
   sleepEntryPayloadSchema,
 } from "./sleep";
 import {
+  INVENTORY_DEFINITION,
+  inventoryEntryPayloadSchema,
+} from "./inventory";
+import {
+  CLEANING_DEFINITION,
+  cleaningEntryPayloadSchema,
+} from "./cleaning";
+import {
   serializeDefinitionForClient,
   type SerializedTrackerDefinition,
   type TrackerDefinition,
@@ -137,6 +145,31 @@ export {
 } from "./sleep";
 export type { SleepGoalId, SleepStatus, SleepEntryPayload } from "./sleep";
 
+// ─── Inventory ──────────────────────────────────────────────────────────────
+export {
+  inventoryEntryPayloadSchema,
+  INVENTORY_DEFINITION,
+  INVENTORY_ACTIONS,
+  inventoryHistorySummary,
+} from "./inventory";
+export type { InventoryAction, InventoryEntryPayload } from "./inventory";
+
+// ─── Cleaning ───────────────────────────────────────────────────────────────
+export {
+  cleaningEntryPayloadSchema,
+  CLEANING_DEFINITION,
+  CLEANING_ZONES,
+  CLEANING_TASKS,
+  CLEANING_STATUS_VALUES,
+  cleaningHistorySummary,
+} from "./cleaning";
+export type {
+  CleaningZone,
+  CleaningTask,
+  CleaningStatus,
+  CleaningEntryPayload,
+} from "./cleaning";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +186,8 @@ export const TRACKER_REGISTRY: Record<string, TrackerDefinition> = {
   skin_check: SKIN_CHECK_DEFINITION,
   seizure: SEIZURE_DEFINITION,
   sleep: SLEEP_DEFINITION,
+  inventory: INVENTORY_DEFINITION,
+  cleaning: CLEANING_DEFINITION,
 };
 
 // Silence unused-import warnings for re-exports that are surfaced via
@@ -164,6 +199,8 @@ void hygieneEntryPayloadSchema;
 void skinCheckEntryPayloadSchema;
 void seizureEntryPayloadSchema;
 void sleepEntryPayloadSchema;
+void inventoryEntryPayloadSchema;
+void cleaningEntryPayloadSchema;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
