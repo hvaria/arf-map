@@ -118,6 +118,45 @@ The core data is California CCLD licensed-care facilities. There are two modes:
 - `schema.ts` — All Drizzle table definitions and inferred TypeScript types. Single source of truth for DB schema and Zod validation schemas. `server/db/schema.ts` re-exports from here.
 - `etl-types.ts` — `FacilityDbRow` type, `typeToGroup()` mapping, `TYPE_TO_NAME` lookup, `formatPhone()` — used by both server and ETL scripts.
 
+### Tracker Module
+
+Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-schemas/). Adding a tracker is a registry entry — no new routes, no DB migration, no shell changes (assuming an existing render pattern fits).
+
+**Registered trackers** (9, see [shared/tracker-schemas/index.ts](shared/tracker-schemas/index.ts) `TRACKER_REGISTRY`):
+
+| Slug | Pattern | requiresResident | Alerts |
+|---|---|---|---|
+| `adl` | Grid (goals × residents) | yes | — |
+| `vitals` | Detailed-only, custom `vitals-range` renderer | yes | critical out-of-range per VitalType |
+| `toileting` | Detailed-only, custom `toileting` renderer (Bristol scale) | yes | — |
+| `hygiene` | Grid | yes | — |
+| `skin_check` | Detailed-only, conditional-required via `superRefine` | yes | critical on `severity === "severe"` |
+| `seizure` | Detailed-only, conditional intervention | yes | critical on duration ≥ 300s OR `seizure_type === "status_epilepticus"` |
+| `sleep` | Grid | yes | — |
+| `inventory` | Detailed-only | **no** | — |
+| `cleaning` | Detailed-only | **no** | — |
+
+**Key files.**
+- Definitions: `shared/tracker-schemas/<slug>.ts`. Each exports a `TrackerDefinition`, a Zod payload schema, and an optional `historySummary`/`alerts`.
+- Server router: [server/trackers/entries/entriesRouter.ts](server/trackers/entries/entriesRouter.ts) — single + bulk POST, PATCH, soft-delete, CSV export, **PDF export**, list + versions.
+- Storage: [server/trackers/trackerStorage.ts](server/trackers/trackerStorage.ts) — Drizzle/Postgres, paginated cursor-based reads, soft-delete + version snapshots.
+- Reports: [server/trackers/reports/](server/trackers/reports/) — `pdfRenderer.ts` (pdfkit, US Letter) + `reportQueries.ts` (facility letterhead lookup).
+- Client shell: [client/src/components/tracker/](client/src/components/tracker/) — `TrackerShell`, `QuickEntryGrid`, `DetailedEntryForm`, `HistoryTab`, `ExportCsvDialog`, `ExportPdfDialog`. Renders any tracker from its serialized definition; per-tracker `historySummary` callbacks live in the shared registry and are imported locally on the client (functions don't cross the wire).
+- Alerts subsystem: [shared/tracker-schemas/alerts.ts](shared/tracker-schemas/alerts.ts) (rule types + helpers), evaluator runs per-entry on insert/update, persists to `tracker_alerts`. v1 supports `payload-matches` style rules only — cross-entry/cron rules (cluster detection, missing-for-N-days) are deferred.
+
+**Adding a new tracker (config-fit case).**
+1. Create `shared/tracker-schemas/<slug>.ts` (clone closest existing definition: grid → Hygiene/Sleep, event-style with conditional fields → Skin Check/Seizure, facility-level → Inventory/Cleaning).
+2. Register in [shared/tracker-schemas/index.ts](shared/tracker-schemas/index.ts) — both the import + `TRACKER_REGISTRY` entry + named re-exports.
+3. Add an integration test in `server/__tests__/trackers/<slug>.test.ts` — must call `bootstrapTrackersSchema()` in `beforeAll` so the new `tracker_definitions` row exists.
+4. CSV + PDF exports work for free (registry-driven).
+5. Run `npm run check` and `npx vitest run --project server server/__tests__/trackers/`.
+
+**Deprecation history.**
+- The `skin_check` goal in the Hygiene tracker is deprecated as of `7a6eb65`. New Hygiene entries with `goal_id: "skin_check"` are rejected; legacy entries remain readable in History via `HYGIENE_GOAL_LABEL["skin_check"] = "Skin check (legacy)"`.
+
+**PDF reports.**
+`GET /api/ops/trackers/:slug/entries/export.pdf` mirrors the CSV endpoint exactly — same auth, validation, 92-day cap, `Cache-Control: no-store`, soft-delete exclusion. Response sets `X-Tracker-Export-Count` for the client toast. Renderer buffers all rows up-front because resident-grouped state-audit ordering can't stream.
+
 ### Two Auth Systems
 
 **Facility auth** — Passport.js `LocalStrategy` + server-side sessions. Stored in `facility_accounts`. The `requireAuth` middleware in `routes.ts` protects facility-specific endpoints.
