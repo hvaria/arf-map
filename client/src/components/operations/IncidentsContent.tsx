@@ -297,13 +297,14 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
   const [expanded, setExpanded] = useState(false);
   const [rootCause, setRootCause] = useState(incident.rootCause ?? "");
   const [correctiveAction, setCorrectiveAction] = useState(incident.correctiveAction ?? "");
+  const [status, setStatus] = useState(incident.status ?? "open");
 
   const updateMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest(
         "PUT",
         `/api/ops/incidents/${incident.id}`,
-        { rootCause, correctiveAction }
+        { rootCause, correctiveAction, status }
       );
       return res.json();
     },
@@ -372,6 +373,19 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
               placeholder="Document corrective actions taken..."
               className="resize-none min-h-[60px]"
             />
+          </div>
+          <div className="space-y-2">
+            <Label>Status</Label>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger className="sm:w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="under_review">Under Review</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <Button
             size="sm"
