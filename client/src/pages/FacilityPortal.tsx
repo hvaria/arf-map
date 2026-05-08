@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, X, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff, LayoutDashboard } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff, MapPin } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import OperationsTab from "@/components/OperationsTab";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import type { Facility } from "@shared/schema";
 import { useFacilities } from "@/hooks/useFacilities";
@@ -1046,95 +1047,116 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
 
   return (
     <Tabs defaultValue="details" className="min-h-screen flex flex-col bg-white">
+      {/* ── Top bar ─────────────────────────────────────────────────────────
+       * Single row at 56px. Identity collapses inline rather than stacking
+       * into an avatar + 3-line block: brand mark establishes identity, the
+       * facility name reads as the page title in normal sentence case (not
+       * uppercase orange), and metadata sits dot-separated to its right.
+       *
+       * Status chip uses the new semantic status tokens; the role lens
+       * (previously buried in the OperationsTab body) lives here so the
+       * preview banner is anchored to the page header it affects.
+       */}
       <header
-        className="facility-header sticky top-0 z-30 bg-white"
-        style={{ borderBottom: "1px solid var(--brand-border)" }}
+        className="sticky top-0 z-30 bg-white border-b"
+        style={{ borderColor: "var(--portal-border-subtle)" }}
       >
-        {/* Utility row: brand + back link on the left, log out on the right */}
-        <div
-          className="px-4 lg:px-6 py-3 flex items-center gap-3 border-b"
-          style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}
-        >
-          {/* DO NOT MODIFY - Brand Lock */}
+        <div className="px-4 lg:px-6 min-h-16 py-2 flex items-center gap-4">
+          {/* DO NOT MODIFY - Brand Lock — render at default size so the
+              constellation icon stays in proportion with the fixed
+              "Neighbourhood / Care / Finder" text labels. */}
           <BrandLogo />
-          <Separator orientation="vertical" className="h-8" />
-          <Link href="/">
-            <Button variant="ghost" size="sm" className="-ml-2">
-              <ArrowLeft className="h-4 w-4 mr-1.5" />
+
+          <Link href="/" className="hidden md:block">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground gap-1.5"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
               Back to Map
             </Button>
           </Link>
-          <div className="flex-1" />
-          <NotesNotificationButton facilityNumber={user.facilityNumber} />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => logoutMutation.mutate()}
-            disabled={logoutMutation.isPending}
-          >
-            <LogOut className="h-4 w-4 sm:mr-1.5" />
-            <span className="hidden sm:inline">
-              {logoutMutation.isPending ? "Logging out…" : "Log Out"}
-            </span>
-          </Button>
-        </div>
 
-        {/* Identity + section tabs */}
-        <div className="facility-header-top px-4 lg:px-6 py-4 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-          <div className="facility-header-left flex items-start gap-3 min-w-0">
-            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <Building2 className="h-5 w-5 text-primary" />
-            </div>
+          <div
+            className="hidden md:block h-6 w-px"
+            style={{ background: "var(--portal-border-subtle)" }}
+            aria-hidden="true"
+          />
+
+          {/* Identity — inline, dense, no decorative avatar bubble */}
+          <div className="min-w-0 flex items-center gap-3 flex-1">
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                Facility Portal
-              </p>
-              <h1 className="text-base font-semibold leading-tight truncate">
+              <h1 className="text-[15px] font-semibold leading-tight truncate text-stone-900">
                 {facility?.name ?? `Facility #${user.facilityNumber}`}
               </h1>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                License #{user.facilityNumber}
-                {facility ? ` · ${facility.address}, ${facility.city}` : ""}
-              </p>
-              <div className="mt-2">
-                {isListingComplete ? (
-                  <Badge variant="secondary" className="text-xs gap-1">
-                    <CheckCircle2 className="h-3 w-3 text-green-500" />
-                    Listing complete
-                  </Badge>
-                ) : (
-                  <Badge
-                    variant="secondary"
-                    className="text-xs gap-1 text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400"
-                  >
-                    <AlertCircle className="h-3 w-3" />
-                    Listing incomplete
-                  </Badge>
+              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate">
+                <span className="portal-num">Lic. {user.facilityNumber}</span>
+                {facility && (
+                  <>
+                    <span aria-hidden="true" className="text-stone-300">·</span>
+                    <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{facility.city}</span>
+                  </>
                 )}
-              </div>
+              </p>
             </div>
+
+            {/* Listing-completeness chip — semantic tokens, no full-width
+                badge. Hidden on narrow viewports where it would push the
+                action cluster out. */}
+            <span
+              className={cn(
+                "hidden lg:inline-flex items-center gap-1 h-6 px-2 rounded-full border text-[11px] font-medium",
+                isListingComplete
+                  ? "bg-[var(--portal-status-ok-bg)] text-[var(--portal-status-ok)] border-[var(--portal-status-ok-border)]"
+                  : "bg-[var(--portal-status-warning-bg)] text-[var(--portal-status-warning)] border-[var(--portal-status-warning-border)]"
+              )}
+            >
+              {isListingComplete ? (
+                <CheckCircle2 className="h-3 w-3" />
+              ) : (
+                <AlertCircle className="h-3 w-3" />
+              )}
+              {isListingComplete ? "Listing complete" : "Listing incomplete"}
+            </span>
           </div>
 
-          <nav
-            aria-label="Facility portal sections"
-            className="portal-tabs facility-header-tabs w-full lg:w-auto -mx-4 lg:mx-0 px-4 lg:px-0 overflow-x-auto"
-          >
-            <TabsList className="inline-flex w-auto">
-              <TabsTrigger value="details">
-                <Building2 className="h-4 w-4 mr-1.5" />
-                My Details
-              </TabsTrigger>
-              <TabsTrigger value="jobs">
-                <Briefcase className="h-4 w-4 mr-1.5" />
-                Job Postings
-              </TabsTrigger>
-              <TabsTrigger value="applicants">
-                <Users className="h-4 w-4 mr-1.5" />
-                Applicants
-              </TabsTrigger>
-              <TabsTrigger value="operations">
-                <LayoutDashboard className="h-4 w-4 mr-1.5" />
+          {/* Action cluster — bell + logout. Bell carries its own counter. */}
+          <div className="flex items-center gap-1">
+            <NotesNotificationButton facilityNumber={user.facilityNumber} />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground gap-1.5"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+              aria-label="Log out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">
+                {logoutMutation.isPending ? "Logging out…" : "Log out"}
+              </span>
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Tab strip ───────────────────────────────────────────────────
+         * Sits as its own sticky row underneath the top bar. Underline-style
+         * active state via .portal-tabs (defined in index.css). No icons in
+         * tab labels — the icons fought with the underline indicator and
+         * gave the strip a "toolbar" feel instead of "primary nav."
+         */}
+        <nav
+          aria-label="Facility portal sections"
+          className="portal-tabs px-4 lg:px-6 overflow-x-auto"
+        >
+          <TabsList className="inline-flex w-auto h-auto bg-transparent p-0">
+            <TabsTrigger value="details">My details</TabsTrigger>
+            <TabsTrigger value="jobs">Job postings</TabsTrigger>
+            <TabsTrigger value="applicants">Applicants</TabsTrigger>
+            <TabsTrigger value="operations">
+              <span className="inline-flex items-center gap-1.5">
                 Operations
                 {notesCount > 0 && (
                   <span
@@ -1143,122 +1165,126 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
                         ? `${notesCount} open notes, contains urgent`
                         : `${notesCount} open notes`
                     }
-                    className={
-                      "ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold " +
-                      (hasUrgentNote
-                        ? "bg-red-500 text-white"
-                        : "bg-muted text-foreground/80 border border-border")
-                    }
+                    className={cn(
+                      "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-medium portal-num",
+                      hasUrgentNote
+                        ? "bg-[var(--portal-status-critical)] text-white"
+                        : "bg-stone-100 text-stone-600 border border-stone-200"
+                    )}
                   >
                     {notesCount > 99 ? "99+" : notesCount}
                   </span>
                 )}
-              </TabsTrigger>
-            </TabsList>
-          </nav>
-        </div>
+              </span>
+            </TabsTrigger>
+          </TabsList>
+        </nav>
       </header>
 
-      <main className="flex-1 w-full max-w-xl mx-auto px-4 py-6">
-        <TabsContent value="details" className="mt-0">
-          {editingDetails ? (
-            <>
-              <p className="text-sm text-muted-foreground mb-4">
-                Update your contact information and facility description. These details will appear on your listing in the map.
-              </p>
-              <DetailsEditor
-                facilityNumber={user.facilityNumber}
-                overrides={publicData?.overrides ?? null}
-                onSaved={() => setEditingDetails(false)}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-3"
-                onClick={() => setEditingDetails(false)}
-              >
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">
-                  Your public listing details on the map.
-                </p>
-                <Button variant="outline" size="sm" onClick={() => setEditingDetails(true)}>
-                  <Edit3 className="h-3.5 w-3.5 mr-1.5" />
-                  Edit
+      {/* ── Page canvas ─────────────────────────────────────────────────
+       * Warm-neutral background distinguishes content from the white
+       * chrome above. Content tabs (details / jobs / applicants) inherit
+       * a disciplined reading width; Operations runs full-bleed.
+       */}
+      <main
+        className="flex-1 w-full"
+        style={{ background: "var(--portal-bg-canvas)" }}
+      >
+        <div className="max-w-3xl mx-auto px-4 lg:px-6 py-6">
+          <TabsContent value="details" className="mt-0">
+            {editingDetails ? (
+              <div className="rounded-lg border bg-white p-5" style={{ borderColor: "var(--portal-border-subtle)" }}>
+                <div className="mb-4">
+                  <h2 className="text-base font-semibold text-stone-900">Edit listing details</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    These appear on your public listing in the map.
+                  </p>
+                </div>
+                <DetailsEditor
+                  facilityNumber={user.facilityNumber}
+                  overrides={publicData?.overrides ?? null}
+                  onSaved={() => setEditingDetails(false)}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 -ml-3"
+                  onClick={() => setEditingDetails(false)}
+                >
+                  Cancel
                 </Button>
               </div>
-              <div className="rounded-lg border divide-y text-sm">
-                <div className="flex items-start gap-3 px-4 py-3">
-                  <span className="text-muted-foreground w-24 shrink-0">Phone</span>
-                  <span className={publicData?.overrides?.phone ? "font-medium" : "text-muted-foreground italic"}>
-                    {publicData?.overrides?.phone || "Not set"}
-                  </span>
+            ) : (
+              <div className="rounded-lg border bg-white" style={{ borderColor: "var(--portal-border-subtle)" }}>
+                <div
+                  className="px-5 py-4 flex items-center justify-between border-b"
+                  style={{ borderColor: "var(--portal-border-subtle)" }}
+                >
+                  <div>
+                    <h2 className="text-sm font-semibold text-stone-900">Listing details</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Public information on your map listing
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setEditingDetails(true)}>
+                    <Edit3 className="h-3.5 w-3.5 mr-1.5" />
+                    Edit
+                  </Button>
                 </div>
-                <div className="flex items-start gap-3 px-4 py-3">
-                  <span className="text-muted-foreground w-24 shrink-0">Email</span>
-                  <span className={publicData?.overrides?.email ? "font-medium" : "text-muted-foreground italic"}>
-                    {publicData?.overrides?.email || "Not set"}
-                  </span>
-                </div>
-                <div className="flex items-start gap-3 px-4 py-3">
-                  <span className="text-muted-foreground w-24 shrink-0">Website</span>
-                  <span className={publicData?.overrides?.website ? "font-medium" : "text-muted-foreground italic"}>
-                    {publicData?.overrides?.website || "Not set"}
-                  </span>
-                </div>
-                <div className="flex items-start gap-3 px-4 py-3">
-                  <span className="text-muted-foreground w-24 shrink-0">Description</span>
-                  <span className={publicData?.overrides?.description ? "" : "text-muted-foreground italic"}>
-                    {publicData?.overrides?.description || "Not set"}
-                  </span>
-                </div>
+                <dl className="text-sm divide-y" style={{ borderColor: "var(--portal-border-subtle)" }}>
+                  {[
+                    { label: "Phone",       value: publicData?.overrides?.phone },
+                    { label: "Email",       value: publicData?.overrides?.email },
+                    { label: "Website",     value: publicData?.overrides?.website },
+                    { label: "Description", value: publicData?.overrides?.description },
+                  ].map((row) => (
+                    <div
+                      key={row.label}
+                      className="flex items-start gap-4 px-5 py-3"
+                      style={{ borderColor: "var(--portal-border-subtle)" }}
+                    >
+                      <dt className="text-muted-foreground w-28 shrink-0 text-[13px]">
+                        {row.label}
+                      </dt>
+                      <dd className={cn(
+                        "min-w-0 flex-1 text-[13px]",
+                        row.value ? "text-stone-900" : "text-muted-foreground italic"
+                      )}>
+                        {row.value || "Not set"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="jobs" className="mt-0">
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-stone-900">Job postings</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Active postings surface your facility in the Hiring filter on the map.
+              </p>
             </div>
-          )}
-        </TabsContent>
+            <JobsManager facilityNumber={user.facilityNumber} />
+          </TabsContent>
 
-        <TabsContent value="jobs" className="mt-0">
-          <p className="text-sm text-muted-foreground mb-4">
-            Manage your job openings. Active postings will show your facility in the "Hiring" filter on the map.
-          </p>
-          <JobsManager facilityNumber={user.facilityNumber} />
-        </TabsContent>
+          <TabsContent value="applicants" className="mt-0">
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-stone-900">Applicants</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Job seekers who expressed interest. Update status as you review.
+              </p>
+            </div>
+            <ApplicantsTab />
+          </TabsContent>
+        </div>
 
-        {/* NEW: expression-of-interest */}
-        <TabsContent value="applicants" className="mt-0">
-          <p className="text-sm text-muted-foreground mb-4">
-            Job seekers who expressed interest in your facility. Update their status as you review profiles.
-          </p>
-          <ApplicantsTab />
-        </TabsContent>
-
+        {/* Operations runs full-bleed and supplies its own padding/canvas
+            so the embedded calendar can use the full viewport width. */}
         <TabsContent value="operations" className="mt-0">
-          {/* Operations is a dashboard, not a content card — break out of the
-              max-w-xl content well that wraps the other three tabs and run
-              full-bleed on a subtle gray surface. The background distinction
-              signals "dashboard mode" so the layout shift reads as intentional
-              rather than a missing container. */}
-          <div
-            style={{
-              width: '100vw',
-              position: 'relative',
-              left: '50%',
-              marginLeft: '-50vw',
-              paddingLeft: '1rem',
-              paddingRight: '1rem',
-              paddingTop: '1.5rem',
-              paddingBottom: '1.5rem',
-              background: '#F8FAFC', // slate-50 — quietly distinct from the white tabs
-              minHeight: 'calc(100vh - 200px)',
-            }}
-          >
-            <div className="max-w-7xl mx-auto">
-              <OperationsTab facilityNumber={user.facilityNumber} />
-            </div>
+          <div className="px-4 lg:px-6 pt-6 pb-8 max-w-[1440px] mx-auto">
+            <OperationsTab facilityNumber={user.facilityNumber} />
           </div>
         </TabsContent>
       </main>

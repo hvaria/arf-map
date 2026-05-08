@@ -239,15 +239,21 @@ export default function MapPage() {
                   />
                 </div>
                 {showAreaCta && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background/95 backdrop-blur-sm border border-border/60 shadow-md text-sm">
-                    <MapPin className="h-4 w-4 shrink-0 text-primary" />
-                    <span className="flex-1 leading-tight">
+                  <div
+                    className="flex items-center gap-2 px-3 py-2 rounded-md bg-white border text-[13px]"
+                    style={{
+                      borderColor: "var(--portal-border-subtle)",
+                      boxShadow: "var(--portal-shadow-card)",
+                    }}
+                  >
+                    <MapPin className="h-3.5 w-3.5 shrink-0 text-stone-500" />
+                    <span className="flex-1 leading-tight text-stone-700">
                       Showing all California facilities. Search your area for a faster view.
                     </span>
                     <button
                       type="button"
                       onClick={requestGeolocation}
-                      className="text-xs font-semibold px-2.5 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90 shrink-0"
+                      className="text-[12px] font-semibold px-2.5 py-1 rounded-md bg-[var(--portal-accent)] text-white hover:bg-[var(--portal-accent-hover)] shrink-0 transition-colors"
                       data-testid="cta-search-your-area"
                     >
                       Use my location
@@ -255,7 +261,7 @@ export default function MapPage() {
                     <button
                       type="button"
                       onClick={() => setAreaCtaDismissed(true)}
-                      className="text-xs text-muted-foreground hover:text-foreground shrink-0 px-1"
+                      className="text-stone-400 hover:text-stone-700 shrink-0 px-1 leading-none"
                       aria-label="Dismiss"
                     >
                       ×
@@ -339,7 +345,10 @@ export default function MapPage() {
         </div>
 
         {/* ── Right sidebar ── */}
-        <aside className="hidden md:flex flex-col w-80 shrink-0 border-l bg-background z-10">
+        <aside
+          className="hidden md:flex flex-col w-80 shrink-0 border-l bg-white z-10"
+          style={{ borderColor: "var(--portal-border-subtle)" }}
+        >
           {filters.search.trim() ? (
             <SearchResultsList
               facilities={facilities}
@@ -356,29 +365,57 @@ export default function MapPage() {
         </aside>
       </div>
 
-      {/* ── Role selection dialog ── */}
+      {/* ── Role selection dialog ──────────────────────────────────────
+       * Two-tile picker. Tiles use the standard 1px / 8px-radius card
+       * pattern and a soft neutral hover; the accent only appears on the
+       * icon when hovered, so the panel doesn't shout in orange.
+       */}
       <Dialog open={loginDialogOpen} onOpenChange={setLoginDialogOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Welcome — who are you?</DialogTitle>
-            <DialogDescription>Choose your portal to continue.</DialogDescription>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader className="text-left">
+            <DialogTitle className="text-[17px] font-semibold text-stone-900">
+              Welcome
+            </DialogTitle>
+            <DialogDescription className="text-[13px] text-muted-foreground">
+              Choose how you'd like to use Neighbourhood Care Finder.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3 pt-2">
             <a href="/#/job-seeker" onClick={() => setLoginDialogOpen(false)}>
-              <button className="w-full flex flex-col items-center gap-3 rounded-xl border-2 border-border hover:border-primary hover:bg-primary/5 p-5 transition-all text-center group">
-                <Briefcase className="h-8 w-8 text-muted-foreground group-hover:text-primary transition-colors" />
+              <button
+                className="w-full flex flex-col items-start gap-4 rounded-lg border bg-white p-4 transition-colors text-left group hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                style={{ borderColor: "var(--portal-border-subtle)" }}
+              >
+                <span
+                  className="h-9 w-9 rounded-md flex items-center justify-center bg-stone-100 text-stone-600 group-hover:bg-[var(--portal-accent-soft)] group-hover:text-[var(--portal-accent)] transition-colors"
+                  aria-hidden="true"
+                >
+                  <Briefcase className="h-4 w-4" />
+                </span>
                 <div>
-                  <p className="font-semibold text-sm">Job Seeker</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Browse &amp; apply for positions</p>
+                  <p className="font-semibold text-[14px] text-stone-900 leading-none">Job seeker</p>
+                  <p className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
+                    Browse and apply for open positions.
+                  </p>
                 </div>
               </button>
             </a>
             <a href="/#/facility-portal" onClick={() => setLoginDialogOpen(false)}>
-              <button className="w-full flex flex-col items-center gap-3 rounded-xl border-2 border-border hover:border-primary hover:bg-primary/5 p-5 transition-all text-center group">
-                <Building2 className="h-8 w-8 text-muted-foreground group-hover:text-primary transition-colors" />
+              <button
+                className="w-full flex flex-col items-start gap-4 rounded-lg border bg-white p-4 transition-colors text-left group hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                style={{ borderColor: "var(--portal-border-subtle)" }}
+              >
+                <span
+                  className="h-9 w-9 rounded-md flex items-center justify-center bg-stone-100 text-stone-600 group-hover:bg-[var(--portal-accent-soft)] group-hover:text-[var(--portal-accent)] transition-colors"
+                  aria-hidden="true"
+                >
+                  <Building2 className="h-4 w-4" />
+                </span>
                 <div>
-                  <p className="font-semibold text-sm">Facility Portal</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Manage your listing</p>
+                  <p className="font-semibold text-[14px] text-stone-900 leading-none">Facility portal</p>
+                  <p className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
+                    Manage your listing and run daily operations.
+                  </p>
                 </div>
               </button>
             </a>

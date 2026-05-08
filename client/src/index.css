@@ -1,28 +1,84 @@
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Nunito:wght@700;800;900&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ── Portal Pastel Design System ── */
+/* ── Portal design system ──────────────────────────────────────────────────
+ * Healthcare ops SaaS palette — neutral surfaces with one terracotta accent.
+ * No gradients, no decorative pastels. Status colors are muted and semantic.
+ * The brand mark itself (BrandLogo) keeps Nunito + the warm orange identity;
+ * everything else in the UI uses Inter on neutral surfaces.
+ *
+ * Backwards-compatibility: legacy --color-* tokens remain as aliases so any
+ * stray references resolve to the new system rather than crashing.
+ * -------------------------------------------------------------------------- */
 :root {
-  --color-bg-base: #FFFFFF;
-  --color-bg-surface: #F0F4FF;
-  --color-bg-gradient-start: #EEF2FF;
-  --color-bg-gradient-end: #FFF0F6;
-  --color-primary: #818CF8;
-  --color-primary-hover: #6366F1;
-  --color-secondary: #F9A8D4;
-  --color-accent: #6EE7B7;
-  --color-accent-blue: #93C5FD;
-  --color-text-primary: #1E1B4B;
-  --color-text-muted: #6B7280;
-  --color-border: #E0E7FF;
-  --color-success: #BBF7D0;
-  --color-warning: #FDE68A;
-  --color-badge-active: #D1FAE5;
-  --color-badge-discharged: #FEE2E2;
-  --color-badge-on-leave: #FEF9C3;
+  /* Surfaces */
+  --portal-bg-app:      #FFFFFF;
+  --portal-bg-canvas:   #FAFAF9;
+  --portal-bg-elev-1:   #FFFFFF;
+  --portal-bg-elev-2:   #F5F5F4;
+
+  /* Borders */
+  --portal-border-subtle: #E7E5E4;
+  --portal-border-strong: #D6D3D1;
+
+  /* Text */
+  --portal-text-primary:   #1C1917;
+  --portal-text-secondary: #57534E;
+  --portal-text-muted:     #A8A29E;
+
+  /* Accent (single, restrained) — anchored to NCF brand terracotta */
+  --portal-accent:        #C25A2E;
+  --portal-accent-hover:  #A8501F;
+  --portal-accent-fg:     #FFFFFF;
+  --portal-accent-soft:   #FBEEE5;
+  --portal-accent-ring:   rgba(194, 90, 46, 0.32);
+
+  /* Status — muted, semantic */
+  --portal-status-critical:        #B91C1C;
+  --portal-status-critical-bg:     #FEF2F2;
+  --portal-status-critical-border: #FECACA;
+  --portal-status-warning:         #A16207;
+  --portal-status-warning-bg:      #FEFCE8;
+  --portal-status-warning-border:  #FDE68A;
+  --portal-status-ok:              #15803D;
+  --portal-status-ok-bg:           #F0FDF4;
+  --portal-status-ok-border:       #BBF7D0;
+  --portal-status-info:            #57534E;
+  --portal-status-info-bg:         #F5F5F4;
+  --portal-status-info-border:     #E7E5E4;
+
+  /* Elevation — at most one card-level shadow, nothing more */
+  --portal-shadow-card:
+    0 1px 2px rgba(28, 25, 23, 0.04),
+    0 1px 1px rgba(28, 25, 23, 0.03);
+
+  /* Radii */
+  --portal-radius-xs: 4px;
+  --portal-radius-sm: 6px;
+  --portal-radius-md: 8px;
+  --portal-radius-lg: 12px;
+
+  /* Legacy aliases — retained so any unmigrated references keep resolving. */
+  --color-bg-base: var(--portal-bg-app);
+  --color-bg-surface: var(--portal-bg-canvas);
+  --color-bg-gradient-start: var(--portal-bg-canvas);
+  --color-bg-gradient-end: var(--portal-bg-canvas);
+  --color-primary: var(--portal-accent);
+  --color-primary-hover: var(--portal-accent-hover);
+  --color-secondary: var(--portal-bg-elev-2);
+  --color-accent: var(--portal-accent-soft);
+  --color-accent-blue: var(--portal-bg-elev-2);
+  --color-text-primary: var(--portal-text-primary);
+  --color-text-muted: var(--portal-text-secondary);
+  --color-border: var(--portal-border-subtle);
+  --color-success: var(--portal-status-ok-border);
+  --color-warning: var(--portal-status-warning-border);
+  --color-badge-active: var(--portal-status-ok-bg);
+  --color-badge-discharged: var(--portal-status-critical-bg);
+  --color-badge-on-leave: var(--portal-status-warning-bg);
 }
 
 /* ── Neighbourhood Care Finder brand variables ── */
@@ -68,50 +124,62 @@ html, body {
   padding-bottom: var(--safe-bottom);
 }
 
-/* LIGHT MODE */
+/* LIGHT MODE — shadcn token bridge.
+ * Re-pointed at the portal palette above so every existing shadcn primitive
+ * (Card, Button, Badge, Input, Select, Tabs) inherits the new look without
+ * touching component code. Stone-warm neutrals keep continuity with the
+ * terracotta brand mark; cool blue-grays would clash with it.
+ */
 :root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
+  --button-outline: rgba(28, 25, 23, .10);
+  --badge-outline: rgba(28, 25, 23, .05);
   --opaque-button-border-intensity: -8;
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
-  --background: 0 0% 100%;
-  --foreground: 0 0% 9%;
-  --border: 0 0% 91%;
-  --card: 0 0% 98%;
-  --card-foreground: 0 0% 9%;
-  --card-border: 0 0% 94%;
-  --sidebar: 0 0% 96%;
-  --sidebar-foreground: 0 0% 9%;
-  --sidebar-border: 0 0% 92%;
-  --sidebar-primary: 199 89% 32%;
-  --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 0 0% 89%;
-  --sidebar-accent-foreground: 0 0% 9%;
-  --sidebar-ring: 199 89% 32%;
-  --popover: 0 0% 95%;
-  --popover-foreground: 0 0% 9%;
-  --popover-border: 0 0% 91%;
-  --primary: 20 72% 52%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 0 0% 92%;
-  --secondary-foreground: 0 0% 9%;
-  --muted: 0 0% 93%;
-  --muted-foreground: 0 0% 40%;
-  --accent: 220 14% 92%;
-  --accent-foreground: 0 0% 9%;
-  --destructive: 0 84% 42%;
-  --destructive-foreground: 0 0% 98%;
-  --input: 0 0% 75%;
-  --ring: 20 72% 52%;
-  --chart-1: 199 89% 35%;
-  --chart-2: 262 83% 48%;
-  --chart-3: 173 58% 39%;
-  --chart-4: 43 74% 49%;
-  --chart-5: 27 87% 55%;
-  --font-sans: 'Nunito', 'Inter', 'Helvetica Neue', sans-serif;
+  --elevate-1: rgba(28, 25, 23, .03);
+  --elevate-2: rgba(28, 25, 23, .06);
+
+  /* Surfaces — stone neutrals */
+  --background: 60 9% 100%;        /* #FFFFFF */
+  --foreground: 24 10% 10%;        /* #1C1917 */
+  --border: 20 6% 90%;             /* #E7E5E4 */
+  --card: 0 0% 100%;
+  --card-foreground: 24 10% 10%;
+  --card-border: 20 6% 90%;
+  --sidebar: 60 5% 98%;            /* #FAFAF9 */
+  --sidebar-foreground: 24 10% 10%;
+  --sidebar-border: 20 6% 90%;
+  --sidebar-primary: 17 62% 47%;   /* terracotta */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 60 5% 96%;
+  --sidebar-accent-foreground: 24 10% 10%;
+  --sidebar-ring: 17 62% 47%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 24 10% 10%;
+  --popover-border: 20 6% 90%;
+
+  /* Brand accent — terracotta as primary, deeper than before so it reads as
+     intentional rather than a faded marketing peach. */
+  --primary: 17 62% 47%;            /* #C25A2E */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 5% 96%;           /* #F5F5F4 */
+  --secondary-foreground: 24 10% 18%;
+  --muted: 60 5% 96%;
+  --muted-foreground: 25 5% 35%;    /* #57534E */
+  --accent: 60 5% 96%;              /* neutral hover surface */
+  --accent-foreground: 24 10% 10%;
+  --destructive: 0 73% 41%;         /* #B91C1C */
+  --destructive-foreground: 0 0% 100%;
+  --input: 20 6% 84%;               /* #D6D3D1 */
+  --ring: 17 62% 47%;
+
+  /* Charts — kept distinct but desaturated to the new system. */
+  --chart-1: 17 62% 47%;
+  --chart-2: 25 5% 35%;
+  --chart-3: 142 45% 33%;
+  --chart-4: 38 64% 33%;
+  --chart-5: 0 73% 41%;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Helvetica Neue', sans-serif;
   --font-serif: Georgia, serif;
-  --font-mono: Menlo, monospace;
+  --font-mono: 'SF Mono', Menlo, Consolas, monospace;
   --radius: .5rem;
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
@@ -353,80 +421,162 @@ html, body {
   }
 }
 
-/* ── Brand: global typography ── */
+/* ── Typography ────────────────────────────────────────────────────────────
+ * Body uses Inter — disciplined, neutral, dense at small sizes. Headings
+ * inherit the body font and only differ by weight/size; the previous global
+ * rule forced every h1–h6 to weight 800 in brand orange, which made every
+ * heading shout and erased hierarchy.
+ *
+ * The brand mark (BrandLogo) keeps Nunito via tailwind utilities; we don't
+ * apply it globally here.
+ */
 body {
-  font-family: 'Nunito', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--portal-text-primary);
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Nunito', sans-serif;
-  color: var(--brand-text-heading);
-  font-weight: 800;
+  font-family: inherit;
+  color: inherit;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
+/* Links default to neutral; routes that want the accent can opt in. */
 a {
-  color: var(--brand-primary);
+  color: inherit;
   text-decoration: none;
 }
 a:hover {
-  color: var(--brand-primary-deep);
+  color: var(--portal-accent);
 }
 
-/* ── Brand: search input ── */
+/* ── Search bar (map page) — keeps the warm rounded character of the brand
+ * surface where it lives, but no longer inherits a peach placeholder. */
 [data-testid="search-bar"] input {
   border: 1px solid var(--brand-border-strong);
   border-radius: 20px;
 }
 [data-testid="search-bar"] input::placeholder {
-  color: #C9A68E;
+  color: var(--portal-text-muted);
 }
 
-/* ── Brand: map tooltip font ── */
 .facility-tooltip .maplibregl-popup-content {
-  font-family: 'Nunito', sans-serif;
+  font-family: inherit;
 }
 
-/* ── Portal pastel tab styles (data-state selectors avoid touching shadcn internals) ── */
+/* ── Tabs ──────────────────────────────────────────────────────────────────
+ * Underline-style active state. No gradient, no rounded-pill background.
+ * The .portal-tabs class is retained so existing markup continues to opt in,
+ * but it now produces calm, professional nav.
+ */
 .portal-tabs [role="tablist"] {
-  border-bottom: 2px solid #E0E7FF;
+  border-bottom: 1px solid var(--portal-border-subtle);
   background: transparent;
+  padding: 0;
+  gap: 4px;
+  height: auto;
 }
 
-.portal-tabs [role="tab"][data-state="active"] {
-  background: linear-gradient(90deg, #818CF8, #F9A8D4);
-  color: #ffffff;
-  border-radius: 6px;
-}
-
-.portal-tabs [role="tab"][data-state="inactive"] {
-  background: #F8FAFC;
-  color: #6B7280;
+.portal-tabs [role="tab"] {
+  position: relative;
+  padding: 10px 14px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--portal-text-secondary);
+  font-weight: 500;
+  font-size: 13px;
+  height: auto;
+  transition: color 120ms ease;
 }
 
 .portal-tabs [role="tab"]:hover[data-state="inactive"] {
-  background: #EEF2FF;
-  color: #1E1B4B;
+  background: transparent;
+  color: var(--portal-text-primary);
 }
 
-/* ── Portal facility header card gradient ── */
+.portal-tabs [role="tab"][data-state="active"] {
+  background: transparent;
+  color: var(--portal-text-primary);
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.portal-tabs [role="tab"][data-state="active"]::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--portal-accent);
+  border-radius: 2px 2px 0 0;
+}
+
+/* ── Portal facility card / button helpers ────────────────────────────────
+ * These class names are referenced from existing markup. They're now plain
+ * neutral surfaces — the gradient versions are gone. The Button gradient
+ * variant maps to the standard primary button.
+ */
 .portal-facility-card {
-  background: linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%);
-  border: 1px solid #E0E7FF;
-  border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(129, 140, 248, 0.08);
+  background: var(--portal-bg-elev-1);
+  border: 1px solid var(--portal-border-subtle);
+  border-radius: var(--portal-radius-md);
+  box-shadow: var(--portal-shadow-card);
 }
 
-/* ── Portal primary button gradient ── */
 .portal-btn-primary {
-  background-color: #818CF8;
-  background: linear-gradient(135deg, #818CF8, #F9A8D4);
-  color: #ffffff;
-  border-radius: 10px;
-  border: none;
+  background: var(--portal-accent);
+  color: var(--portal-accent-fg);
+  border: 1px solid var(--portal-accent);
+  border-radius: var(--portal-radius-sm);
+}
+.portal-btn-primary:hover {
+  background: var(--portal-accent-hover);
+  border-color: var(--portal-accent-hover);
+  color: var(--portal-accent-fg);
 }
 
-.portal-btn-primary:hover {
-  background-color: #6366F1;
-  background: linear-gradient(135deg, #6366F1, #F472B6);
-  color: #ffffff;
+/* ── Reusable section header primitive ────────────────────────────────────
+ * Pairs a subheading + counter chip + optional trailing action in a single
+ * row with consistent spacing. Used by both card-internal headers and
+ * standalone section titles.
+ */
+.portal-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--portal-border-subtle);
+}
+.portal-section-header__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--portal-text-primary);
+  letter-spacing: -0.005em;
+}
+
+/* ── Eyebrow / caption utility ─────────────────────────────────────────────
+ * Replaces the ad-hoc `text-[10px] font-semibold uppercase tracking-wider`
+ * combinations sprinkled across OperationsTab.
+ */
+.portal-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--portal-text-secondary);
+}
+
+/* Tabular numerals for any element with this class — used on counts. */
+.portal-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }

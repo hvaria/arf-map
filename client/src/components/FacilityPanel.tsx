@@ -62,11 +62,14 @@ interface PublicData {
   jobPostings: DbJobPosting[];
 }
 
-const STATUS_CONFIG: Record<string, { color: string; bgClass: string; textClass: string }> = {
-  LICENSED:     { color: "#22c55e", bgClass: "bg-green-100 dark:bg-green-950",  textClass: "text-green-700 dark:text-green-300"  },
-  CLOSED:       { color: "#ef4444", bgClass: "bg-red-100 dark:bg-red-950",      textClass: "text-red-700 dark:text-red-300"      },
-  PENDING:      { color: "#f59e0b", bgClass: "bg-amber-100 dark:bg-amber-950",  textClass: "text-amber-700 dark:text-amber-300"  },
-  "ON PROBATION":{ color: "#a855f7",bgClass: "bg-purple-100 dark:bg-purple-950",textClass: "text-purple-700 dark:text-purple-300"},
+// Status palette — uses the portal status tokens so the panel sits in the
+// same visual family as the rest of the system. The dot stays saturated
+// for legibility; the chip background is a soft tinted surface.
+const STATUS_CONFIG: Record<string, { dot: string; chip: string }> = {
+  LICENSED:       { dot: "#15803D", chip: "bg-[var(--portal-status-ok-bg)] text-[var(--portal-status-ok)] border-[var(--portal-status-ok-border)]" },
+  CLOSED:         { dot: "#B91C1C", chip: "bg-[var(--portal-status-critical-bg)] text-[var(--portal-status-critical)] border-[var(--portal-status-critical-border)]" },
+  PENDING:        { dot: "#A16207", chip: "bg-[var(--portal-status-warning-bg)] text-[var(--portal-status-warning)] border-[var(--portal-status-warning-border)]" },
+  "ON PROBATION": { dot: "#A16207", chip: "bg-[var(--portal-status-warning-bg)] text-[var(--portal-status-warning)] border-[var(--portal-status-warning-border)]" },
 };
 
 const MIN_VH = 18;
@@ -174,49 +177,53 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
         onTouchStart={(e) => startDrag(e.touches[0].clientY)}
       >
         <div className={cn(
-          "w-10 h-1.5 rounded-full transition-colors",
-          dragging ? "bg-primary/50" : "bg-muted-foreground/25 hover:bg-muted-foreground/45"
+          "w-10 h-1 rounded-full transition-colors",
+          dragging ? "bg-stone-500" : "bg-stone-300 hover:bg-stone-400"
         )} />
-        <span className="text-[10px] text-muted-foreground/40 mt-0.5 select-none">drag to resize</span>
+        <span className="text-[10px] text-muted-foreground/50 mt-1 select-none">drag to resize</span>
       </div>
 
       {/* ── Header ── */}
-      <div className="shrink-0 px-4 pb-2">
+      <div className="shrink-0 px-4 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold leading-tight truncate" data-testid="text-facility-name">
+            <h2
+              className="text-[15px] font-semibold leading-tight text-stone-900 truncate"
+              data-testid="text-facility-name"
+            >
               {facility.name}
             </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">License #{facility.number}</p>
+            <p className="text-[12px] text-muted-foreground mt-0.5 portal-num">
+              License #{facility.number}
+            </p>
           </div>
           <Button
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="shrink-0 -mr-1 -mt-0.5 h-7 w-7"
+            className="shrink-0 -mr-1 h-8 w-8 text-muted-foreground hover:text-foreground"
             data-testid="button-close-panel"
+            aria-label="Close panel"
           >
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-1.5 mt-1.5">
+        <div className="flex flex-wrap gap-1.5 mt-2">
           <Badge
-            className={cn("text-xs font-medium px-2 py-0.5", statusConfig.bgClass, statusConfig.textClass)}
+            className={cn("text-[11px] font-medium px-2 py-0.5 gap-1", statusConfig.chip)}
             variant="outline"
           >
-            <span className="w-1.5 h-1.5 rounded-full mr-1 inline-block" style={{ backgroundColor: statusConfig.color }} />
+            <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: statusConfig.dot }} />
             {facility.status}
           </Badge>
           {facility.facilityType && (() => {
-            // Resolve to taxonomy entry for a friendlier display label; fall
-            // back to the raw stored type when no match (legacy rows).
             const entry = normalizeRawType(facility.facilityType);
             const label = entry?.displayLabel ?? facility.facilityType;
             return (
               <Badge
                 variant="outline"
-                className="text-xs px-2 py-0.5 text-muted-foreground"
+                className="text-[11px] px-2 py-0.5 text-muted-foreground bg-stone-50 border-stone-200"
                 title={entry?.officialLabel ?? facility.facilityType}
               >
                 {label}
@@ -224,22 +231,22 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
             );
           })()}
           {facility.capacity > 0 && (
-            <Badge variant="secondary" className="text-xs px-2 py-0.5">
+            <Badge variant="outline" className="text-[11px] px-2 py-0.5 text-muted-foreground bg-stone-50 border-stone-200 portal-num">
               {facility.capacity} beds
             </Badge>
           )}
           {isHiring && (
             <Badge
-              className="text-xs font-medium px-2 py-0.5 bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
               variant="outline"
+              className="text-[11px] font-medium px-2 py-0.5 gap-1 bg-[var(--portal-accent-soft)] text-[var(--portal-accent)] border-[var(--portal-status-warning-border)]"
             >
-              <Briefcase className="h-3 w-3 mr-1" />
-              Hiring · {displayJobs.length}
+              <Briefcase className="h-3 w-3" />
+              Hiring · <span className="portal-num">{displayJobs.length}</span>
             </Badge>
           )}
           {distanceMiles !== null && (
-            <Badge variant="outline" className="text-xs px-2 py-0.5 text-muted-foreground">
-              <MapPin className="h-2.5 w-2.5 mr-1" />
+            <Badge variant="outline" className="text-[11px] px-2 py-0.5 text-muted-foreground bg-stone-50 border-stone-200 gap-1 portal-num">
+              <MapPin className="h-2.5 w-2.5" />
               {distanceMiles.toFixed(1)} mi away
             </Badge>
           )}
@@ -315,11 +322,26 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
               <StatCard label="Total"      value={facility.totalTypeB}   alert={facility.totalTypeB > 0} large />
             </div>
             {facility.citations && (
-              <div className="mt-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 mb-1">
-                  <AlertTriangle className="h-3.5 w-3.5" />Citations
+              <div
+                className="mt-2 p-3 rounded-md border"
+                style={{
+                  background: "var(--portal-status-warning-bg)",
+                  borderColor: "var(--portal-status-warning-border)",
+                }}
+              >
+                <div
+                  className="flex items-center gap-1.5 text-[12px] font-medium mb-1"
+                  style={{ color: "var(--portal-status-warning)" }}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Citations
                 </div>
-                <p className="text-xs text-amber-900 dark:text-amber-200 break-all leading-relaxed">{facility.citations}</p>
+                <p
+                  className="text-[12px] break-all leading-relaxed"
+                  style={{ color: "var(--portal-status-warning)" }}
+                >
+                  {facility.citations}
+                </p>
               </div>
             )}
           </Section>
@@ -350,9 +372,11 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
           {isOwner && (
             <a
               href="/#/facility-portal"
-              className="flex items-center justify-center gap-2 w-full p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100 transition-colors"
+              className="flex items-center justify-center gap-2 w-full px-3 py-2.5 rounded-md border bg-[var(--portal-accent-soft)] text-[var(--portal-accent)] text-[13px] font-medium hover:bg-[var(--portal-accent-soft)] hover:brightness-95 transition-colors"
+              style={{ borderColor: "var(--portal-status-warning-border)" }}
             >
-              <Pencil className="h-4 w-4" />Manage This Listing
+              <Pencil className="h-3.5 w-3.5" />
+              Manage this listing
             </a>
           )}
 
@@ -360,13 +384,15 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
             href={ccldUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 w-full p-3 rounded-lg border text-sm font-medium text-primary hover:bg-accent transition-colors"
+            className="flex items-center justify-center gap-2 w-full px-3 py-2.5 rounded-md border bg-white text-stone-700 text-[13px] font-medium hover:bg-stone-50 transition-colors"
+            style={{ borderColor: "var(--portal-border-subtle)" }}
             data-testid="link-ccld"
           >
-            <ExternalLink className="h-4 w-4" />View on CCLD Website
+            <ExternalLink className="h-3.5 w-3.5" />
+            View on CCLD website
           </a>
 
-          <p className="text-xs text-muted-foreground text-center leading-relaxed pb-2">
+          <p className="text-[11px] text-muted-foreground text-center leading-relaxed pb-2">
             Data from CA Community Care Licensing Division · March 2026
           </p>
         </div>
@@ -380,19 +406,19 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">{title}</h3>
-      <div className="space-y-1.5">{children}</div>
+      <h3 className="portal-eyebrow mb-2">{title}</h3>
+      <div className="space-y-2">{children}</div>
     </div>
   );
 }
 
 function InfoRow({ icon: Icon, label, children }: { icon: any; label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-2">
-      <Icon className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
-      <div className="min-w-0">
-        <span className="text-[10px] text-muted-foreground">{label}</span>
-        <p className="text-xs text-foreground leading-snug">{children}</p>
+    <div className="flex items-start gap-2.5">
+      <Icon className="h-3.5 w-3.5 text-stone-400 mt-1 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <span className="text-[11px] text-muted-foreground block leading-none mb-0.5">{label}</span>
+        <p className="text-[13px] text-stone-900 leading-snug">{children}</p>
       </div>
     </div>
   );
@@ -400,11 +426,29 @@ function InfoRow({ icon: Icon, label, children }: { icon: any; label: string; ch
 
 function StatCard({ label, value, alert, large }: { label: string; value: number; alert?: boolean; large?: boolean }) {
   return (
-    <div className={cn("rounded-lg border p-2 text-center", alert ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30" : "bg-muted/30")}>
-      <div className={cn("font-semibold", large ? "text-lg" : "text-base", alert ? "text-red-600 dark:text-red-400" : "text-foreground")}>
+    <div
+      className={cn(
+        "rounded-md border p-2.5 text-center transition-colors",
+        alert
+          ? "bg-[var(--portal-status-critical-bg)]"
+          : "bg-stone-50",
+      )}
+      style={{
+        borderColor: alert
+          ? "var(--portal-status-critical-border)"
+          : "var(--portal-border-subtle)",
+      }}
+    >
+      <div
+        className={cn(
+          "font-semibold portal-num leading-none",
+          large ? "text-[18px]" : "text-[15px]",
+          alert ? "text-[var(--portal-status-critical)]" : "text-stone-900",
+        )}
+      >
         {value}
       </div>
-      <div className="text-[10px] text-muted-foreground mt-0.5">{label}</div>
+      <div className="text-[11px] text-muted-foreground mt-1">{label}</div>
     </div>
   );
 }
@@ -412,26 +456,39 @@ function StatCard({ label, value, alert, large }: { label: string; value: number
 function JobCard({ job }: { job: JobPosting }) {
   const daysLabel = job.postedDaysAgo === 0 ? "Today" : job.postedDaysAgo === 1 ? "1 day ago" : `${job.postedDaysAgo} days ago`;
   return (
-    <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30 p-2.5">
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <div>
-          <h4 className="text-xs font-semibold">{job.title}</h4>
-          <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">{job.type}</span>
+    <div
+      className="rounded-md border bg-white p-3"
+      style={{ borderColor: "var(--portal-border-subtle)" }}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <div className="min-w-0">
+          <h4 className="text-[13px] font-semibold text-stone-900 truncate">{job.title}</h4>
+          <span className="text-[11px] text-muted-foreground">{job.type}</span>
         </div>
-        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
-          <DollarSign className="h-2.5 w-2.5 mr-0.5" />{job.salary}
+        <Badge
+          variant="outline"
+          className="text-[11px] px-1.5 py-0.5 portal-num bg-stone-50 text-stone-700 border-stone-200 gap-0.5"
+        >
+          <DollarSign className="h-3 w-3" />
+          {job.salary}
         </Badge>
       </div>
-      <p className="text-[10px] text-muted-foreground leading-relaxed mb-1.5">{job.description}</p>
-      <div className="flex flex-wrap gap-1 mb-1">
-        {job.requirements.map((req, i) => (
-          <span key={i} className="inline-flex items-center gap-0.5 text-[9px] bg-background/80 border rounded-full px-1.5 py-0.5 text-muted-foreground">
-            <CheckCircle2 className="h-2 w-2 text-green-500" />{req}
-          </span>
-        ))}
-      </div>
-      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-        <Clock className="h-2.5 w-2.5" />Posted {daysLabel}
+      <p className="text-[12px] text-muted-foreground leading-relaxed mb-2 line-clamp-2">{job.description}</p>
+      {job.requirements.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {job.requirements.map((req, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 text-[11px] bg-stone-50 border rounded-full px-2 py-0.5 text-stone-600"
+              style={{ borderColor: "var(--portal-border-subtle)" }}
+            >
+              <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600" />{req}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1 text-[11px] text-muted-foreground portal-num">
+        <Clock className="h-3 w-3" />Posted {daysLabel}
       </div>
     </div>
   );

@@ -46,8 +46,8 @@ import {
 import {
   Users, Pill, ClipboardList, AlertTriangle,
   UserPlus, Receipt, ShieldCheck,
-  MessageSquare, Bell, ArrowRight, Clock, Sparkles,
-  CheckCircle2, Inbox, UserCog, Keyboard, TrendingUp,
+  MessageSquare, Bell, ArrowRight, Clock,
+  CheckCircle2, Inbox, UserCog, Keyboard,
   Calendar as CalendarIcon, Activity,
 } from "lucide-react";
 import { ResidentsContent } from "@/components/operations/ResidentsContent";
@@ -278,11 +278,14 @@ function worstTone(...tones: Tone[]): Tone {
   return tones.reduce<Tone>((acc, t) => (TONE_RANK[t] > TONE_RANK[acc] ? t : acc), "ok");
 }
 
-const TONE_STYLES: Record<KpiTile["tone"], { border: string; iconBg: string; subtitle: string }> = {
-  ok:     { border: "border-l-emerald-500", iconBg: "bg-emerald-100 text-emerald-700", subtitle: "text-emerald-700" },
-  info:   { border: "border-l-indigo-500",  iconBg: "bg-indigo-100  text-indigo-700",  subtitle: "text-indigo-700"  },
-  warn:   { border: "border-l-amber-500",   iconBg: "bg-amber-100   text-amber-700",   subtitle: "text-amber-700"   },
-  danger: { border: "border-l-red-500",     iconBg: "bg-red-100     text-red-700",     subtitle: "text-red-700"     },
+// KPI tones — applied only to the *count* and the status dot, never to the
+// card border or an icon bubble. The previous design painted the whole card
+// with a category color which made the row read as a barcode.
+const TONE_STYLES: Record<KpiTile["tone"], { value: string; dot: string }> = {
+  ok:     { value: "text-stone-900", dot: "bg-emerald-500" },
+  info:   { value: "text-stone-900", dot: "bg-stone-300"   },
+  warn:   { value: "text-amber-800", dot: "bg-amber-500"   },
+  danger: { value: "text-red-700",   dot: "bg-red-500"     },
 };
 
 function KpiCard({
@@ -297,31 +300,33 @@ function KpiCard({
   const t = TONE_STYLES[tile.tone];
   const Icon = tile.icon;
   return (
-    <Card
-      className={cn(
-        "border-l-4 transition-all hover:shadow-md hover:-translate-y-0.5",
-        t.border,
-      )}
-    >
-      <CardContent className="p-3.5">
+    <Card className="transition-colors hover:bg-stone-50/50">
+      <CardContent className="p-4">
         <button
           onClick={onClick}
-          className="text-left w-full flex items-center gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 rounded-md"
+          className="text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md"
           aria-label={`${tile.label}: ${tile.count}. ${tile.subtitle}`}
         >
-          <div className={cn("h-10 w-10 rounded-full flex items-center justify-center shrink-0", t.iconBg)}>
-            <Icon className="h-5 w-5" />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] font-medium text-muted-foreground inline-flex items-center gap-1.5">
+              <Icon className="h-3.5 w-3.5 text-stone-400" />
+              {tile.label}
+            </span>
+            <span
+              className={cn("h-1.5 w-1.5 rounded-full", t.dot)}
+              aria-hidden="true"
+            />
           </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-2xl font-bold tabular-nums leading-none">{tile.count}</p>
-            <p className="text-xs text-muted-foreground leading-tight mt-1">{tile.label}</p>
-            <p className={cn("text-[10px] font-medium leading-tight mt-0.5 truncate", t.subtitle)}>
-              {tile.subtitle}
-            </p>
-          </div>
+          <p className={cn("text-[26px] font-semibold portal-num leading-none mt-3", t.value)}>
+            {tile.count}
+          </p>
+          <p className="text-[12px] text-muted-foreground leading-snug mt-1.5 truncate">
+            {tile.subtitle}
+          </p>
         </button>
         {tile.chips && tile.chips.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-1.5">
+          <div className="mt-3 pt-3 border-t flex flex-wrap gap-1.5"
+               style={{ borderColor: "var(--portal-border-subtle)" }}>
             {tile.chips.map((c) => (
               <button
                 key={c.label}
@@ -329,7 +334,8 @@ function KpiCard({
                   e.stopPropagation();
                   onChipClick?.(c.subView);
                 }}
-                className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-white text-muted-foreground hover:bg-gray-50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 tabular-nums"
+                className="text-[11px] px-2 py-0.5 rounded border bg-white text-muted-foreground hover:bg-stone-50 hover:text-stone-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary portal-num"
+                style={{ borderColor: "var(--portal-border-subtle)" }}
               >
                 {c.label}
               </button>
@@ -344,13 +350,10 @@ function KpiCard({
 function KpiSkeleton() {
   return (
     <Card>
-      <CardContent className="p-3.5 flex items-center gap-3">
-        <Skeleton className="h-10 w-10 rounded-full" />
-        <div className="space-y-1.5 flex-1">
-          <Skeleton className="h-6 w-10" />
-          <Skeleton className="h-3 w-24" />
-          <Skeleton className="h-2.5 w-16" />
-        </div>
+      <CardContent className="p-4 space-y-3">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-7 w-12" />
+        <Skeleton className="h-3 w-32" />
       </CardContent>
     </Card>
   );
@@ -359,10 +362,10 @@ function KpiSkeleton() {
 // ── Alerts & Exceptions ──────────────────────────────────────────────────────
 
 const URGENCY_BADGE: Record<Urgency, string> = {
-  overdue:     "bg-red-100   text-red-700   border-red-200",
-  approaching: "bg-amber-100 text-amber-800 border-amber-200",
-  open:        "bg-orange-100 text-orange-700 border-orange-200",
-  scheduled:   "bg-slate-100 text-slate-600  border-slate-200",
+  overdue:     "bg-[var(--portal-status-critical-bg)] text-[var(--portal-status-critical)] border-[var(--portal-status-critical-border)]",
+  approaching: "bg-[var(--portal-status-warning-bg)]  text-[var(--portal-status-warning)]  border-[var(--portal-status-warning-border)]",
+  open:        "bg-[var(--portal-accent-soft)]        text-[var(--portal-accent)]          border-[var(--portal-status-warning-border)]",
+  scheduled:   "bg-stone-50 text-stone-600 border-stone-200",
 };
 
 const URGENCY_LABEL: Record<Urgency, string> = {
@@ -381,31 +384,32 @@ function AlertRow({
 }) {
   const Icon = alert.icon;
   return (
-    <li className="group flex items-center gap-3 px-3 py-2.5 hover:bg-indigo-50/40 transition-colors border-b border-gray-50 last:border-0">
-      <div className="h-8 w-8 rounded-md bg-white border border-gray-200 flex items-center justify-center shrink-0">
-        <Icon className="h-4 w-4 text-gray-600" />
+    <li className="group flex items-center gap-3 px-5 py-3 hover:bg-stone-50/70 transition-colors border-b last:border-0"
+        style={{ borderColor: "var(--portal-border-subtle)" }}>
+      <div
+        className="h-7 w-7 rounded-md bg-stone-50 border flex items-center justify-center shrink-0"
+        style={{ borderColor: "var(--portal-border-subtle)" }}
+      >
+        <Icon className="h-3.5 w-3.5 text-stone-600" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium truncate">{alert.title}</span>
+          <span className="text-[13px] font-medium text-stone-900 truncate">{alert.title}</span>
           <Badge
             variant="outline"
-            className={cn("h-5 text-[10px] font-semibold", URGENCY_BADGE[alert.urgency])}
+            className={cn("h-5 text-[10px] font-medium px-1.5", URGENCY_BADGE[alert.urgency])}
           >
             {URGENCY_LABEL[alert.urgency]}
           </Badge>
         </div>
-        <p className="text-xs text-muted-foreground truncate mt-0.5">
-          {alert.detail} · <span className="tabular-nums">{alert.whenLabel}</span>
+        <p className="text-[12px] text-muted-foreground truncate mt-0.5">
+          {alert.detail} <span aria-hidden="true" className="text-stone-300">·</span> <span className="portal-num">{alert.whenLabel}</span>
         </p>
       </div>
-      {/* Variant=outline so the action reads as a button, not a faint text
-          link. Affordance is consistent with the icon-button patterns used
-          on Job Postings / Applicants cards (clear hover + border). */}
       <Button
         size="sm"
         variant="outline"
-        className="shrink-0 h-8 text-xs gap-1 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-900 transition-colors"
+        className="shrink-0 h-8 text-xs gap-1"
         onClick={() => onAct(alert.subView)}
       >
         {alert.actionLabel}
@@ -430,14 +434,16 @@ function RoleLensSwitcher({
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <UserCog className="h-3.5 w-3.5 text-muted-foreground" />
+      <UserCog className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
       <select
         aria-label="Role lens"
         value={activeRole}
         onChange={(e) => onChange(e.target.value as Role)}
         className={cn(
-          "h-8 text-xs rounded-md border bg-white px-2 pr-7 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400",
-          isPreviewing ? "border-amber-400 text-amber-900" : "border-gray-200",
+          "h-8 text-[13px] rounded-md border bg-white px-2 pr-7 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+          isPreviewing
+            ? "border-[var(--portal-status-warning-border)] bg-[var(--portal-status-warning-bg)] text-[var(--portal-status-warning)]"
+            : "border-stone-200 text-stone-700",
         )}
       >
         {listRoles().map(({ role, label }) => (
@@ -478,33 +484,35 @@ function PersonalQueue({
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
-          <div className="flex items-center gap-2">
-            <Inbox className="h-4 w-4 text-indigo-500" />
-            <h2 className="text-sm font-semibold">My work</h2>
+        <div
+          className="portal-section-header"
+          style={{ borderColor: "var(--portal-border-subtle)" }}
+        >
+          <div className="portal-section-header__title">
+            <Inbox className="h-3.5 w-3.5 text-stone-500" />
+            My work
             {!isLoading && items.length > 0 && (
-              <Badge variant="outline" className="h-5 text-[10px]">
+              <Badge
+                variant="outline"
+                className="h-5 text-[10px] font-medium portal-num bg-stone-50 text-stone-600 border-stone-200"
+              >
                 {items.length}
               </Badge>
             )}
           </div>
-          {/* Second-person copy — the facility account username can be a
-              short abbreviation ("arts") that reads as a display bug if
-              surfaced verbatim in body text. */}
-          <span className="text-[11px] text-muted-foreground hidden sm:inline">
+          <span className="text-[11px] text-muted-foreground hidden md:inline">
             Items assigned to you or awaiting acknowledgement
           </span>
         </div>
         {isLoading ? (
-          <div className="p-3 space-y-2">
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-3/4" />
+          <div className="p-4 space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-3/4" />
           </div>
         ) : items.length === 0 ? (
-          // Compact empty state — single row, no wasted vertical space.
-          <div className="px-4 py-2.5 flex items-center gap-2 text-xs text-muted-foreground">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-            <span>Nothing on your queue — items assigned to you will show up here.</span>
+          <div className="px-5 py-4 flex items-center gap-2 text-[13px] text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+            <span>Nothing on your queue.</span>
           </div>
         ) : (
           <ul>
@@ -616,31 +624,34 @@ function TodayStrip({
           <button
             key={g.key}
             onClick={onAction}
-            className="w-full text-left rounded-lg border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/40 transition-colors p-3"
+            className="w-full text-left rounded-md border bg-white hover:bg-stone-50 transition-colors p-3"
+            style={{ borderColor: "var(--portal-border-subtle)" }}
           >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                {g.label}
-              </span>
-              <span className="text-xs text-muted-foreground tabular-nums">
+            <div className="flex items-center justify-between mb-2">
+              <span className="portal-eyebrow">{g.label}</span>
+              <span className="text-[12px] text-muted-foreground portal-num">
                 {totals.given}/{totals.total} given
                 {totals.late > 0 && (
-                  <span className="ml-2 text-red-600 font-medium">
+                  <span className="ml-2 text-[var(--portal-status-critical)] font-medium">
                     {totals.late} late
                   </span>
                 )}
                 {totals.pending > 0 && (
-                  <span className="ml-2 text-amber-700">
+                  <span className="ml-2 text-[var(--portal-status-warning)]">
                     {totals.pending} pending
                   </span>
                 )}
               </span>
             </div>
-            <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+            <div className="h-1.5 rounded-full bg-stone-100 overflow-hidden">
               <div
                 className={cn(
                   "h-full transition-all",
-                  totals.late > 0 ? "bg-red-500" : pct === 100 ? "bg-emerald-500" : "bg-indigo-500",
+                  totals.late > 0
+                    ? "bg-[var(--portal-status-critical)]"
+                    : pct === 100
+                      ? "bg-[var(--portal-status-ok)]"
+                      : "bg-[var(--portal-accent)]",
                 )}
                 style={{ width: `${pct}%` }}
               />
@@ -1600,42 +1611,53 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   });
 
   return (
-    <div className="space-y-4 pb-24">
-      {/* Header */}
-      <div className="flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-            <CalendarIcon className="h-3.5 w-3.5" />
+    <div className="space-y-6 pb-24">
+      {/* ── Page header ──────────────────────────────────────────────────
+       * Identity is carried by the FacilityPortal top bar above; this
+       * header focuses on the *operational state*: today's date, status
+       * sentence, and role-lens / shortcuts utilities.
+       */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <p className="portal-eyebrow inline-flex items-center gap-1.5">
+            <CalendarIcon className="h-3 w-3" aria-hidden="true" />
             {dateLabel}
+            <span aria-hidden="true" className="text-stone-300">·</span>
+            <span className="portal-num">{currentShift}</span> shift
+            <span aria-hidden="true" className="text-stone-300">·</span>
+            <Users className="h-3 w-3" aria-hidden="true" />
+            <span className="portal-num">{dashboard?.activeResidents ?? "—"}</span> on census
           </p>
-          <h1 className="text-2xl font-semibold mt-0.5">
-            {greeting()}{me?.username ? `, ${me.username}` : ""}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Facility #{facilityNumber} ·{" "}
+          <h2 className="text-[18px] font-semibold mt-1.5 text-stone-900 leading-tight">
+            {greeting()}{me?.username ? `, ${me.username}` : ""}.{" "}
             {alertsLoading ? (
-              <span>checking status…</span>
+              <span className="text-muted-foreground font-normal">Checking status…</span>
             ) : alerts.length === 0 ? (
-              <span className="text-emerald-700 font-medium">All clear</span>
+              <span className="text-[var(--portal-status-ok)] font-normal">All clear today.</span>
             ) : (
-              <span>
-                <span className={overdueCount > 0 ? "text-red-700 font-medium" : ""}>
-                  {overdueCount} overdue
-                </span>
-                {" · "}
-                <span className={approachingCount > 0 ? "text-amber-700 font-medium" : ""}>
-                  {approachingCount} approaching
-                </span>
+              <span className="text-muted-foreground font-normal">
+                {overdueCount > 0 && (
+                  <>
+                    <span className="text-[var(--portal-status-critical)] font-medium portal-num">{overdueCount}</span>{" "}
+                    overdue
+                  </>
+                )}
+                {overdueCount > 0 && approachingCount > 0 && <>, </>}
+                {approachingCount > 0 && (
+                  <>
+                    <span className="text-[var(--portal-status-warning)] font-medium portal-num">{approachingCount}</span>{" "}
+                    approaching
+                  </>
+                )}
+                .
               </span>
             )}
-          </p>
+          </h2>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isAdmin && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground hidden md:inline">
-                View as
-              </span>
+            <div className="flex items-center gap-2">
+              <span className="portal-eyebrow hidden md:inline">View as</span>
               <RoleLensSwitcher
                 activeRole={activeRole}
                 userRole={userRole}
@@ -1644,9 +1666,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
               />
             </div>
           )}
-          {/* Shortcuts: icon-only button — secondary utility, shouldn't
-              compete with urgent operational information. Press '?' anywhere
-              also opens the dialog. */}
           <Button
             size="icon"
             variant="ghost"
@@ -1661,7 +1680,14 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
       </div>
 
       {isPreviewing && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 flex items-center justify-between gap-2">
+        <div
+          className="rounded-md border px-3 py-2 text-[12px] flex items-center justify-between gap-2"
+          style={{
+            borderColor: "var(--portal-status-warning-border)",
+            background: "var(--portal-status-warning-bg)",
+            color: "var(--portal-status-warning)",
+          }}
+        >
           <span>
             Previewing dashboard as <strong>{getLens(lensOverride!).label}</strong>. Your real role is {getLens(userRole).label}.
           </span>
@@ -1687,42 +1713,35 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </SubViewErrorBoundary>
       ) : (
         <>
-      {/* Zone B: Alerts & Exceptions — surfaced FIRST.
-          Unresolved incidents and missing notifications are higher priority
-          than passive count tiles. Card grows a red left-accent when there
-          are overdue items so the urgency is obvious at a glance. */}
+      {/* ── Needs attention ────────────────────────────────────────────────
+       * Surfaced first because urgency outranks count tiles. The previous
+       * always-on colored left-bar was visual noise — when there's nothing
+       * to attend to, no color is the right answer. Critical state still
+       * gets a single counter chip in the header; the absence of one means
+       * "we're fine" without painting the whole card green.
+       */}
       <section aria-label="Alerts and exceptions">
-        <Card
-          className={cn(
-            "border-l-4 transition-colors",
-            overdueCount > 0
-              ? "border-l-red-500"
-              : approachingCount > 0
-                ? "border-l-amber-500"
-                : "border-l-emerald-500",
-          )}
-        >
+        <Card>
           <CardContent className="p-0">
-            <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                <Bell
-                  className={cn(
-                    "h-4 w-4",
-                    overdueCount > 0
-                      ? "text-red-600"
-                      : approachingCount > 0
-                        ? "text-amber-600"
-                        : "text-emerald-600",
-                  )}
-                />
-                <h2 className="text-sm font-semibold">Needs attention</h2>
+            <div
+              className="portal-section-header"
+              style={{ borderColor: "var(--portal-border-subtle)" }}
+            >
+              <div className="portal-section-header__title">
+                <Bell className="h-3.5 w-3.5 text-stone-500" />
+                Needs attention
                 {!alertsLoading && alerts.length > 0 && (
-                  <Badge variant="outline" className="h-5 text-[10px] tabular-nums">
+                  <Badge
+                    variant="outline"
+                    className="h-5 text-[10px] font-medium portal-num bg-stone-50 text-stone-600 border-stone-200"
+                  >
                     {alerts.length}
                   </Badge>
                 )}
                 {!alertsLoading && overdueCount > 0 && (
-                  <Badge className="h-5 text-[10px] tabular-nums bg-red-100 text-red-700 border-red-200 hover:bg-red-100">
+                  <Badge
+                    className="h-5 text-[10px] font-medium portal-num bg-[var(--portal-status-critical-bg)] text-[var(--portal-status-critical)] border-[var(--portal-status-critical-border)] hover:bg-[var(--portal-status-critical-bg)]"
+                  >
                     {overdueCount} overdue
                   </Badge>
                 )}
@@ -1740,27 +1759,27 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
             </div>
 
             {alertsLoading ? (
-              <div className="p-3 space-y-2">
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-3/4" />
+              <div className="p-4 space-y-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-3/4" />
               </div>
             ) : alerts.length === 0 ? (
-              <div className="px-4 py-4 flex items-center gap-3">
-                <Sparkles className="h-5 w-5 text-emerald-500 shrink-0" />
+              <div className="px-5 py-4 flex items-center gap-3">
+                <CheckCircle2 className="h-4 w-4 text-[var(--portal-status-ok)] shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold leading-tight">All caught up</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                  <p className="text-[13px] font-medium leading-tight text-stone-900">All caught up</p>
+                  <p className="text-[12px] text-muted-foreground mt-0.5">
                     {medPasses.length > 0 ? (
                       <>
                         Next med pass at{" "}
-                        <span className="font-medium">
+                        <span className="font-medium text-stone-700 portal-num">
                           {medPasses.find((m) => m.status === "pending")?.scheduledTime ?? "—"}
                         </span>
                         .
                       </>
                     ) : (
-                      <>No urgent items right now. Check the calendar for what's coming up.</>
+                      <>Nothing urgent right now.</>
                     )}
                   </p>
                 </div>
@@ -1776,47 +1795,20 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </Card>
       </section>
 
-      {/* Tracker alerts — surfaces tracker-rule firings (vitals out-of-range,
-          toileting concerns, etc.) with Acknowledge / Resolve actions. Lives
-          right under "Needs attention" so the two alert surfaces sit
-          together; criticals also merge into the unified panel above. */}
+      {/* Tracker alerts — vitals out-of-range, etc. Sits beside the unified
+          alerts panel so both alerting surfaces are co-located. */}
       <TrackerAlertsCard facilityNumber={facilityNumber} />
 
-      {/* Slim context strip — facility identity at a glance (residents on
-          census, current shift, today's date). Lives outside the KPI grid
-          on purpose: this is "I am here" information, not actionable, so
-          it shouldn't compete with tone-coded action tiles. No card chrome,
-          just inline text + icons. */}
-      <section
-        aria-label="Facility context"
-        className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1"
-      >
-        <span className="inline-flex items-center gap-1.5">
-          <Users className="h-3.5 w-3.5" />
-          <span className="tabular-nums font-medium text-foreground">
-            {dashboard?.activeResidents ?? "—"}
-          </span>
-          <span>residents on census</span>
-        </span>
-        <span aria-hidden="true" className="text-gray-300">·</span>
-        <span className="inline-flex items-center gap-1.5">
-          <Clock className="h-3.5 w-3.5" />
-          <span className="font-medium text-foreground">{currentShift}</span>
-          <span>shift</span>
-        </span>
-        <span aria-hidden="true" className="text-gray-300">·</span>
-        <span className="inline-flex items-center gap-1.5">
-          <CalendarIcon className="h-3.5 w-3.5" />
-          <span>{dateLabel}</span>
-        </span>
-      </section>
-
-      {/* Zone A: KPIs — 7 tiles, one per metric, in canonical scan order.
-          Per-role lenses (roleLens.ts) trim/reorder for each role. */}
+      {/* ── KPIs ────────────────────────────────────────────────────────
+       * 4-up at lg (was 7-up). Lens-driven order is preserved, but the
+       * grid no longer forces seven 170px tiles into one row. At lg the
+       * row reads as four operational counts; at xl it can wrap to a
+       * second row of three.
+       */}
       <section aria-label="Key indicators">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3">
           {dashLoading
-            ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
+            ? Array.from({ length: 4 }).map((_, i) => <KpiSkeleton key={i} />)
             : orderedKpis.length > 0
               ? orderedKpis.map((t) => (
                   <KpiCard
@@ -1827,7 +1819,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
                   />
                 ))
               : (
-                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-7 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                <div className="col-span-2 md:col-span-3 lg:col-span-4 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                   {!facilityNumber
                     ? "Facility not found. Please log out and back in."
                     : "Could not load operations data. Try refreshing the page."}
@@ -1836,41 +1828,44 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </div>
       </section>
 
-      {/* Zone F: Personal Work Queue */}
-      <section aria-label="My work">
-        <PersonalQueue
-          items={myQueue}
-          isLoading={myQueueLoading}
-          onAct={navigateTarget}
-        />
-      </section>
-
-      {/* Zone D: Today's schedule */}
-      <section aria-label="Today's schedule">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-indigo-500" />
-                <h2 className="text-sm font-semibold">Today's schedule</h2>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 text-xs gap-1"
-                onClick={() => setShowCalendar((v) => !v)}
+      {/* ── My work + Today's schedule (2-col at lg) ───────────────────── */}
+      <section aria-label="Work and schedule">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <PersonalQueue
+            items={myQueue}
+            isLoading={myQueueLoading}
+            onAct={navigateTarget}
+          />
+          <Card>
+            <CardContent className="p-0">
+              <div
+                className="portal-section-header"
+                style={{ borderColor: "var(--portal-border-subtle)" }}
               >
-                {showCalendar ? "Hide calendar" : "Open calendar"}
-                <ArrowRight className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-            <TodayStrip
-              medPasses={medPasses}
-              isLoading={medLoading}
-              onAction={() => goToSubView("emar")}
-            />
-          </CardContent>
-        </Card>
+                <div className="portal-section-header__title">
+                  <Clock className="h-3.5 w-3.5 text-stone-500" />
+                  Today's schedule
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => setShowCalendar((v) => !v)}
+                >
+                  {showCalendar ? "Hide calendar" : "Open calendar"}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div className="p-4">
+                <TodayStrip
+                  medPasses={medPasses}
+                  isLoading={medLoading}
+                  onAction={() => goToSubView("emar")}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </section>
 
       {/* Optional embedded calendar */}
@@ -1887,16 +1882,16 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </>
       )}
 
-      {/* Sticky quick action bar (Zone G) */}
+      {/* ── Sticky quick-action bar ─────────────────────────────────────
+       * Bottom rail of contextual actions. Aligned with the new tokens —
+       * subtle border, no decorative shadow blur, neutral divider.
+       */}
       <div
-        className="fixed bottom-0 left-0 right-0 border-t bg-white/95 backdrop-blur-sm shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.08)] z-30"
-        style={{ borderColor: "#E0E7FF" }}
+        className="fixed bottom-0 left-0 right-0 border-t bg-white z-30"
+        style={{ borderColor: "var(--portal-border-subtle)" }}
       >
-        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground hidden sm:inline">
-            Quick actions
-          </span>
-          {/* Role-driven quick actions (lens-specific). */}
+        <div className="max-w-[1440px] mx-auto px-4 lg:px-6 py-2.5 flex items-center gap-2 flex-wrap">
+          <span className="portal-eyebrow hidden sm:inline">Quick actions</span>
           {lens.quickActions.map((key, idx) => {
             const a = QUICK_ACTIONS[key];
             const A = a.icon;
@@ -1913,15 +1908,11 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
               </Button>
             );
           })}
-          {/* Visual divider between role-driven and universal actions so the
-              two groups parse as distinct on first scan. Hidden on mobile
-              where buttons wrap anyway. */}
           <span
             aria-hidden="true"
-            className="hidden sm:inline-block h-5 w-px bg-gray-200 mx-1"
+            className="hidden sm:inline-block h-5 w-px mx-1"
+            style={{ background: "var(--portal-border-subtle)" }}
           />
-          {/* Universal actions (Add task, Trackers) — always visible
-              regardless of role lens. */}
           <Button
             size="sm"
             variant="outline"
@@ -1940,9 +1931,9 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
             <ClipboardList className="h-4 w-4" />
             Trackers
           </Button>
-          <div className="ml-auto text-[10px] text-muted-foreground hidden md:flex items-center gap-1">
-            <TrendingUp className="h-3 w-3" />
-            Press <kbd className="px-1 py-0.5 rounded bg-gray-100 border text-[10px] font-mono">?</kbd> for shortcuts
+          <div className="ml-auto text-[11px] text-muted-foreground hidden md:flex items-center gap-1">
+            Press <kbd className="px-1.5 py-0.5 rounded bg-stone-100 border text-[10px] font-mono"
+                       style={{ borderColor: "var(--portal-border-subtle)" }}>?</kbd> for shortcuts
           </div>
         </div>
       </div>

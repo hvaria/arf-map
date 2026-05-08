@@ -9,35 +9,18 @@ import type {
   TrackerCategory,
 } from "@shared/tracker-schemas";
 
+// Category palette is restrained: a single tinted icon tile per category,
+// no per-card border accent. The previous rainbow `border-l-4` made the
+// tracker grid read as "decorative" rather than as a categorised list.
 const CATEGORY_THEME: Record<
   TrackerCategory,
-  { borderL: string; iconBg: string; iconText: string }
+  { iconBg: string; iconText: string }
 > = {
-  "daily-care": {
-    borderL: "border-l-indigo-400",
-    iconBg: "bg-indigo-100",
-    iconText: "text-indigo-700",
-  },
-  "health-clinical": {
-    borderL: "border-l-rose-400",
-    iconBg: "bg-rose-100",
-    iconText: "text-rose-700",
-  },
-  "safety-incidents": {
-    borderL: "border-l-amber-400",
-    iconBg: "bg-amber-100",
-    iconText: "text-amber-700",
-  },
-  "resident-life": {
-    borderL: "border-l-emerald-400",
-    iconBg: "bg-emerald-100",
-    iconText: "text-emerald-700",
-  },
-  "facility-ops": {
-    borderL: "border-l-sky-400",
-    iconBg: "bg-sky-100",
-    iconText: "text-sky-700",
-  },
+  "daily-care":       { iconBg: "bg-stone-100", iconText: "text-stone-700" },
+  "health-clinical":  { iconBg: "bg-rose-50",   iconText: "text-rose-700" },
+  "safety-incidents": { iconBg: "bg-amber-50",  iconText: "text-amber-700" },
+  "resident-life":    { iconBg: "bg-emerald-50", iconText: "text-emerald-700" },
+  "facility-ops":     { iconBg: "bg-stone-100", iconText: "text-stone-700" },
 };
 
 export function TrackerCard({
@@ -59,8 +42,7 @@ export function TrackerCard({
       onClick={() => onSelect(definition.slug)}
       className={cn(
         "block w-full text-left rounded-lg",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-400",
-        "active:scale-[0.98]",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary",
       )}
       aria-label={
         hasAlerts
@@ -70,9 +52,8 @@ export function TrackerCard({
     >
       <Card
         className={cn(
-          "border-l-4 transition-all",
-          theme.borderL,
-          "hover:shadow-md hover:-translate-y-0.5",
+          "transition-colors",
+          "hover:border-stone-300 hover:bg-stone-50/50",
           "min-h-[112px]",
         )}
       >

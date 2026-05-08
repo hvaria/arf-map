@@ -497,14 +497,28 @@ export function MapView({
     };
   }, []);
 
-  // Fly to selected facility
+  // Fly to selected facility — but offset the camera so the pin lands in
+  // the *visible* portion of the map, not at the geometric center where
+  // the bottom-sheet panel and right sidebar would obscure it.
+  //
+  // MapLibre's `offset: [x, y]` shifts where the lng/lat center renders
+  // relative to the container center: positive X = right, positive Y = down.
+  // To pull the pin AWAY from the bottom sheet we use a negative Y; to
+  // pull it AWAY from the right sidebar (visible at md+) we use negative X.
+  //
+  // Magnitudes are half the obscured chrome's footprint so the pin lands
+  // in the centre of the *exposed* map area:
+  //   • bottom sheet default = 30vh  → vertical offset = -15vh
+  //   • right sidebar (md+)  = 320px → horizontal offset = -160px
   useEffect(() => {
     if (!selectedFacility || !mapRef.current) return;
-    const upwardOffset = Math.floor(window.innerHeight * 0.15);
+    const isDesktop = window.matchMedia("(min-width: 768px)").matches;
+    const sidebarWidth = isDesktop ? 320 : 0;
+    const sheetHeightPx = Math.floor(window.innerHeight * 0.30);
     mapRef.current.easeTo({
       center: [selectedFacility.lng, selectedFacility.lat],
       zoom: Math.max(mapRef.current.getZoom(), 15),
-      offset: [0, upwardOffset],
+      offset: [-Math.floor(sidebarWidth / 2), -Math.floor(sheetHeightPx / 2)],
       duration: 700,
     });
   }, [selectedFacility]);
