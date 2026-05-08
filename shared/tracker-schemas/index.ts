@@ -26,6 +26,10 @@ import {
   hygieneEntryPayloadSchema,
 } from "./hygiene";
 import {
+  SKIN_CHECK_DEFINITION,
+  skinCheckEntryPayloadSchema,
+} from "./skin-check";
+import {
   serializeDefinitionForClient,
   type SerializedTrackerDefinition,
   type TrackerDefinition,
@@ -88,6 +92,22 @@ export type {
   HygieneEntryPayload,
 } from "./hygiene";
 
+// ─── Skin Check ─────────────────────────────────────────────────────────────
+export {
+  skinCheckEntryPayloadSchema,
+  SKIN_CHECK_DEFINITION,
+  SKIN_CHECK_FINDING_TYPES,
+  SKIN_CHECK_BODY_SITES,
+  SKIN_CHECK_SEVERITIES,
+  skinCheckHistorySummary,
+} from "./skin-check";
+export type {
+  SkinCheckFindingType,
+  SkinCheckBodySite,
+  SkinCheckSeverity,
+  SkinCheckEntryPayload,
+} from "./skin-check";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +121,7 @@ export const TRACKER_REGISTRY: Record<string, TrackerDefinition> = {
   vitals: VITALS_DEFINITION,
   toileting: TOILETING_DEFINITION,
   hygiene: HYGIENE_DEFINITION,
+  skin_check: SKIN_CHECK_DEFINITION,
 };
 
 // Silence unused-import warnings for re-exports that are surfaced via
@@ -109,6 +130,7 @@ void adlEntryPayloadSchema;
 void vitalsEntryPayloadSchema;
 void toiletingEntryPayloadSchema;
 void hygieneEntryPayloadSchema;
+void skinCheckEntryPayloadSchema;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

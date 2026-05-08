@@ -21,6 +21,11 @@ import {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Canonical hygiene goals.
+//
+// `skin_check` was removed when the standalone Skin Check tracker shipped —
+// new Hygiene entries cannot use it (rejected by `hygieneEntryPayloadSchema`
+// below). `HYGIENE_GOAL_LABEL` keeps the legacy label so historical entries
+// with `goal_id: "skin_check"` still render readably in the History tab.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const HYGIENE_GOAL_IDS = [
@@ -29,19 +34,24 @@ export const HYGIENE_GOAL_IDS = [
   "shower",
   "shave",
   "hair_care",
-  "skin_check",
   "hand_washing",
 ] as const;
 export type HygieneGoalId = (typeof HYGIENE_GOAL_IDS)[number];
 
-const HYGIENE_GOAL_LABEL: Record<HygieneGoalId, string> = {
+/**
+ * Label lookup, keyed loosely so legacy `goal_id: "skin_check"` entries (now
+ * deprecated, see Skin Check tracker) still resolve to a human label in the
+ * History tab.
+ */
+const HYGIENE_GOAL_LABEL: Record<string, string> = {
   dental_am: "Dental hygiene (AM)",
   dental_pm: "Dental hygiene (PM)",
   shower: "Shower",
   shave: "Shaving",
   hair_care: "Hair care",
-  skin_check: "Skin check",
   hand_washing: "Hand washing",
+  // Legacy — read-only.
+  skin_check: "Skin check (legacy)",
 };
 
 export const HYGIENE_STATUS_VALUES = ["C", "I", "NA"] as const;
@@ -52,7 +62,13 @@ export type HygieneStatus = (typeof HYGIENE_STATUS_VALUES)[number];
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const hygieneEntryPayloadSchema = z.object({
-  goal_id: z.string().min(1),
+  goal_id: z
+    .string()
+    .min(1)
+    .refine((v) => v !== "skin_check", {
+      message:
+        "skin_check is no longer a Hygiene goal — log it via the Skin Check tracker",
+    }),
   shift: shiftSchema,
   status: z.enum(HYGIENE_STATUS_VALUES),
   note: z.string().max(500).optional(),
@@ -150,7 +166,7 @@ export function hygieneHistorySummary(payload: unknown): HistorySummary {
     typeof p.note === "string" && p.note.trim() !== "" ? p.note.trim() : undefined;
 
   const goalLabel = goalId
-    ? HYGIENE_GOAL_LABEL[goalId as HygieneGoalId] ?? goalId
+    ? HYGIENE_GOAL_LABEL[goalId] ?? goalId
     : "Hygiene task";
   const statusLabel = status
     ? HYGIENE_STATUS_LABEL[status] ?? status
