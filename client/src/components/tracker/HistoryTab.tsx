@@ -10,7 +10,7 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download } from "lucide-react";
+import { Download, FileText } from "lucide-react";
 import {
   Drawer,
   DrawerContent,
@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getQueryFn } from "@/lib/queryClient";
 import { ExportCsvDialog } from "./ExportCsvDialog";
+import { ExportPdfDialog } from "./ExportPdfDialog";
 import {
   useTrackerEntries,
   type TrackerEntryRow,
@@ -237,12 +238,13 @@ export function HistoryTab({
     null,
   );
   const [exportOpen, setExportOpen] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
 
   // The Export toolbar is rendered for every History state (loading, error,
   // empty, with data) so the user can always export — even on a date that
   // happens to have no entries. We compose it once and reuse it below.
   const toolbar = (
-    <div className="flex items-center justify-end mb-3">
+    <div className="flex items-center justify-end gap-2 mb-3">
       <Button
         variant="outline"
         size="sm"
@@ -252,6 +254,16 @@ export function HistoryTab({
       >
         <Download className="h-4 w-4" aria-hidden="true" />
         Export CSV
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setPdfOpen(true)}
+        className="gap-1.5 min-h-[32px]"
+        aria-label="Generate PDF report"
+      >
+        <FileText className="h-4 w-4" aria-hidden="true" />
+        Generate PDF
       </Button>
     </div>
   );
@@ -266,12 +278,23 @@ export function HistoryTab({
     />
   );
 
+  const pdfDialog = (
+    <ExportPdfDialog
+      open={pdfOpen}
+      onOpenChange={setPdfOpen}
+      definition={definition}
+      shift={filters.shift}
+      residentId={filters.residentId}
+    />
+  );
+
   if (isLoading)
     return (
       <div>
         {toolbar}
         <TrackerLoading rows={4} />
         {exportDialog}
+        {pdfDialog}
       </div>
     );
   if (isError)
@@ -283,6 +306,7 @@ export function HistoryTab({
           hint="Try refreshing or adjusting your filters."
         />
         {exportDialog}
+        {pdfDialog}
       </div>
     );
 
@@ -297,6 +321,7 @@ export function HistoryTab({
           hint="Try a different date or shift, or use Quick / Detailed mode to add one."
         />
         {exportDialog}
+        {pdfDialog}
       </div>
     );
   }
@@ -398,6 +423,7 @@ export function HistoryTab({
       />
 
       {exportDialog}
+      {pdfDialog}
     </div>
   );
 }

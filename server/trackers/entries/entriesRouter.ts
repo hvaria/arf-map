@@ -32,7 +32,9 @@ import {
   type EntryExportRow,
   type TrackerRequestContext,
 } from "../trackerStorage";
-import { getDefinition } from "../registry";
+import { getDefinition, serializeDefinitionForClient } from "../registry";
+import { renderTrackerReportPdf } from "../reports/pdfRenderer";
+import { getFacilityReportHeader } from "../reports/reportQueries";
 import {
   formatPayloadError,
   validatePayload,
@@ -317,6 +319,102 @@ entriesRouter.get("/:slug/entries/export.csv", async (req, res) => {
     // If we already wrote headers we can't switch to JSON — just terminate
     // the connection so the client sees a truncated download and surfaces
     // the error. Otherwise return a normal 500 envelope.
+    if (res.headersSent) {
+      try {
+        res.end();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal error" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF export — sibling to the CSV path. Reuses `exportQuerySchema`,
+// `streamEntriesForExport`, and the same header/auth conventions; the renderer
+// in ../reports/pdfRenderer.ts handles document layout.
+//
+// The PDF endpoint buffers all rows up-front because state-audit format
+// requires resident-grouped, oldest-first ordering — that grouping can't be
+// done while streaming. The 92-day cap on the input range bounds memory.
+// ─────────────────────────────────────────────────────────────────────────────
+
+entriesRouter.get("/:slug/entries/export.pdf", async (req, res) => {
+  try {
+    const def = getDefinition(req.params.slug);
+    if (!def || def.isActive === false) {
+      return res.status(404).json({ success: false, error: "Tracker not found" });
+    }
+
+    const parsed = exportQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ success: false, error: zodErrorMessage(parsed.error) });
+    }
+
+    const facilityNumber = getFacilityNumber(req);
+    const user = req.user as FacilityAccount | undefined;
+
+    // Buffer rows. Grouping by resident requires the full set in memory.
+    const rows: EntryExportRow[] = [];
+    for await (const row of streamEntriesForExport(facilityNumber, {
+      slug: def.slug,
+      from: parsed.data.from,
+      to: parsed.data.to,
+      shift: parsed.data.shift,
+      residentId: parsed.data.residentId,
+    })) {
+      rows.push(row);
+    }
+
+    const facility = await getFacilityReportHeader(facilityNumber);
+
+    const safeSlug = def.slug.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const filename = `tracker-${safeSlug}-${parsed.data.from}-${parsed.data.to}.pdf`;
+
+    res.status(200);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Tracker-Export-Count", String(rows.length));
+
+    renderTrackerReportPdf(res, {
+      definition: serializeDefinitionForClient(def),
+      facility,
+      filters: {
+        from: parsed.data.from,
+        to: parsed.data.to,
+        shift: parsed.data.shift,
+        residentId: parsed.data.residentId,
+      },
+      rows,
+    });
+
+    console.log(
+      JSON.stringify({
+        action: "tracker.export",
+        format: "pdf",
+        facility: facilityNumber,
+        slug: def.slug,
+        from: parsed.data.from,
+        to: parsed.data.to,
+        shift: parsed.data.shift ?? null,
+        residentId: parsed.data.residentId ?? null,
+        count: rows.length,
+        userId: user?.id ?? null,
+      }),
+    );
+  } catch (err) {
+    console.error("[trackers] GET /:slug/entries/export.pdf failed", err);
     if (res.headersSent) {
       try {
         res.end();
