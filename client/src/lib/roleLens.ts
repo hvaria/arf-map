@@ -16,6 +16,10 @@ export type Role =
   | "provider"
   | "compliance_reviewer";
 
+/**
+ * KPI grid: 7 primary metrics, one per tile, in canonical scan order.
+ * Each role's `kpis` array trims/reorders this list for their workflow.
+ */
 export type KpiKey =
   | "residents"
   | "meds"
@@ -23,9 +27,7 @@ export type KpiKey =
   | "incidents"
   | "leads"
   | "invoices"
-  | "compliance"
-  | "staff"
-  | "tracker";
+  | "compliance";
 
 export type AlertTier = "clinical" | "regulatory" | "care" | "ops" | "info";
 
@@ -50,66 +52,55 @@ export interface RoleLens {
 }
 
 const COMMON_KPIS: KpiKey[] = [
-  "residents", "meds", "tasks", "incidents", "leads", "invoices", "compliance", "staff", "tracker",
+  "residents", "meds", "tasks", "incidents", "leads", "invoices", "compliance",
 ];
 
 const LENSES: Record<Role, RoleLens> = {
   super_admin: {
     label: "Owner / Operator",
-    // Owners care most about regulatory/financial signals; staff licensing
-    // sits near the top because expired licenses are an audit risk. Tracker
-    // documentation is a downstream care-quality signal — visible but last.
-    kpis: ["residents", "incidents", "compliance", "staff", "invoices", "leads", "meds", "tasks", "tracker"],
+    kpis: ["residents", "incidents", "compliance", "invoices", "leads", "meds", "tasks"],
     tierBoost: { regulatory: -1 },
     quickActions: ["postNote", "openCompliance", "addIncident", "addLead"],
   },
   facility_admin: {
     label: "Administrator",
-    // Admins see everything in the canonical order; staff comes after the
-    // operational KPIs and tracker is the trailing care-documentation signal.
     kpis: COMMON_KPIS,
     tierBoost: { regulatory: -1 },
     quickActions: ["postNote", "addIncident", "addLead", "chartMed"],
   },
   supervisor: {
     label: "Supervisor",
-    // Supervisors run the floor — clinical first, then staff/tracker so they
-    // can spot a missing license or under-documented shift early.
-    kpis: ["meds", "incidents", "tasks", "tracker", "residents", "staff", "compliance", "leads", "invoices"],
+    kpis: ["meds", "incidents", "tasks", "residents", "compliance", "leads", "invoices"],
     tierBoost: { clinical: -1 },
     quickActions: ["chartMed", "addIncident", "postNote", "addLead"],
   },
   med_tech: {
     label: "Medication Tech",
-    kpis: ["meds", "tasks", "tracker", "incidents", "residents"],
+    kpis: ["meds", "tasks", "incidents", "residents"],
     tierBoost: { clinical: -2 },
     quickActions: ["chartMed", "addIncident", "postNote"],
   },
   caregiver: {
     label: "Caregiver",
-    // Caregivers' #1 documentation concern is whether ADLs were logged this
-    // shift, so tracker rises near the top.
-    kpis: ["tasks", "tracker", "residents", "meds", "incidents"],
+    kpis: ["tasks", "residents", "meds", "incidents"],
     tierBoost: { care: -1, clinical: -1 },
     quickActions: ["postNote", "addIncident", "chartMed"],
   },
   wellness_staff: {
     label: "Wellness staff",
-    kpis: ["residents", "tasks", "tracker", "meds", "incidents"],
+    kpis: ["residents", "tasks", "meds", "incidents"],
     tierBoost: { care: -1 },
     quickActions: ["postNote", "addIncident"],
   },
   provider: {
     label: "Provider",
-    kpis: ["residents", "meds", "incidents"],
+    kpis: ["residents", "incidents", "meds"],
     tierBoost: { clinical: -1 },
     quickActions: ["postNote", "chartMed"],
   },
   compliance_reviewer: {
     label: "Compliance reviewer",
-    // Compliance reviewers care about staff licensing alongside the rest of
-    // the regulatory surface area.
-    kpis: ["compliance", "incidents", "staff", "residents", "meds"],
+    kpis: ["compliance", "incidents", "residents"],
     tierBoost: { regulatory: -2 },
     quickActions: ["openCompliance", "postNote", "addIncident"],
   },

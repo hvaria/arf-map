@@ -72,6 +72,7 @@ import { useTrackerDefinitions } from "@/lib/tracker/useTrackerDefinitions";
 import { useTrackerDefinition } from "@/lib/tracker/useTrackerDefinition";
 import { useTrackerEntries } from "@/lib/tracker/useTrackerEntries";
 import { useTrackerAlerts } from "@/lib/tracker/useTrackerAlerts";
+import { useTrackerAlertSummary } from "@/lib/tracker/useTrackerAlertSummary";
 import { TrackerAlertsCard } from "@/components/tracker/TrackerAlertsCard";
 import { startOfDay, type TrackerFilters } from "@/components/tracker/TrackerFilterBar";
 import { deriveCurrentShift } from "@/components/tracker/selectors/ShiftToggle";
@@ -247,6 +248,11 @@ function openNotesBell() {
 
 // ── KPI tiles ────────────────────────────────────────────────────────────────
 
+interface KpiChip {
+  label: string;
+  subView: SubView;
+}
+
 interface KpiTile {
   key: KpiKey;
   label: string;
@@ -255,6 +261,21 @@ interface KpiTile {
   icon: React.ElementType;
   tone: "ok" | "info" | "warn" | "danger";
   subView: SubView;
+  /**
+   * Optional inline chips that appear inside a consolidated tile (e.g. the
+   * "Today's care" tile breaks its count into Meds / Tasks / ADL chips, each
+   * navigating to its own sub-view). Chips themselves are clickable; the
+   * outer tile still navigates to `subView` when clicked outside a chip.
+   */
+  chips?: KpiChip[];
+}
+
+// Worst-tone wins for consolidated tiles — used by both today_care and
+// regulatory. `danger > warn > info > ok`. Hoisted so it can be reused.
+type Tone = KpiTile["tone"];
+const TONE_RANK: Record<Tone, number> = { ok: 0, info: 1, warn: 2, danger: 3 };
+function worstTone(...tones: Tone[]): Tone {
+  return tones.reduce<Tone>((acc, t) => (TONE_RANK[t] > TONE_RANK[acc] ? t : acc), "ok");
 }
 
 const TONE_STYLES: Record<KpiTile["tone"], { border: string; iconBg: string; subtitle: string }> = {
@@ -264,16 +285,30 @@ const TONE_STYLES: Record<KpiTile["tone"], { border: string; iconBg: string; sub
   danger: { border: "border-l-red-500",     iconBg: "bg-red-100     text-red-700",     subtitle: "text-red-700"     },
 };
 
-function KpiCard({ tile, onClick }: { tile: KpiTile; onClick: () => void }) {
+function KpiCard({
+  tile,
+  onClick,
+  onChipClick,
+}: {
+  tile: KpiTile;
+  onClick: () => void;
+  onChipClick?: (sv: SubView) => void;
+}) {
   const t = TONE_STYLES[tile.tone];
   const Icon = tile.icon;
   return (
-    <button
-      onClick={onClick}
-      className="text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 rounded-lg"
+    <Card
+      className={cn(
+        "border-l-4 transition-all hover:shadow-md hover:-translate-y-0.5",
+        t.border,
+      )}
     >
-      <Card className={cn("border-l-4 transition-all hover:shadow-md hover:-translate-y-0.5", t.border)}>
-        <CardContent className="p-3.5 flex items-center gap-3">
+      <CardContent className="p-3.5">
+        <button
+          onClick={onClick}
+          className="text-left w-full flex items-center gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 rounded-md"
+          aria-label={`${tile.label}: ${tile.count}. ${tile.subtitle}`}
+        >
           <div className={cn("h-10 w-10 rounded-full flex items-center justify-center shrink-0", t.iconBg)}>
             <Icon className="h-5 w-5" />
           </div>
@@ -284,9 +319,25 @@ function KpiCard({ tile, onClick }: { tile: KpiTile; onClick: () => void }) {
               {tile.subtitle}
             </p>
           </div>
-        </CardContent>
-      </Card>
-    </button>
+        </button>
+        {tile.chips && tile.chips.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-1.5">
+            {tile.chips.map((c) => (
+              <button
+                key={c.label}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChipClick?.(c.subView);
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-white text-muted-foreground hover:bg-gray-50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 tabular-nums"
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -974,6 +1025,14 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   );
   const activeTrackerAlerts = trackerAlertsQuery.data?.data?.items ?? [];
 
+  // Lightweight summary for the "Tracker alerts" KPI tile — counts only,
+  // separate from the detailed list query so the KPI doesn't pay the cost
+  // of pulling 100 items just to render a number. Auto-refreshes 60 s.
+  const trackerAlertSummaryQuery = useTrackerAlertSummary({ enabled });
+  const trackerAlertSummary =
+    trackerAlertSummaryQuery.data?.data ??
+    { active: 0, critical: 0, warn: 0, info: 0 };
+
   // Slug → active alert count map for TrackerCard badges.
   const trackerAlertCountsBySlug = useMemo(() => {
     const map = new Map<string, number>();
@@ -1070,9 +1129,16 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   }, []);
 
   // ── Smart KPI tiles ────────────────────────────────────────────────────────
+  // 7 tiles, one per metric, in canonical scan order. Per-role lenses in
+  // roleLens.ts trim/reorder for each role's workflow. Tracker alerts +
+  // staff license expiries surface in the dedicated TrackerAlertsCard and
+  // the cross-module "Needs attention" panel rather than competing for KPI
+  // grid real-estate.
   const kpiTiles: KpiTile[] = useMemo(() => {
     if (!dashboard) return [];
-    const lateMissed = medPasses.filter((m) => m.status === "late" || m.status === "missed").length;
+    const lateMissed = medPasses.filter(
+      (m) => m.status === "late" || m.status === "missed",
+    ).length;
     const approachingMeds = medPasses.filter((m) => {
       if (m.status !== "pending") return false;
       const t = parseScheduledTimeToToday(m.scheduledTime);
@@ -1082,31 +1148,15 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     }).length;
     const openIncidents = incidents.filter((i) => i.status === "open").length;
 
-    // Staff with a license expiring inside the 30-day window. Computed
-    // client-side from the existing /staff query so we don't add a second
-    // backend round-trip just for this count.
-    const now = Date.now();
-    const licenseHorizonMs = APPROACHING_LICENSE_DAYS * 24 * 60 * 60 * 1000;
-    const expiringLicenses = staff.filter((s) => {
-      if (s.licenseExpiry == null) return false;
-      const ms = s.licenseExpiry - now;
-      return ms >= 0 && ms <= licenseHorizonMs;
-    }).length;
-    const expiredLicenses = staff.filter((s) => {
-      if (s.licenseExpiry == null) return false;
-      return s.licenseExpiry < now;
-    }).length;
-
-    // Sub-label tone is unified: count-driven phrasing when there's
-    // something to act on ("N <noun>"), "All clear" when there isn't.
-    // residents and meds carry contextual sub-labels because their counts
-    // aren't problems — they're operational state.
     return [
       {
         key: "residents",
         label: "Active Residents",
         count: dashboard.activeResidents,
-        subtitle: dashboard.activeResidents === 0 ? "No residents on census" : "On census today",
+        subtitle:
+          dashboard.activeResidents === 0
+            ? "No residents on census"
+            : "On census today",
         icon: Users,
         tone: "info",
         subView: "residents",
@@ -1122,16 +1172,23 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
               ? `${approachingMeds} due in next ${APPROACHING_MED_MINUTES} min`
               : dashboard.pendingMedPasses === 0
                 ? "All clear"
-                : `${dashboard.pendingMedPasses} on schedule`,
+                : "On schedule",
         icon: Pill,
-        tone: lateMissed > 0 ? "danger" : approachingMeds > 0 ? "warn" : dashboard.pendingMedPasses > 0 ? "info" : "ok",
+        tone:
+          lateMissed > 0
+            ? "danger"
+            : approachingMeds > 0
+              ? "warn"
+              : dashboard.pendingMedPasses > 0
+                ? "info"
+                : "ok",
         subView: "emar",
       },
       {
         key: "tasks",
         label: "Overdue Tasks",
         count: dashboard.overdueTasks,
-        subtitle: dashboard.overdueTasks > 0 ? `${dashboard.overdueTasks} overdue` : "All clear",
+        subtitle: dashboard.overdueTasks > 0 ? "Past due window" : "Caught up",
         icon: ClipboardList,
         tone: dashboard.overdueTasks > 0 ? "danger" : "ok",
         subView: "tasks",
@@ -1144,8 +1201,8 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           openIncidents > 0
             ? `${openIncidents} unresolved`
             : dashboard.openIncidents === 0
-              ? "All clear"
-              : `${dashboard.openIncidents} under review`,
+              ? "No open incidents"
+              : "Under review",
         icon: AlertTriangle,
         tone: dashboard.openIncidents > 0 ? "danger" : "ok",
         subView: "incidents",
@@ -1154,7 +1211,8 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         key: "leads",
         label: "Pending Leads",
         count: dashboard.pendingLeads,
-        subtitle: dashboard.pendingLeads > 0 ? `${dashboard.pendingLeads} awaiting follow-up` : "All clear",
+        subtitle:
+          dashboard.pendingLeads > 0 ? "Awaiting follow-up" : "Pipeline clear",
         icon: UserPlus,
         tone: dashboard.pendingLeads > 0 ? "info" : "ok",
         subView: "crm",
@@ -1163,7 +1221,8 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         key: "invoices",
         label: "Overdue Invoices",
         count: dashboard.overdueInvoices,
-        subtitle: dashboard.overdueInvoices > 0 ? `${dashboard.overdueInvoices} past due` : "All clear",
+        subtitle:
+          dashboard.overdueInvoices > 0 ? "Past due A/R" : "All current",
         icon: Receipt,
         tone: dashboard.overdueInvoices > 0 ? "danger" : "ok",
         subView: "billing",
@@ -1172,39 +1231,16 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         key: "compliance",
         label: "Overdue Compliance",
         count: dashboard.overdueCompliance,
-        subtitle: dashboard.overdueCompliance > 0 ? `${dashboard.overdueCompliance} due now` : "All clear",
+        subtitle:
+          dashboard.overdueCompliance > 0
+            ? "Regulatory exposure"
+            : "On track",
         icon: ShieldCheck,
         tone: dashboard.overdueCompliance > 0 ? "warn" : "ok",
         subView: "compliance",
       },
-      {
-        key: "staff",
-        label: "Expiring Licenses",
-        count: expiringLicenses,
-        subtitle:
-          expiredLicenses > 0
-            ? `${expiredLicenses} already expired`
-            : expiringLicenses > 0
-              ? `Within ${APPROACHING_LICENSE_DAYS} days`
-              : "All clear",
-        icon: UserCog,
-        tone: expiredLicenses > 0 ? "danger" : expiringLicenses > 0 ? "warn" : "ok",
-        subView: "staff",
-      },
-      {
-        key: "tracker",
-        label: "ADL Entries",
-        count: trackerThisShiftCount,
-        subtitle:
-          trackerThisShiftCount > 0
-            ? `${trackerThisShiftCount} logged this shift`
-            : "None yet this shift",
-        icon: Activity,
-        tone: trackerThisShiftCount > 0 ? "info" : "warn",
-        subView: "tracker",
-      },
     ];
-  }, [dashboard, medPasses, incidents, staff, trackerThisShiftCount]);
+  }, [dashboard, medPasses, staff, trackerThisShiftCount, trackerAlertSummary]);
 
   // Lens-filtered KPIs.
   const orderedKpis: KpiTile[] = useMemo(() => {
@@ -1746,22 +1782,52 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           together; criticals also merge into the unified panel above. */}
       <TrackerAlertsCard facilityNumber={facilityNumber} />
 
-      {/* Zone A: KPIs — overview tiles, kept on a single row at lg+ so the
-          full operational state is visible in one scan without competing
-          with the urgent action list above. */}
+      {/* Slim context strip — facility identity at a glance (residents on
+          census, current shift, today's date). Lives outside the KPI grid
+          on purpose: this is "I am here" information, not actionable, so
+          it shouldn't compete with tone-coded action tiles. No card chrome,
+          just inline text + icons. */}
+      <section
+        aria-label="Facility context"
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1"
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <Users className="h-3.5 w-3.5" />
+          <span className="tabular-nums font-medium text-foreground">
+            {dashboard?.activeResidents ?? "—"}
+          </span>
+          <span>residents on census</span>
+        </span>
+        <span aria-hidden="true" className="text-gray-300">·</span>
+        <span className="inline-flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5" />
+          <span className="font-medium text-foreground">{currentShift}</span>
+          <span>shift</span>
+        </span>
+        <span aria-hidden="true" className="text-gray-300">·</span>
+        <span className="inline-flex items-center gap-1.5">
+          <CalendarIcon className="h-3.5 w-3.5" />
+          <span>{dateLabel}</span>
+        </span>
+      </section>
+
+      {/* Zone A: KPIs — 7 tiles, one per metric, in canonical scan order.
+          Per-role lenses (roleLens.ts) trim/reorder for each role. */}
       <section aria-label="Key indicators">
-        {/* 9 KPIs are too cramped at lg (1024px), so we keep lg at 5 columns
-            (5+4 layout) and only collapse to a single row at xl+ where the
-            tile content stays readable. */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {dashLoading
-            ? Array.from({ length: 9 }).map((_, i) => <KpiSkeleton key={i} />)
+            ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
             : orderedKpis.length > 0
               ? orderedKpis.map((t) => (
-                  <KpiCard key={t.label} tile={t} onClick={() => goToSubView(t.subView)} />
+                  <KpiCard
+                    key={t.label}
+                    tile={t}
+                    onClick={() => goToSubView(t.subView)}
+                    onChipClick={(sv) => goToSubView(sv)}
+                  />
                 ))
               : (
-                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-5 xl:col-span-9 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-7 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                   {!facilityNumber
                     ? "Facility not found. Please log out and back in."
                     : "Could not load operations data. Try refreshing the page."}
