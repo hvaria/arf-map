@@ -703,6 +703,148 @@ export async function listEntries(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Stream entries for CSV export
+//
+// Yields rows in keyset-paginated batches (500 at a time, ordered by
+// occurred_at DESC, id DESC) so memory stays bounded for multi-month
+// exports. Soft-deleted rows are excluded — matches History tab semantics.
+// Resident name is LEFT-JOINed from `ops_residents`; if the resident row is
+// missing (deleted, cross-tenant impossible due to facility scope) the
+// caller falls back to a `#<id>` sentinel.
+//
+// We use raw SQL through `pool` (not Drizzle) for the JOIN because
+// `ops_residents` lives in another module's table object and pulling it in
+// here would couple the tracker storage to the ops module — see the same
+// rationale on `listVersions` above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type EntryExportRow = {
+  id: number;
+  occurredAt: number;
+  shift: string | null;
+  status: string;
+  reportedByDisplayName: string;
+  reportedByRole: string;
+  payload: unknown;
+  residentId: number | null;
+  residentFirstName: string | null;
+  residentLastName: string | null;
+};
+
+export type StreamEntriesForExportArgs = {
+  slug: string;
+  from: number;
+  to: number;
+  shift?: Shift;
+  residentId?: number;
+};
+
+const EXPORT_BATCH_SIZE = 500;
+
+export async function* streamEntriesForExport(
+  facilityNumber: string,
+  args: StreamEntriesForExportArgs,
+): AsyncGenerator<EntryExportRow> {
+  // Cursor is (occurred_at, id) keyset. We seed with sentinel +Infinity so
+  // the first batch returns the most recent row; subsequent batches use the
+  // last yielded row's (occurredAt, id) as the strict upper bound.
+  let cursorOccurredAt: number | null = null;
+  let cursorId: number | null = null;
+
+  for (;;) {
+    // Build the parameterized query incrementally so optional filters and the
+    // cursor predicate slot in cleanly. Param numbering is 1-based.
+    const params: Array<string | number> = [
+      facilityNumber,
+      args.slug,
+      args.from,
+      args.to,
+    ];
+    let where = `e.facility_number = $1
+                 AND e.tracker_slug   = $2
+                 AND e.status         <> 'deleted'
+                 AND e.occurred_at   >= $3
+                 AND e.occurred_at   <= $4`;
+
+    if (args.shift !== undefined) {
+      params.push(args.shift);
+      where += ` AND e.shift = $${params.length}`;
+    }
+    if (args.residentId !== undefined) {
+      params.push(args.residentId);
+      where += ` AND e.resident_id = $${params.length}`;
+    }
+    if (cursorOccurredAt !== null && cursorId !== null) {
+      params.push(cursorOccurredAt);
+      const occIdx = params.length;
+      params.push(cursorId);
+      const idIdx = params.length;
+      where += ` AND (e.occurred_at, e.id) < ($${occIdx}, $${idIdx})`;
+    }
+
+    params.push(EXPORT_BATCH_SIZE);
+    const limitIdx = params.length;
+
+    const sqlText = `
+      SELECT
+        e.id                            AS id,
+        e.occurred_at                   AS occurred_at,
+        e.shift                         AS shift,
+        e.status                        AS status,
+        e.reported_by_display_name      AS reported_by_display_name,
+        e.reported_by_role              AS reported_by_role,
+        e.payload                       AS payload,
+        e.resident_id                   AS resident_id,
+        r.first_name                    AS resident_first_name,
+        r.last_name                     AS resident_last_name
+      FROM tracker_entries e
+      LEFT JOIN ops_residents r
+        ON r.id = e.resident_id AND r.facility_number = e.facility_number
+      WHERE ${where}
+      ORDER BY e.occurred_at DESC, e.id DESC
+      LIMIT $${limitIdx}
+    `;
+
+    const result = await pool.query<{
+      id: string | number;
+      occurred_at: string | number;
+      shift: string | null;
+      status: string;
+      reported_by_display_name: string;
+      reported_by_role: string;
+      payload: string;
+      resident_id: string | number | null;
+      resident_first_name: string | null;
+      resident_last_name: string | null;
+    }>(sqlText, params);
+
+    if (result.rows.length === 0) return;
+
+    for (const r of result.rows) {
+      const row: EntryExportRow = {
+        id: Number(r.id),
+        occurredAt: Number(r.occurred_at),
+        shift: r.shift,
+        status: r.status,
+        reportedByDisplayName: r.reported_by_display_name,
+        reportedByRole: r.reported_by_role,
+        payload: parsePayload(r.payload),
+        residentId: r.resident_id === null ? null : Number(r.resident_id),
+        residentFirstName: r.resident_first_name,
+        residentLastName: r.resident_last_name,
+      };
+      yield row;
+    }
+
+    if (result.rows.length < EXPORT_BATCH_SIZE) return;
+
+    const last = result.rows[result.rows.length - 1]!;
+    cursorOccurredAt = Number(last.occurred_at);
+    cursorId = Number(last.id);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Update (versioned)
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -24,10 +24,12 @@ import {
   listEntries,
   listVersions,
   softDeleteEntry,
+  streamEntriesForExport,
   updateEntry,
   TrackerClientIdSlugMismatchError,
   TrackerNotFoundError,
   type ActorCtx,
+  type EntryExportRow,
   type TrackerRequestContext,
 } from "../trackerStorage";
 import { getDefinition } from "../registry";
@@ -145,6 +147,189 @@ const patchBodySchema = z
       v.changeReason !== undefined,
     { message: "patch must include at least one field" },
   );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CSV export — must register BEFORE `/:slug/entries` so the more specific
+// 3-segment path is preferred. Express path-to-regexp does NOT conflate
+// `/:slug/entries/export.csv` with `/:slug/entries`, but registering in
+// specific-to-general order keeps the routing table self-documenting.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_EXPORT_RANGE_DAYS = 92;
+const MAX_EXPORT_RANGE_MS = MAX_EXPORT_RANGE_DAYS * 24 * 60 * 60 * 1000;
+
+const exportQuerySchema = z
+  .object({
+    from: z.coerce.number().int().positive(),
+    to: z.coerce.number().int().positive(),
+    shift: shiftSchema.optional(),
+    residentId: z.coerce.number().int().positive().optional(),
+  })
+  .strict()
+  .refine((v) => v.to >= v.from, {
+    message: "to must be >= from",
+    path: ["to"],
+  })
+  .refine((v) => v.to - v.from <= MAX_EXPORT_RANGE_MS, {
+    message: `range must be <= ${MAX_EXPORT_RANGE_DAYS} days`,
+    path: ["to"],
+  });
+
+/**
+ * RFC-4180-flavored CSV cell escape. Wraps in double-quotes when the value
+ * contains any of the special chars; escapes embedded quotes by doubling.
+ * Always returns a string (caller may pass empty string for null fields).
+ */
+function csvCell(s: string): string {
+  if (s === "") return "";
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+/**
+ * Generic payload-summary string mirroring the History tab's
+ * `genericPayloadSummary` (client/src/components/tracker/HistoryTab.tsx).
+ * First 3 keys, formatted as `k1: v1, k2: v2, k3: v3`. Object values are
+ * JSON-stringified; everything else is coerced via String().
+ */
+function genericPayloadSummary(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const entries = Object.entries(payload as Record<string, unknown>).slice(0, 3);
+  return entries
+    .map(([k, v]) => {
+      const formatted =
+        v !== null && typeof v === "object" ? JSON.stringify(v) : String(v);
+      return `${k}: ${formatted}`;
+    })
+    .join(", ");
+}
+
+function residentNameOf(row: EntryExportRow): string {
+  if (row.residentFirstName || row.residentLastName) {
+    return `${row.residentFirstName ?? ""} ${row.residentLastName ?? ""}`.trim();
+  }
+  if (row.residentId !== null) return `#${row.residentId}`;
+  return "";
+}
+
+const CSV_HEADER = [
+  "occurred_at_iso",
+  "resident_name",
+  "resident_id",
+  "shift",
+  "status",
+  "reported_by",
+  "reported_by_role",
+  "payload_summary",
+  "entry_id",
+  "edited",
+].join(",");
+
+entriesRouter.get("/:slug/entries/export.csv", async (req, res) => {
+  try {
+    const def = getDefinition(req.params.slug);
+    if (!def || def.isActive === false) {
+      return res.status(404).json({ success: false, error: "Tracker not found" });
+    }
+
+    const parsed = exportQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ success: false, error: zodErrorMessage(parsed.error) });
+    }
+
+    const facilityNumber = getFacilityNumber(req);
+    const user = req.user as FacilityAccount | undefined;
+
+    // Sanitize the slug into the filename — only [a-z0-9-] is allowed in
+    // tracker slugs but defense-in-depth here keeps Content-Disposition safe
+    // even if the registry shape changes.
+    const safeSlug = def.slug.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const filename = `tracker-${safeSlug}-${parsed.data.from}-${parsed.data.to}.csv`;
+
+    res.status(200);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    // Disable proxy/CDN caching — exports are PHI and should not be cached.
+    res.setHeader("Cache-Control", "no-store");
+    // Streaming response: hint to intermediaries that we're not buffering.
+    res.setHeader("X-Content-Type-Options", "nosniff");
+
+    res.write(CSV_HEADER + "\n");
+
+    let count = 0;
+    for await (const row of streamEntriesForExport(facilityNumber, {
+      slug: def.slug,
+      from: parsed.data.from,
+      to: parsed.data.to,
+      shift: parsed.data.shift,
+      residentId: parsed.data.residentId,
+    })) {
+      const occurredIso = new Date(row.occurredAt).toISOString();
+      const residentName = residentNameOf(row);
+      const residentIdStr = row.residentId === null ? "" : String(row.residentId);
+      const edited = row.status === "edited" ? "yes" : "no";
+      const summary = genericPayloadSummary(row.payload);
+
+      const line = [
+        csvCell(occurredIso),
+        csvCell(residentName),
+        csvCell(residentIdStr),
+        csvCell(row.shift ?? ""),
+        csvCell(row.status),
+        csvCell(row.reportedByDisplayName),
+        csvCell(row.reportedByRole),
+        csvCell(summary),
+        csvCell(String(row.id)),
+        csvCell(edited),
+      ].join(",");
+
+      res.write(line + "\n");
+      count += 1;
+    }
+
+    // Structured log line — read-only PHI access is intentionally NOT
+    // written to tracker_audit_log (mutation audit, different concern). If
+    // a PHI access log is added later this becomes a single-line change.
+    console.log(
+      JSON.stringify({
+        action: "tracker.export",
+        facility: facilityNumber,
+        slug: def.slug,
+        from: parsed.data.from,
+        to: parsed.data.to,
+        shift: parsed.data.shift ?? null,
+        residentId: parsed.data.residentId ?? null,
+        count,
+        userId: user?.id ?? null,
+      }),
+    );
+
+    return res.end();
+  } catch (err) {
+    console.error("[trackers] GET /:slug/entries/export.csv failed", err);
+    // If we already wrote headers we can't switch to JSON — just terminate
+    // the connection so the client sees a truncated download and surfaces
+    // the error. Otherwise return a normal 500 envelope.
+    if (res.headersSent) {
+      try {
+        res.end();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal error" });
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIST :slug entries

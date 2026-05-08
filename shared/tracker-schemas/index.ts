@@ -22,6 +22,10 @@ import {
   toiletingEntryPayloadSchema,
 } from "./toileting";
 import {
+  HYGIENE_DEFINITION,
+  hygieneEntryPayloadSchema,
+} from "./hygiene";
+import {
   serializeDefinitionForClient,
   type SerializedTrackerDefinition,
   type TrackerDefinition,
@@ -71,6 +75,19 @@ export type {
   ToiletingEntryPayload,
 } from "./toileting";
 
+// ─── Hygiene ────────────────────────────────────────────────────────────────
+export {
+  hygieneEntryPayloadSchema,
+  HYGIENE_DEFINITION,
+  HYGIENE_GOAL_IDS,
+  HYGIENE_STATUS_VALUES,
+} from "./hygiene";
+export type {
+  HygieneGoalId,
+  HygieneStatus,
+  HygieneEntryPayload,
+} from "./hygiene";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,6 +100,7 @@ export const TRACKER_REGISTRY: Record<string, TrackerDefinition> = {
   adl: ADL_DEFINITION,
   vitals: VITALS_DEFINITION,
   toileting: TOILETING_DEFINITION,
+  hygiene: HYGIENE_DEFINITION,
 };
 
 // Silence unused-import warnings for re-exports that are surfaced via
@@ -90,6 +108,7 @@ export const TRACKER_REGISTRY: Record<string, TrackerDefinition> = {
 void adlEntryPayloadSchema;
 void vitalsEntryPayloadSchema;
 void toiletingEntryPayloadSchema;
+void hygieneEntryPayloadSchema;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

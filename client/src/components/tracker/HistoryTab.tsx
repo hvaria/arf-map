@@ -10,6 +10,7 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import {
   Drawer,
   DrawerContent,
@@ -19,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getQueryFn } from "@/lib/queryClient";
+import { ExportCsvDialog } from "./ExportCsvDialog";
 import {
   useTrackerEntries,
   type TrackerEntryRow,
@@ -234,29 +236,74 @@ export function HistoryTab({
   const [selectedEntry, setSelectedEntry] = useState<TrackerEntryRow | null>(
     null,
   );
+  const [exportOpen, setExportOpen] = useState(false);
 
-  if (isLoading) return <TrackerLoading rows={4} />;
+  // The Export toolbar is rendered for every History state (loading, error,
+  // empty, with data) so the user can always export — even on a date that
+  // happens to have no entries. We compose it once and reuse it below.
+  const toolbar = (
+    <div className="flex items-center justify-end mb-3">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setExportOpen(true)}
+        className="gap-1.5 min-h-[32px]"
+        aria-label="Export tracker entries to CSV"
+      >
+        <Download className="h-4 w-4" aria-hidden="true" />
+        Export CSV
+      </Button>
+    </div>
+  );
+
+  const exportDialog = (
+    <ExportCsvDialog
+      open={exportOpen}
+      onOpenChange={setExportOpen}
+      definition={definition}
+      shift={filters.shift}
+      residentId={filters.residentId}
+    />
+  );
+
+  if (isLoading)
+    return (
+      <div>
+        {toolbar}
+        <TrackerLoading rows={4} />
+        {exportDialog}
+      </div>
+    );
   if (isError)
     return (
-      <TrackerEmpty
-        title="Couldn't load history"
-        hint="Try refreshing or adjusting your filters."
-      />
+      <div>
+        {toolbar}
+        <TrackerEmpty
+          title="Couldn't load history"
+          hint="Try refreshing or adjusting your filters."
+        />
+        {exportDialog}
+      </div>
     );
 
   const items = data?.pages.flatMap((p) => p.data.items) ?? [];
 
   if (items.length === 0) {
     return (
-      <TrackerEmpty
-        title="No entries on this date"
-        hint="Try a different date or shift, or use Quick / Detailed mode to add one."
-      />
+      <div>
+        {toolbar}
+        <TrackerEmpty
+          title="No entries on this date"
+          hint="Try a different date or shift, or use Quick / Detailed mode to add one."
+        />
+        {exportDialog}
+      </div>
     );
   }
 
   return (
     <div>
+      {toolbar}
       <div className="rounded-md border bg-white overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs text-muted-foreground uppercase tracking-wide">
@@ -349,6 +396,8 @@ export function HistoryTab({
           if (!open) setSelectedEntry(null);
         }}
       />
+
+      {exportDialog}
     </div>
   );
 }
