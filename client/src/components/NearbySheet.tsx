@@ -3,8 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Briefcase, Map, MapPin, DollarSign, Clock, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { useFacilities } from "@/hooks/useFacilities";
-import type { Facility } from "@shared/schema";
+import type { FacilityPin } from "@shared/schema";
 
 interface DbJob {
   id: number;
@@ -36,16 +35,16 @@ function daysAgo(ts: number) {
 }
 
 interface NearbySheetProps {
-  onSelectFacility: (facility: Facility) => void;
+  onSelectFacility: (facility: FacilityPin) => void;
   /** Hide the sheet while a facility detail panel is open */
   hidden: boolean;
+  /** Map of facility number → slim pin, supplied by the parent. */
+  facilityByNumber: Map<string, FacilityPin>;
 }
 
-export function NearbySheet({ onSelectFacility, hidden }: NearbySheetProps) {
+export function NearbySheet({ onSelectFacility, hidden, facilityByNumber }: NearbySheetProps) {
   const [expanded, setExpanded] = useState(false);
   const dragStartY = useRef<number | null>(null);
-
-  const { facilities, facilityByNumber } = useFacilities();
 
   const { data: dbJobs = [], isLoading } = useQuery<DbJob[]>({
     queryKey: ["/api/jobs"],
@@ -53,39 +52,19 @@ export function NearbySheet({ onSelectFacility, hidden }: NearbySheetProps) {
   });
 
   const jobs = useMemo<DisplayJob[]>(() => {
-    const dbFacilityNumbers = new Set(dbJobs.map((j) => j.facilityNumber));
-
-    const embeddedJobs: DisplayJob[] = facilities
-      .filter((f) => f.isHiring && f.jobPostings.length > 0 && !dbFacilityNumbers.has(f.number))
-      .flatMap((f) =>
-        f.jobPostings.map((jp, i) => ({
-          key: `emb-${f.number}-${i}`,
-          facilityNumber: f.number,
-          title: jp.title,
-          type: jp.type,
-          salary: jp.salary,
-          description: jp.description,
-          requirements: jp.requirements,
-          postedAt: Date.now() - jp.postedDaysAgo * 86_400_000,
-        }))
-      );
-
-    const mapped: DisplayJob[] = dbJobs.map((j) => ({
-      key: `db-${j.id}`,
-      facilityNumber: j.facilityNumber,
-      title: j.title,
-      type: j.type,
-      salary: j.salary,
-      description: j.description,
-      requirements: j.requirements,
-      postedAt: j.postedAt,
-    }));
-
-    return [
-      ...mapped.sort((a, b) => b.postedAt - a.postedAt),
-      ...embeddedJobs.sort((a, b) => b.postedAt - a.postedAt),
-    ];
-  }, [dbJobs, facilities]);
+    return dbJobs
+      .map((j) => ({
+        key: `db-${j.id}`,
+        facilityNumber: j.facilityNumber,
+        title: j.title,
+        type: j.type,
+        salary: j.salary,
+        description: j.description,
+        requirements: j.requirements,
+        postedAt: j.postedAt,
+      }))
+      .sort((a, b) => b.postedAt - a.postedAt);
+  }, [dbJobs]);
 
   if (hidden) return null;
 
@@ -189,7 +168,7 @@ function JobCard({
   onClick,
 }: {
   job: DisplayJob;
-  facility: Facility | null;
+  facility: FacilityPin | null;
   onClick: () => void;
 }) {
   return (

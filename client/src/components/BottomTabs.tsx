@@ -3,8 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Briefcase, Building2, MapPin, DollarSign, Clock, ChevronUp, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { Facility } from "@shared/schema";
-import { useFacilities } from "@/hooks/useFacilities";
+import type { FacilityPin } from "@shared/schema";
+import { useFacilityPins } from "@/hooks/useFacilityPins";
 
 interface PublicJob {
   id: number;
@@ -18,8 +18,8 @@ interface PublicJob {
 }
 
 interface BottomTabsProps {
-  filteredFacilities: Facility[];
-  onSelectFacility: (facility: Facility) => void;
+  filteredFacilities: FacilityPin[];
+  onSelectFacility: (facility: FacilityPin) => void;
 }
 
 function daysAgo(ts: number) {
@@ -32,7 +32,7 @@ function daysAgo(ts: number) {
 export function BottomTabs({ filteredFacilities, onSelectFacility }: BottomTabsProps) {
   const [activeTab, setActiveTab] = useState<"jobs" | "facilities">("jobs");
   const [expanded, setExpanded] = useState(false);
-  const { facilityByNumber } = useFacilities();
+  const { pinByNumber: facilityByNumber } = useFacilityPins();
 
   const { data: jobs = [], isLoading } = useQuery<PublicJob[]>({
     queryKey: ["/api/jobs"],

@@ -1,7 +1,7 @@
 import { MapPin, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { normalizeRawType } from "@shared/taxonomy";
-import type { Facility } from "@shared/schema";
+import type { FacilityPin } from "@shared/schema";
 
 const STATUS_DOT_COLORS: Record<string, string> = {
   LICENSED: "bg-emerald-500",
@@ -24,9 +24,9 @@ const STATUS_LABEL: Record<string, string> = {
 const MAX_VISIBLE = 200;
 
 interface SearchResultsListProps {
-  facilities: Facility[];
-  selectedFacility: Facility | null;
-  onSelectFacility: (facility: Facility) => void;
+  facilities: FacilityPin[];
+  selectedFacility: FacilityPin | null;
+  onSelectFacility: (facility: FacilityPin) => void;
   query: string;
 }
 

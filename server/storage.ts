@@ -443,6 +443,48 @@ export async function queryFacilitiesAllAsync(filters: FacilityQueryFilters): Pr
   return result.rows as FacilityDbRow[];
 }
 
+/**
+ * Slim projection for the map. Returns only the columns the map cluster,
+ * pin, hover tooltip, and JobsPanel actually read — about a quarter the
+ * row size of queryFacilitiesAllAsync. Skips ORDER BY because the client
+ * groups/clusters by lat/lng anyway.
+ */
+export interface FacilityPinRow {
+  number: string;
+  name: string;
+  lat: number;
+  lng: number;
+  city: string;
+  county: string;
+  capacity: number | null;
+  status: string;
+  facility_type: string;
+  facility_group: string;
+}
+
+export async function queryFacilityPinsAsync(
+  filters: FacilityQueryFilters,
+): Promise<FacilityPinRow[]> {
+  const { where, params } = buildFacilityWhere(filters);
+  const coordClause = where
+    ? `${where} AND lat IS NOT NULL AND lng IS NOT NULL AND lat != 0 AND lng != 0`
+    : `WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat != 0 AND lng != 0`;
+  const result = await pool.query(
+    `SELECT number, name, lat, lng, city, county, capacity, status, facility_type, facility_group
+     FROM facilities ${coordClause}`,
+    params,
+  );
+  return result.rows as FacilityPinRow[];
+}
+
+/** Single facility detail row, used by /api/facilities/:number/public. */
+export async function getFacilityByNumberAsync(
+  number: string,
+): Promise<FacilityDbRow | undefined> {
+  const result = await pool.query("SELECT * FROM facilities WHERE number = $1", [number]);
+  return result.rows[0] as FacilityDbRow | undefined;
+}
+
 export async function searchFacilitiesAutocompleteAsync(q: string, limit = 10): Promise<FacilityDbRow[]> {
   const pattern = `%${q.toLowerCase()}%`;
   const result = await pool.query(

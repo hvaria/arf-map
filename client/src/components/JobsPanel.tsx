@@ -3,8 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Briefcase, MapPin, DollarSign, Clock, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import type { Facility } from "@shared/schema";
-import { useFacilities } from "@/hooks/useFacilities";
+import type { FacilityPin } from "@shared/schema";
 import { cn } from "@/lib/utils";
 
 interface DbJob {
@@ -30,8 +29,14 @@ interface DisplayJob {
 }
 
 interface JobsPanelProps {
-  selectedFacility: Facility | null;
-  onSelectFacility: (facility: Facility) => void;
+  selectedFacility: FacilityPin | null;
+  onSelectFacility: (facility: FacilityPin) => void;
+  /**
+   * Map of facility number → slim pin, supplied by the parent so JobsPanel
+   * reuses MapPage's already-loaded pin data instead of issuing a second
+   * (potentially statewide) request just to resolve facility name / city.
+   */
+  facilityByNumber: Map<string, FacilityPin>;
 }
 
 function daysAgo(ts: number) {
@@ -54,38 +59,19 @@ function isJunkJob(j: { title: string; description: string; salary: string }): b
   return [title, desc, salary].some((v) => PLACEHOLDER_REGEX.test(v));
 }
 
-export function JobsPanel({ selectedFacility, onSelectFacility }: JobsPanelProps) {
-  const { facilities, facilityByNumber } = useFacilities();
-
-  // DB jobs from the facility portal
+export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber }: JobsPanelProps) {
+  // DB jobs from the facility portal — single source of truth now that the
+  // pin payload no longer carries embedded jobPostings. Facility metadata
+  // (name, city) is looked up by facility number against any pins that
+  // happen to be loaded; rows for unloaded pins simply show no facility
+  // line until the user pans the map to include them.
   const { data: dbJobs = [], isLoading } = useQuery<DbJob[]>({
     queryKey: ["/api/jobs"],
     staleTime: 60000,
   });
 
-  // Merge DB jobs + facility-embedded jobs (deduplicated by facility)
   const jobs = useMemo<DisplayJob[]>(() => {
-    const dbFacilityNumbers = new Set(dbJobs.map((j) => j.facilityNumber));
-
-    // Jobs embedded in facilities that have no DB portal account
-    const embeddedJobs: DisplayJob[] = facilities
-      .filter((f) => f.isHiring && f.jobPostings.length > 0 && !dbFacilityNumbers.has(f.number))
-      .flatMap((f) =>
-        f.jobPostings
-          .filter((jp) => !isJunkJob(jp))
-          .map((jp, i) => ({
-            key: `emb-${f.number}-${i}`,
-            facilityNumber: f.number,
-            title: jp.title,
-            type: jp.type,
-            salary: jp.salary,
-            description: jp.description,
-            requirements: jp.requirements,
-            postedAt: Date.now() - jp.postedDaysAgo * 86_400_000,
-          }))
-      );
-
-    const mapped: DisplayJob[] = dbJobs
+    return dbJobs
       .filter((j) => !isJunkJob(j))
       .map((j) => ({
         key: `db-${j.id}`,
@@ -96,13 +82,9 @@ export function JobsPanel({ selectedFacility, onSelectFacility }: JobsPanelProps
         description: j.description,
         requirements: j.requirements,
         postedAt: j.postedAt,
-      }));
-
-    return [
-      ...mapped.sort((a, b) => b.postedAt - a.postedAt),
-      ...embeddedJobs.sort((a, b) => b.postedAt - a.postedAt),
-    ];
-  }, [dbJobs, facilities]);
+      }))
+      .sort((a, b) => b.postedAt - a.postedAt);
+  }, [dbJobs]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -171,7 +153,7 @@ function JobCard({
   onClick,
 }: {
   job: DisplayJob;
-  facility: Facility | null;
+  facility: FacilityPin | null;
   isSelected: boolean;
   onClick: () => void;
 }) {

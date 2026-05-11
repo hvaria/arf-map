@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
-import type { Facility, JobPosting } from "@shared/schema";
+import type { Facility, FacilityPin, JobPosting } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { normalizeRawType } from "@shared/taxonomy";
 import { ExpressInterestButton } from "@/components/ExpressInterestButton"; // NEW: expression-of-interest
@@ -33,7 +33,7 @@ function haversineDistanceMiles(
 }
 
 interface FacilityPanelProps {
-  facility: Facility | null;
+  facility: FacilityPin | null;
   open: boolean;
   onClose: () => void;
   userLocation?: { lat: number; lng: number } | null;
@@ -58,6 +58,12 @@ interface FacilityOverride {
 }
 
 interface PublicData {
+  /**
+   * Full facility row — supplied by the extended /public endpoint so the
+   * detail panel can render the heavy fields (licensee, administrator,
+   * citations, visit history, etc.) that the slim pin doesn't carry.
+   */
+  facility: Facility | null;
   overrides: FacilityOverride | null;
   jobPostings: DbJobPosting[];
 }
@@ -130,7 +136,7 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
     [panelVh, onClose]
   );
 
-  const { data: publicData } = useQuery<PublicData>({
+  const { data: publicData, isLoading: isLoadingDetail } = useQuery<PublicData>({
     queryKey: [`/api/facilities/${facility?.number}/public`],
     queryFn: getQueryFn({ on401: "throw" }),
     enabled: !!facility?.number,
@@ -149,12 +155,16 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
       ? haversineDistanceMiles(userLocation.lat, userLocation.lng, facility.lat, facility.lng)
       : null;
 
+  // Heavy fields (licensee, administrator, citations, visit history, etc.)
+  // arrive from /api/facilities/:number/public — the slim pin only carries
+  // what the map needs. While the detail request is in flight the panel
+  // renders pin-derived fields immediately and shows skeletons for the rest.
+  const detail = publicData?.facility ?? null;
   const overrides = publicData?.overrides;
-  const displayPhone = overrides?.phone || facility.phone;
+  const displayPhone = overrides?.phone || detail?.phone || "";
   const dbJobs = publicData?.jobPostings ?? [];
-  const hasDbAccount = dbJobs.length > 0 || overrides != null;
-  const displayJobs: (JobPosting | DbJobPosting)[] = hasDbAccount ? dbJobs : facility.jobPostings;
-  const isHiring = hasDbAccount ? dbJobs.length > 0 : facility.isHiring;
+  const displayJobs: (JobPosting | DbJobPosting)[] = dbJobs;
+  const isHiring = facility.isHiring;
 
   return (
     // No backdrop — map stays fully interactive
@@ -261,7 +271,11 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
 
           <Section title="Location & Contact">
             <InfoRow icon={MapPin} label="Address">
-              {facility.address}, {facility.city}, CA {facility.zip}
+              {detail
+                ? <>{detail.address}, {facility.city}, CA {detail.zip}</>
+                : isLoadingDetail
+                  ? <SkeletonLine />
+                  : <>{facility.city}, CA</>}
               {facility.county && (
                 <span className="block text-[10px] text-muted-foreground mt-0.5">{facility.county} County</span>
               )}
@@ -292,36 +306,36 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
           )}
 
           <Section title="Licensee & Administration">
-            <InfoRow icon={Building2} label="Licensee">{facility.licensee || "—"}</InfoRow>
-            <InfoRow icon={User} label="Administrator">{facility.administrator || "—"}</InfoRow>
+            <InfoRow icon={Building2} label="Licensee">{detail?.licensee || (isLoadingDetail ? <SkeletonLine /> : "—")}</InfoRow>
+            <InfoRow icon={User} label="Administrator">{detail?.administrator || (isLoadingDetail ? <SkeletonLine /> : "—")}</InfoRow>
           </Section>
 
           <Section title="Key Dates">
-            <InfoRow icon={Calendar} label="First Licensed">{facility.firstLicenseDate || "—"}</InfoRow>
-            {facility.closedDate && (
+            <InfoRow icon={Calendar} label="First Licensed">{detail?.firstLicenseDate || (isLoadingDetail ? <SkeletonLine /> : "—")}</InfoRow>
+            {detail?.closedDate && (
               <InfoRow icon={Calendar} label="Closed Date">
-                <span className="text-red-600 dark:text-red-400">{facility.closedDate}</span>
+                <span className="text-red-600 dark:text-red-400">{detail.closedDate}</span>
               </InfoRow>
             )}
-            <InfoRow icon={Calendar} label="Last Inspection">{facility.lastInspectionDate || "—"}</InfoRow>
+            <InfoRow icon={Calendar} label="Last Inspection">{detail?.lastInspectionDate || (isLoadingDetail ? <SkeletonLine /> : "—")}</InfoRow>
           </Section>
 
           <Section title="Visit History">
             <div className="grid grid-cols-3 gap-2">
-              <StatCard label="Total" value={facility.totalVisits} />
-              <StatCard label="Inspections" value={facility.inspectionVisits} />
-              <StatCard label="Complaints" value={facility.complaintVisits} alert={facility.complaintVisits > 0} />
+              <StatCard label="Total" value={detail?.totalVisits ?? 0} />
+              <StatCard label="Inspections" value={detail?.inspectionVisits ?? 0} />
+              <StatCard label="Complaints" value={detail?.complaintVisits ?? 0} alert={(detail?.complaintVisits ?? 0) > 0} />
             </div>
           </Section>
 
           <Section title="Type B Deficiencies">
             <div className="grid grid-cols-2 gap-2">
-              <StatCard label="Inspection" value={facility.inspectTypeB} alert={facility.inspectTypeB > 0} />
-              <StatCard label="Other"      value={facility.otherTypeB}   alert={facility.otherTypeB > 0} />
-              <StatCard label="Complaint"  value={facility.complaintTypeB} alert={facility.complaintTypeB > 0} />
-              <StatCard label="Total"      value={facility.totalTypeB}   alert={facility.totalTypeB > 0} large />
+              <StatCard label="Inspection" value={detail?.inspectTypeB ?? 0} alert={(detail?.inspectTypeB ?? 0) > 0} />
+              <StatCard label="Other"      value={detail?.otherTypeB ?? 0}   alert={(detail?.otherTypeB ?? 0) > 0} />
+              <StatCard label="Complaint"  value={detail?.complaintTypeB ?? 0} alert={(detail?.complaintTypeB ?? 0) > 0} />
+              <StatCard label="Total"      value={detail?.totalTypeB ?? 0}   alert={(detail?.totalTypeB ?? 0) > 0} large />
             </div>
-            {facility.citations && (
+            {detail?.citations && (
               <div
                 className="mt-2 p-3 rounded-md border"
                 style={{
@@ -340,7 +354,7 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
                   className="text-[12px] break-all leading-relaxed"
                   style={{ color: "var(--portal-status-warning)" }}
                 >
-                  {facility.citations}
+                  {detail.citations}
                 </p>
               </div>
             )}
@@ -410,6 +424,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="space-y-2">{children}</div>
     </div>
   );
+}
+
+function SkeletonLine() {
+  return <span className="inline-block w-32 h-3 bg-stone-100 rounded animate-pulse align-middle" />;
 }
 
 function InfoRow({ icon: Icon, label, children }: { icon: any; label: string; children: React.ReactNode }) {

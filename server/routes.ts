@@ -19,6 +19,8 @@ import {
 } from "./services/facilitiesService";
 import {
   queryFacilitiesAllAsync,
+  queryFacilityPinsAsync,
+  getFacilityByNumberAsync,
   searchFacilitiesAutocompleteAsync,
   getFacilitiesMetaAsync,
   type FacilityDbRow,
@@ -224,6 +226,136 @@ export async function registerRoutes(server: Server, app: Express) {
             facilityType: f.facilityType,
           }));
         res.json(matches);
+      }
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── /api/facilities/pins — slim payload for the map ──────────────────────────
+  // Returns only the fields the map cluster, pin, hover tooltip, and the
+  // right-sidebar Jobs panel actually read. Full detail (licensee, address,
+  // visit history, citations, etc.) is loaded on demand from
+  // /api/facilities/:number/public when a pin is opened.
+  //
+  // Same query params as /api/facilities (bbox, county, facilityType,
+  // facilityGroup, status, isHiring, minCapacity, maxCapacity, search).
+  app.get("/api/facilities/pins", async (req, res, next) => {
+    try {
+      // Same job-postings index used by /api/facilities so isHiring is
+      // consistent across the two endpoints.
+      const jobs = await storage.getAllJobPostings();
+      const jobCountByFacility = new Map<string, number>();
+      for (const job of jobs) {
+        jobCountByFacility.set(
+          job.facilityNumber,
+          (jobCountByFacility.get(job.facilityNumber) ?? 0) + 1,
+        );
+      }
+
+      const search = String(req.query.search ?? "").trim() || undefined;
+      const county = String(req.query.county ?? "").trim() || undefined;
+      const facilityType = String(req.query.facilityType ?? "").trim() || undefined;
+      const facilityGroup = String(req.query.facilityGroup ?? "").trim() || undefined;
+      const statusParam = String(req.query.status ?? "").trim();
+      const statuses = statusParam ? statusParam.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      const hiringOnly = req.query.isHiring === "true";
+      const minCap = req.query.minCapacity ? parseInt(String(req.query.minCapacity), 10) : undefined;
+      const maxCap = req.query.maxCapacity ? parseInt(String(req.query.maxCapacity), 10) : undefined;
+      const bboxParam = String(req.query.bbox ?? "").trim();
+      const bbox = bboxParam
+        ? (() => {
+            const [minLat, minLng, maxLat, maxLng] = bboxParam.split(",").map(Number);
+            return { minLat, minLng, maxLat, maxLng };
+          })()
+        : undefined;
+
+      if (isDatabaseSeeded()) {
+        let rows = await queryFacilityPinsAsync({
+          search,
+          county,
+          facilityType,
+          facilityGroup,
+          statuses,
+          minCapacity: minCap,
+          maxCapacity: maxCap,
+          bbox,
+        });
+
+        if (hiringOnly) {
+          rows = rows.filter((r) => jobCountByFacility.has(r.number));
+        }
+
+        const result = rows.map((r) => {
+          const jobCount = jobCountByFacility.get(r.number) ?? 0;
+          return {
+            number: r.number,
+            name: r.name,
+            lat: r.lat,
+            lng: r.lng,
+            city: r.city,
+            county: r.county,
+            capacity: r.capacity ?? 0,
+            status: r.status,
+            facilityType: r.facility_type,
+            facilityGroup: r.facility_group,
+            isHiring: jobCount > 0,
+            jobCount,
+          };
+        });
+
+        // Short cache — job-postings counts are derived per-request so the
+        // cache must turn over quickly enough that newly posted jobs surface.
+        res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+        res.json(result);
+      } else {
+        // Live-fetch fallback when DB isn't seeded — no coords yet, but we
+        // still honor the slim contract.
+        let facilities = (await getCachedFacilities()).filter((f) => f.lat !== 0 && f.lng !== 0);
+        if (search) {
+          const ql = search.toLowerCase();
+          facilities = facilities.filter(
+            (f) =>
+              f.name.toLowerCase().includes(ql) ||
+              f.city.toLowerCase().includes(ql) ||
+              f.county.toLowerCase().includes(ql) ||
+              f.number.includes(ql),
+          );
+        }
+        if (county) facilities = facilities.filter((f) => f.county === county);
+        if (facilityType) facilities = facilities.filter((f) => f.facilityType === facilityType);
+        if (facilityGroup) facilities = facilities.filter((f) => f.facilityGroup === facilityGroup);
+        if (statuses && statuses.length > 0) facilities = facilities.filter((f) => statuses.includes(f.status));
+        if (hiringOnly) facilities = facilities.filter((f) => jobCountByFacility.has(f.number));
+        if (minCap != null) facilities = facilities.filter((f) => f.capacity >= minCap);
+        if (maxCap != null) facilities = facilities.filter((f) => f.capacity <= maxCap);
+        if (bbox) {
+          facilities = facilities.filter(
+            (f) =>
+              f.lat >= bbox.minLat && f.lat <= bbox.maxLat &&
+              f.lng >= bbox.minLng && f.lng <= bbox.maxLng,
+          );
+        }
+
+        const result = facilities.map((f) => {
+          const jobCount = jobCountByFacility.get(f.number) ?? 0;
+          return {
+            number: f.number,
+            name: f.name,
+            lat: f.lat,
+            lng: f.lng,
+            city: f.city,
+            county: f.county,
+            capacity: f.capacity,
+            status: f.status,
+            facilityType: f.facilityType,
+            facilityGroup: f.facilityGroup,
+            isHiring: jobCount > 0,
+            jobCount,
+          };
+        });
+        res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+        res.json(result);
       }
     } catch (err) {
       next(err);
@@ -648,11 +780,44 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/facilities/:number/public", async (req, res) => {
     const { number } = req.params;
-    const [overrides, jobPostings] = await Promise.all([
+    const [overrides, jobPostings, row] = await Promise.all([
       storage.getFacilityOverride(number),
       storage.getJobPostings(number),
+      getFacilityByNumberAsync(number),
     ]);
+    const facility = row
+      ? {
+          number: row.number,
+          name: row.name,
+          facilityType: row.facility_type,
+          facilityGroup: row.facility_group,
+          county: row.county,
+          address: row.address,
+          city: row.city,
+          zip: row.zip,
+          phone: row.phone,
+          licensee: row.licensee,
+          administrator: row.administrator,
+          status: row.status,
+          capacity: row.capacity ?? 0,
+          firstLicenseDate: row.first_license_date,
+          closedDate: row.closed_date,
+          lastInspectionDate: row.last_inspection_date,
+          totalVisits: row.total_visits ?? 0,
+          inspectionVisits: 0,
+          complaintVisits: 0,
+          inspectTypeB: 0,
+          otherTypeB: 0,
+          complaintTypeB: 0,
+          totalTypeB: row.total_type_b ?? 0,
+          citations: row.citations ? String(row.citations) : "",
+          lat: row.lat ?? 0,
+          lng: row.lng ?? 0,
+          geocodeQuality: row.geocode_quality,
+        }
+      : null;
     res.json({
+      facility,
       overrides: overrides ?? null,
       jobPostings: jobPostings.map((jp) => ({
         ...jp,

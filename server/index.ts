@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import compression from "compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -42,6 +43,10 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// gzip/brotli-style compression for all responses. Cuts the /api/facilities
+// JSON payload (and the slim /api/facilities/pins payload) by ~5× on the wire.
+app.use(compression());
 
 app.use(
   express.json({

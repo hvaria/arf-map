@@ -21,13 +21,13 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/context/AuthContext";
 import { useSession } from "@/hooks/useSession";
-import { useFacilities } from "@/hooks/useFacilities";
-import type { NearbyArea, BBox } from "@/hooks/useFacilities";
+import { useFacilityPins } from "@/hooks/useFacilityPins";
+import type { NearbyArea, BBox } from "@/hooks/useFacilityPins";
 import type { ViewportBounds } from "@/components/MapView";
-import type { Facility } from "@shared/schema";
+import type { FacilityPin } from "@shared/schema";
 
 export default function MapPage() {
-  const [selectedFacility, setSelectedFacility] = useState<Facility | null>(null);
+  const [selectedFacility, setSelectedFacility] = useState<FacilityPin | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
   const [filters, setFilters] = useState<FacilityFilters>(DEFAULT_FILTERS);
@@ -67,8 +67,10 @@ export default function MapPage() {
     [circleCenter]
   );
 
-  // Facilities with server-side filters applied
-  const { facilities } = useFacilities(filters, nearby, viewportBbox);
+  // Slim pin list with server-side filters applied. The query is gated on
+  // bbox / nearby / search / filter so the cold-start mount doesn't fire a
+  // statewide request before the map has reported its viewport.
+  const { pins: facilities, pinByNumber: facilityByNumber } = useFacilityPins(filters, nearby, viewportBbox);
 
   // Geolocation on mount — fly to user if granted, fall back to California default
   useEffect(() => {
@@ -124,7 +126,7 @@ export default function MapPage() {
 
   const { data: facilityUser } = useSession();
 
-  const handleSelectFacility = useCallback((facility: Facility) => {
+  const handleSelectFacility = useCallback((facility: FacilityPin) => {
     setSelectedFacility(facility);
     setPanelOpen(true);
   }, []);
@@ -341,6 +343,7 @@ export default function MapPage() {
           <NearbySheet
             onSelectFacility={handleSelectFacility}
             hidden={panelOpen}
+            facilityByNumber={facilityByNumber}
           />
         </div>
 
@@ -360,6 +363,7 @@ export default function MapPage() {
             <JobsPanel
               selectedFacility={selectedFacility}
               onSelectFacility={handleSelectFacility}
+              facilityByNumber={facilityByNumber}
             />
           )}
         </aside>

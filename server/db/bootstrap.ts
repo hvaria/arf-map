@@ -107,6 +107,7 @@ const MAIN_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_facilities_status ON facilities(status);
   CREATE INDEX IF NOT EXISTS idx_facilities_county ON facilities(county);
   CREATE INDEX IF NOT EXISTS idx_facilities_facility_type ON facilities(facility_type);
+  CREATE INDEX IF NOT EXISTS idx_facilities_coords ON facilities(lat, lng) WHERE lat IS NOT NULL AND lng IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS applicant_interests (
     id              SERIAL PRIMARY KEY,

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
-import type { Facility } from "@shared/schema";
+import type { FacilityPin } from "@shared/schema";
 import { DOMAIN_PALETTE, paletteForDomain } from "@shared/taxonomy";
 
 const RADIUS_METERS = 8047; // 5 miles
@@ -13,9 +13,9 @@ export interface ViewportBounds {
 }
 
 interface MapViewProps {
-  facilities: Facility[];
-  selectedFacility: Facility | null;
-  onSelectFacility: (facility: Facility) => void;
+  facilities: FacilityPin[];
+  selectedFacility: FacilityPin | null;
+  onSelectFacility: (facility: FacilityPin) => void;
   userLocation: { lat: number; lng: number } | null;
   circleCenter: { lat: number; lng: number } | null;
   /**
@@ -83,11 +83,11 @@ export function MapView({
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const facilitiesRef = useRef<Facility[]>(facilities);
+  const facilitiesRef = useRef<FacilityPin[]>(facilities);
   const onSelectRef = useRef(onSelectFacility);
   const initializedRef = useRef(false);
   const hasFlownToUser = useRef(false);
-  const prevFacilitiesRef = useRef<Facility[]>([]);
+  const prevFacilitiesRef = useRef<FacilityPin[]>([]);
   const userLocationRef = useRef(userLocation);
   // Donut overlays for clusters: maplibre Marker keyed by cluster_id
   const clusterMarkersRef = useRef<Map<number, maplibregl.Marker>>(new Map());
@@ -547,7 +547,7 @@ export function MapView({
 }
 
 function buildGeoJSON(
-  facilities: Facility[],
+  facilities: FacilityPin[],
   userLocation: { lat: number; lng: number } | null
 ): GeoJSON.FeatureCollection {
   return {
@@ -565,7 +565,7 @@ function buildGeoJSON(
         facilityType: f.facilityType ?? "Adult Residential Facility",
         facilityGroup: f.facilityGroup ?? "Adult & Senior Care",
         isHiring: f.isHiring,
-        jobCount: f.jobPostings?.length || 0,
+        jobCount: f.jobCount ?? 0,
         // true when no user location (no dimming) or within 5 miles
         isNearby: userLocation
           ? haversineDistanceMiles(userLocation.lat, userLocation.lng, f.lat, f.lng) <= 2

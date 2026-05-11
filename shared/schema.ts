@@ -189,6 +189,27 @@ export const facilitySchema = z.object({
 
 export type Facility = z.infer<typeof facilitySchema>;
 
+// Slim shape returned by /api/facilities/pins. Contains only what the map,
+// clustered markers, tooltip, and the right-sidebar JobsPanel actually read.
+// Full detail (licensee, address, citations, visit history, etc.) is loaded
+// on demand from /api/facilities/:number/public when a pin is opened.
+export const facilityPinSchema = z.object({
+  number: z.string(),
+  name: z.string(),
+  lat: z.number(),
+  lng: z.number(),
+  city: z.string().default(""),
+  county: z.string().default(""),
+  capacity: z.number().default(0),
+  status: z.string(),
+  facilityType: z.string().default("Adult Residential Facility"),
+  facilityGroup: z.string().default("Adult & Senior Care"),
+  isHiring: z.boolean(),
+  jobCount: z.number().default(0),
+});
+
+export type FacilityPin = z.infer<typeof facilityPinSchema>;
+
 // Metadata shape returned by /api/facilities/meta
 export const facilitiesMetaSchema = z.object({
   totalCount: z.number(),
