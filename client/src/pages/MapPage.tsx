@@ -67,25 +67,62 @@ export default function MapPage() {
     [circleCenter]
   );
 
+  // Defer the first pin fetch until geolocation resolves (granted, denied,
+  // or timed out). Without this gate the map mounts → reports its zoom-6
+  // California-wide viewport → fires a statewide pin request, then a
+  // *second* small request once the user grants location. Both happen
+  // serially, so the user waits for the wasted statewide payload first.
+  // With the gate, granted users skip straight to the small "around me"
+  // fetch.
+  const [geoResolved, setGeoResolved] = useState(false);
+
   // Slim pin list with server-side filters applied. The query is gated on
   // bbox / nearby / search / filter so the cold-start mount doesn't fire a
   // statewide request before the map has reported its viewport.
-  const { pins: facilities, pinByNumber: facilityByNumber } = useFacilityPins(filters, nearby, viewportBbox);
+  const {
+    pins: facilities,
+    pinByNumber: facilityByNumber,
+    isFetching: isFetchingPins,
+  } = useFacilityPins(
+    filters,
+    nearby,
+    // Suppress the viewport bbox until geolocation has resolved so the
+    // first fetch uses the small `nearby` bbox when location is granted.
+    geoResolved ? viewportBbox : null,
+  );
 
   // Geolocation on mount — fly to user if granted, fall back to California default
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setGeoResolved(true);
+      return;
+    }
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      setGeoResolved(true);
+    };
+    // Hard fallback: if the permission prompt sits idle for 1.5s, release
+    // the gate so the map at least starts loading the visible viewport
+    // instead of staring at an empty canvas.
+    const fallback = window.setTimeout(settle, 1500);
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         const loc = { lat: coords.latitude, lng: coords.longitude };
         setUserLocation(loc);
         setCircleCenter(loc);
+        window.clearTimeout(fallback);
+        settle();
       },
       () => {
         // Permission denied or unavailable — stay at California default
+        window.clearTimeout(fallback);
+        settle();
       },
       { timeout: 10000, maximumAge: 60000 }
     );
+    return () => window.clearTimeout(fallback);
   }, []);
 
   // First-load CTA: dismissed once user takes any action (geolocates,
@@ -330,6 +367,23 @@ export default function MapPage() {
             circleCenter={circleCenter}
             onViewportChange={handleViewportChange}
           />
+
+          {/* Pin-load indicator — visible while the slim pin fetch is in
+              flight. Sits above the map so users get immediate feedback
+              instead of staring at an empty basemap during the first
+              cold-start request (which can be slow on Fly.io cold boot). */}
+          {isFetchingPins && (
+            <div
+              className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-full bg-white/95 px-3 py-1.5 text-[12px] text-stone-700 shadow-md border"
+              style={{ borderColor: "var(--portal-border-subtle)" }}
+              data-testid="pins-loading"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="inline-block h-3 w-3 rounded-full border-2 border-stone-300 border-t-[var(--portal-accent)] animate-spin" />
+              {facilities.length > 0 ? "Updating facilities…" : "Loading facilities…"}
+            </div>
+          )}
 
           {/* Facility detail bottom sheet */}
           <FacilityPanel
