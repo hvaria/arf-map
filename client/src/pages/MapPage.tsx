@@ -368,20 +368,29 @@ export default function MapPage() {
             onViewportChange={handleViewportChange}
           />
 
-          {/* Pin-load indicator — visible while the slim pin fetch is in
-              flight. Sits above the map so users get immediate feedback
-              instead of staring at an empty basemap during the first
-              cold-start request (which can be slow on Fly.io cold boot). */}
-          {isFetchingPins && (
+          {/* Initial-load overlay — center-locked translucent backdrop that
+              blocks the map until the first pin fetch returns. Subsequent
+              viewport refetches keep showing the previously loaded pins
+              (placeholderData=keepPreviousData), so this overlay only ever
+              appears on the cold-start request. */}
+          {isFetchingPins && facilities.length === 0 && (
             <div
-              className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-full bg-white/95 px-3 py-1.5 text-[12px] text-stone-700 shadow-md border"
-              style={{ borderColor: "var(--portal-border-subtle)" }}
+              className="absolute inset-0 z-30 flex items-center justify-center bg-white/60 backdrop-blur-[2px]"
               data-testid="pins-loading"
               role="status"
               aria-live="polite"
+              aria-busy="true"
             >
-              <span className="inline-block h-3 w-3 rounded-full border-2 border-stone-300 border-t-[var(--portal-accent)] animate-spin" />
-              {facilities.length > 0 ? "Updating facilities…" : "Loading facilities…"}
+              <div
+                className="flex flex-col items-center gap-3 rounded-lg bg-white/95 px-6 py-5 shadow-lg border"
+                style={{ borderColor: "var(--portal-border-subtle)" }}
+              >
+                <span className="inline-block h-8 w-8 rounded-full border-[3px] border-stone-200 border-t-[var(--portal-accent)] animate-spin" />
+                <div className="text-[13px] font-medium text-stone-800">Loading facilities…</div>
+                <div className="text-[11px] text-muted-foreground -mt-1">
+                  {circleCenter ? "Finding care facilities near you" : "Preparing map"}
+                </div>
+              </div>
             </div>
           )}
 
