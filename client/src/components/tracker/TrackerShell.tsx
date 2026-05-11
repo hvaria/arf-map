@@ -77,7 +77,7 @@ export function TrackerShell({
       <TrackerHeader
         definition={definition}
         onNewEntry={
-          definition.modes.includes("detailed")
+          definition.modes.includes("detailed") && tab !== "detailed"
             ? () => onTabChange("detailed")
             : undefined
         }

@@ -18,6 +18,9 @@
  * client reads its local registry. See `serializeDefinitionForClient`.
  */
 
+import { classifyVitalRange } from "./vital-ranges";
+import type { VitalType } from "./vitals";
+
 export type AlertSeverity = "info" | "warn" | "critical";
 
 /**
@@ -79,7 +82,7 @@ export function vitalsCriticalRule(args: {
   id: string;
   label: string;
   /** vital_type discriminator value, e.g. 'bp', 'pulse'. */
-  vitalType: string;
+  vitalType: VitalType;
   /** Build the human-readable headline. */
   message: (payload: Record<string, unknown>) => string;
   /** Optional longer description / suggested action. */
@@ -93,6 +96,20 @@ export function vitalsCriticalRule(args: {
       if (!payload || typeof payload !== "object") return null;
       const p = payload as Record<string, unknown>;
       if (p.vital_type !== args.vitalType) return null;
+
+      const range =
+        args.vitalType === "bp"
+          ? classifyVitalRange("bp", asNumber(p.systolic), {
+              secondary: asNumber(p.diastolic),
+            })
+          : args.vitalType === "temperature"
+            ? classifyVitalRange("temperature", asNumber(p.value), {
+                unit: p.unit === "C" ? "C" : "F",
+              })
+            : classifyVitalRange(args.vitalType, asNumber(p.value));
+
+      if (range !== "critical") return null;
+
       return {
         ruleId: args.id,
         severity: "critical",
@@ -102,4 +119,12 @@ export function vitalsCriticalRule(args: {
       };
     },
   };
+}
+
+function asNumber(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) {
+    return Number(v);
+  }
+  return undefined;
 }

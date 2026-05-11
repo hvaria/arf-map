@@ -43,6 +43,13 @@ export interface NotesListPaneProps {
   /** Called when the list has settled and the selected id isn't present. */
   onClearSelection: () => void;
   onClearSearch: () => void;
+  /**
+   * When true, auto-select the first item once the list settles with no
+   * current selection. Used by the modal surface so the right pane isn't
+   * empty on open. Page mode leaves this false so the URL stays the source
+   * of truth (an empty `noteId` param renders as "no selection").
+   */
+  autoSelectFirst?: boolean;
 }
 
 function scrollKey(group: GroupKey, archived: ArchivedFlag, q: string) {
@@ -58,6 +65,7 @@ export function NotesListPane({
   onSelect,
   onClearSelection,
   onClearSearch,
+  autoSelectFirst = false,
 }: NotesListPaneProps) {
   const queryClient = useQueryClient();
   const queryUrl = buildListUrl(group, q, archived === 1);
@@ -97,6 +105,18 @@ export function NotesListPane({
     if (items.some((n) => n.id === selectedNoteId)) return;
     onClearSelection();
   }, [isSettled, selectedNoteId, items, onClearSelection]);
+
+  // Auto-select the first item in modal mode so the right pane isn't empty on
+  // open. Gated on `isSettled` so a still-loading list doesn't briefly pick a
+  // stale first item before the real list arrives. Only fires when there's no
+  // current selection — once the user picks something we never override.
+  useEffect(() => {
+    if (!autoSelectFirst) return;
+    if (!isSettled) return;
+    if (selectedNoteId !== null) return;
+    if (items.length === 0) return;
+    onSelect(items[0].id);
+  }, [autoSelectFirst, isSettled, selectedNoteId, items, onSelect]);
 
   // ── Hover prefetch ────────────────────────────────────────────────────
   const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useResidents } from "./selectors/ResidentSelector";
 import {
   useCreateTrackerEntry,
+  useDeleteTrackerEntry,
   makeClientId,
 } from "@/lib/tracker/useTrackerMutation";
 import {
@@ -28,6 +29,13 @@ import {
 import { TrackerLoading } from "./TrackerLoading";
 import { TrackerEmpty } from "./TrackerEmpty";
 import { CellNotePopover } from "./CellNotePopover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { startOfDay } from "./TrackerFilterBar";
 import type {
   QuickGridCellColor,
   Shift,
@@ -100,10 +108,46 @@ export function QuickEntryGrid({
   });
 
   const createMutation = useCreateTrackerEntry(definition.slug);
+  const deleteMutation = useDeleteTrackerEntry(definition.slug);
   const [cellMap, setCellMap] = useState<Record<string, CellState>>({});
   // Track which cells we've initialized from server data so successive
   // re-renders don't clobber an optimistic update mid-flight.
   const seedSignatureRef = useRef<string | null>(null);
+  // Bug #1: when the cell-note popover closes, a touchscreen's pointerup can
+  // leak through to the underlying button as a synthetic click, silently
+  // cycling the ADL status. We stamp the cell-key with `Date.now()` on
+  // popover close and reject any tap inside the next ~150ms. Local ref —
+  // never exported, no state churn.
+  const popoverCloseAtRef = useRef<Record<string, number>>({});
+  const POPOVER_CLOSE_SUPPRESS_MS = 150;
+  function markPopoverClosed(goalId: string, residentId: number) {
+    popoverCloseAtRef.current[key(goalId, residentId)] = Date.now();
+  }
+
+  // Bug #4: long-press / right-click → "Clear cell" dropdown. Single
+  // grid-level "open" state — only one menu can be open at a time, matches
+  // the touch UX (you don't switch cells while a menu is up).
+  const [menuOpenKey, setMenuOpenKey] = useState<string | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFiredRef = useRef(false);
+  const touchStartXYRef = useRef<{ x: number; y: number } | null>(null);
+  const LONG_PRESS_MS = 500;
+  const TOUCH_MOVE_TOLERANCE = 10; // px — scroll vs hold disambiguation
+  // Bug #4: prior-day cells are read-only per the compliance verdict. We
+  // compute today's local-day boundary once per render and compare against
+  // the grid's `date` prop (already a local-day epoch from TrackerFilterBar).
+  const todayLocalDay = startOfDay(Date.now());
+  function isPriorDay(): boolean {
+    return date < todayLocalDay;
+  }
+  function cancelLongPress() {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+  // Cleanup any pending long-press timer on unmount.
+  useEffect(() => () => cancelLongPress(), []);
 
   const residents = useMemo(
     () =>
@@ -228,8 +272,82 @@ export function QuickEntryGrid({
     });
   }
 
+  /**
+   * Bug #4: soft-delete the saved entry behind this cell. Optimistically
+   * clear the cell, then call DELETE. On error we restore the prior value +
+   * surface a toast — mirroring the rollback pattern in `onCellTap`.
+   */
+  function onClearCell(goalId: string, residentId: number) {
+    const k = key(goalId, residentId);
+    const state = cellMap[k];
+    if (!state || state.entryId == null || state.pending) return;
+    if (isPriorDay()) return; // belt-and-suspenders; the menu item is disabled
+
+    const prevValue = state.value;
+    const prevEntryId = state.entryId;
+    const prevNote = state.note;
+    setCellMap((m) => ({
+      ...m,
+      [k]: {
+        ...m[k],
+        value: null,
+        pending: true,
+        entryId: null,
+        note: null,
+      },
+    }));
+
+    deleteMutation.mutate(
+      { id: prevEntryId },
+      {
+        onSuccess: () => {
+          // Rotate the clientId so a fresh tap after a clear posts a brand-
+          // new entry instead of colliding with the soft-deleted one.
+          setCellMap((m) => ({
+            ...m,
+            [k]: {
+              ...m[k],
+              value: null,
+              pending: false,
+              clientId: makeClientId(),
+              entryId: null,
+              note: null,
+            },
+          }));
+        },
+        onError: (err) => {
+          setCellMap((m) => ({
+            ...m,
+            [k]: {
+              ...m[k],
+              value: prevValue,
+              pending: false,
+              entryId: prevEntryId,
+              note: prevNote,
+            },
+          }));
+          toast({
+            title: "Couldn't clear cell",
+            description: err.message || "Try again.",
+            variant: "destructive",
+          });
+        },
+      },
+    );
+  }
+
   function onCellTap(goalId: string, residentId: number) {
     const k = key(goalId, residentId);
+    // Bug #1: bail if the cell-note popover just closed — the pointerup
+    // landing here is a touch-bubble artifact, not a deliberate tap.
+    const closedAt = popoverCloseAtRef.current[k];
+    if (closedAt && Date.now() - closedAt < POPOVER_CLOSE_SUPPRESS_MS) return;
+    // Bug #4: if a long-press just opened the clear-cell menu, swallow the
+    // synthesized click that follows the touchend on some browsers.
+    if (longPressFiredRef.current) {
+      longPressFiredRef.current = false;
+      return;
+    }
     const state = cellMap[k];
     if (!state || state.pending) return;
     const nv = nextValue(state.value);
@@ -396,12 +514,41 @@ export function QuickEntryGrid({
                       !!state &&
                       !state.pending &&
                       state.entryId !== null;
+                    const cellHasEntry =
+                      !!state && !state.pending && state.entryId !== null;
+                    const priorDay = isPriorDay();
                     return (
                       <td key={r.id} className="px-1.5 py-1 align-top">
                         <div className="relative">
                           <button
                             type="button"
                             onClick={() => onCellTap(goal.id, r.id)}
+                            onContextMenu={(e) => {
+                              if (!cellHasEntry) return;
+                              e.preventDefault();
+                              setMenuOpenKey(k);
+                            }}
+                            onTouchStart={(e) => {
+                              if (!cellHasEntry) return;
+                              const t = e.touches[0];
+                              touchStartXYRef.current = { x: t.clientX, y: t.clientY };
+                              cancelLongPress();
+                              longPressTimerRef.current = setTimeout(() => {
+                                longPressFiredRef.current = true;
+                                setMenuOpenKey(k);
+                              }, LONG_PRESS_MS);
+                            }}
+                            onTouchMove={(e) => {
+                              if (!touchStartXYRef.current) return;
+                              const t = e.touches[0];
+                              const dx = t.clientX - touchStartXYRef.current.x;
+                              const dy = t.clientY - touchStartXYRef.current.y;
+                              if (Math.hypot(dx, dy) > TOUCH_MOVE_TOLERANCE) {
+                                cancelLongPress();
+                              }
+                            }}
+                            onTouchEnd={() => cancelLongPress()}
+                            onTouchCancel={() => cancelLongPress()}
                             disabled={!state || state.pending}
                             aria-label={`${goal.label} for ${r.firstName} ${r.lastName}: ${
                               value ? labels[value] ?? value : "not set"
@@ -418,6 +565,42 @@ export function QuickEntryGrid({
                           >
                             {value ?? "—"}
                           </button>
+                          {cellHasEntry && (
+                            <DropdownMenu
+                              open={menuOpenKey === k}
+                              onOpenChange={(o) => {
+                                if (!o) setMenuOpenKey(null);
+                              }}
+                            >
+                              <DropdownMenuTrigger asChild>
+                                {/* Hidden anchor — positions the menu relative
+                                    to the cell. The actual open trigger is
+                                    the long-press / right-click handler on
+                                    the cell button above. */}
+                                <span
+                                  aria-hidden="true"
+                                  className="pointer-events-none absolute inset-0"
+                                />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="start" className="w-48">
+                                <DropdownMenuItem
+                                  disabled={priorDay || deleteMutation.isPending}
+                                  onSelect={() => {
+                                    setMenuOpenKey(null);
+                                    onClearCell(goal.id, r.id);
+                                  }}
+                                  className="text-stone-700"
+                                >
+                                  Clear cell
+                                </DropdownMenuItem>
+                                {priorDay && (
+                                  <p className="px-2 py-1 text-[11px] text-muted-foreground">
+                                    Prior-day entries cannot be cleared from here.
+                                  </p>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                           {showNoteAffordance && state && state.entryId !== null && (
                             <CellNotePopover
                               slug={definition.slug}
@@ -436,6 +619,9 @@ export function QuickEntryGrid({
                               shift={shift}
                               onSaved={(savedNote) =>
                                 onNoteSaved(goal.id, r.id, savedNote)
+                              }
+                              onAfterClose={() =>
+                                markPopoverClosed(goal.id, r.id)
                               }
                             />
                           )}
@@ -482,6 +668,9 @@ export function QuickEntryGrid({
                   !!state &&
                   !state.pending &&
                   state.entryId !== null;
+                const cellHasEntry =
+                  !!state && !state.pending && state.entryId !== null;
+                const priorDay = isPriorDay();
                 return (
                   <li
                     key={goal.id}
@@ -492,6 +681,32 @@ export function QuickEntryGrid({
                       <button
                         type="button"
                         onClick={() => onCellTap(goal.id, r.id)}
+                        onContextMenu={(e) => {
+                          if (!cellHasEntry) return;
+                          e.preventDefault();
+                          setMenuOpenKey(k);
+                        }}
+                        onTouchStart={(e) => {
+                          if (!cellHasEntry) return;
+                          const t = e.touches[0];
+                          touchStartXYRef.current = { x: t.clientX, y: t.clientY };
+                          cancelLongPress();
+                          longPressTimerRef.current = setTimeout(() => {
+                            longPressFiredRef.current = true;
+                            setMenuOpenKey(k);
+                          }, LONG_PRESS_MS);
+                        }}
+                        onTouchMove={(e) => {
+                          if (!touchStartXYRef.current) return;
+                          const t = e.touches[0];
+                          const dx = t.clientX - touchStartXYRef.current.x;
+                          const dy = t.clientY - touchStartXYRef.current.y;
+                          if (Math.hypot(dx, dy) > TOUCH_MOVE_TOLERANCE) {
+                            cancelLongPress();
+                          }
+                        }}
+                        onTouchEnd={() => cancelLongPress()}
+                        onTouchCancel={() => cancelLongPress()}
                         disabled={!state || state.pending}
                         aria-label={`${goal.label}: ${
                           value ? labels[value] ?? value : "not set"
@@ -505,6 +720,38 @@ export function QuickEntryGrid({
                       >
                         {value ?? "—"}
                       </button>
+                      {cellHasEntry && (
+                        <DropdownMenu
+                          open={menuOpenKey === k}
+                          onOpenChange={(o) => {
+                            if (!o) setMenuOpenKey(null);
+                          }}
+                        >
+                          <DropdownMenuTrigger asChild>
+                            <span
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0"
+                            />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start" className="w-48">
+                            <DropdownMenuItem
+                              disabled={priorDay || deleteMutation.isPending}
+                              onSelect={() => {
+                                setMenuOpenKey(null);
+                                onClearCell(goal.id, r.id);
+                              }}
+                              className="text-stone-700"
+                            >
+                              Clear cell
+                            </DropdownMenuItem>
+                            {priorDay && (
+                              <p className="px-2 py-1 text-[11px] text-muted-foreground">
+                                Prior-day entries cannot be cleared from here.
+                              </p>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                       {showNoteAffordance && state && state.entryId !== null && (
                         <CellNotePopover
                           slug={definition.slug}
@@ -521,6 +768,9 @@ export function QuickEntryGrid({
                           shift={shift}
                           onSaved={(savedNote) =>
                             onNoteSaved(goal.id, r.id, savedNote)
+                          }
+                          onAfterClose={() =>
+                            markPopoverClosed(goal.id, r.id)
                           }
                         />
                       )}

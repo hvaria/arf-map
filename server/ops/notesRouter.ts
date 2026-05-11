@@ -332,12 +332,23 @@ notesRouter.post("/:id/ack", async (req, res) => {
       return res.status(403).json({ success: false, error: policy.reason });
     }
 
+    const author = getAuthor(req);
+    const reqCtx = getReqCtx(req);
     const result = await acknowledgeNote(
       note,
-      getAuthor(req),
+      author,
       parsed.data.deviceInfo as Record<string, unknown> | undefined,
-      getReqCtx(req),
+      reqCtx,
     );
+
+    // Auto-archive on first ack so the note drops out of the open list and
+    // the bell's awaiting-ack count. Idempotent re-acks (alreadyAcked) are
+    // a no-op so a manually unarchived note doesn't get re-archived on a
+    // duplicate ack click. The archive entry also writes its own audit row.
+    if (!result.alreadyAcked && !note.archivedAt) {
+      await archiveNote(note, author, reqCtx);
+    }
+
     return res
       .status(result.alreadyAcked ? 200 : 201)
       .json({ success: true, data: result });

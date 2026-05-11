@@ -138,6 +138,7 @@ export function NotesPageShell({
   };
 
   const showDetailOnMobile = url.noteId !== null;
+  const isModal = mode === "modal";
 
   const list = (
     <NotesListPane
@@ -149,6 +150,12 @@ export function NotesPageShell({
       onSelect={(id) => url.setNoteId(id)}
       onClearSelection={() => url.setNoteId(null)}
       onClearSearch={() => url.setSearch("")}
+      // Modal opens with no `noteId` (local state, never seeded from URL) so
+      // the right pane would otherwise render "Select a note to read" until
+      // the user clicks. Auto-selecting the first item is the actual fix —
+      // page mode stays URL-driven and intentionally renders the empty state
+      // when the URL has no `noteId`.
+      autoSelectFirst={isModal}
     />
   );
 
@@ -160,8 +167,6 @@ export function NotesPageShell({
       onDeleted={() => url.setNoteId(null)}
     />
   );
-
-  const isModal = mode === "modal";
 
   // In modal mode the leftSlot is empty (no "back to portal" — there's no
   // route to go back to) and the rightSlot is a Close X. In page mode the

@@ -7,15 +7,18 @@
  * Visual language matches the existing OperationsTab "Needs attention" card:
  * border-l-4 severity tint, Card+CardContent shell, Badge accents.
  */
-import { useMemo, useState } from "react";
+import { forwardRef, useMemo, useState } from "react";
 import {
   AlertOctagon,
   AlertTriangle,
   Bell,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Info,
   Loader2,
+  X,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
@@ -353,10 +356,32 @@ function TrackerAlertRow({ alert, trackerName, resident }: AlertRowProps) {
 
 export interface TrackerAlertsCardProps {
   facilityNumber: string;
+  /**
+   * When set, scopes the alert list to a single tracker slug. Drives the
+   * filtered-card title and renders a clear-filter chip above the list. Used
+   * by OperationsTab to honor the per-tracker "View all" banner action. See
+   * Bug #2.
+   */
+  slug?: string;
+  /** Called when the user clicks the X on the filter chip. */
+  onClearFilter?: () => void;
+  /**
+   * Render without the outer Card chrome so a parent can co-locate this card
+   * with another alerts surface in one container. The parent supplies the
+   * Card/section wrapper; we only render the section-header + list body.
+   */
+  embedded?: boolean;
 }
 
-export function TrackerAlertsCard({ facilityNumber }: TrackerAlertsCardProps) {
+export const TrackerAlertsCard = forwardRef<
+  HTMLDivElement,
+  TrackerAlertsCardProps
+>(function TrackerAlertsCard(
+  { facilityNumber, slug, onClearFilter, embedded = false },
+  ref,
+) {
   const [showAll, setShowAll] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   // List query — defaults to status=active. Auto-refresh every 60 s so newly
   // fired alerts surface without a manual reload (matches the summary hook
@@ -366,7 +391,7 @@ export function TrackerAlertsCard({ facilityNumber }: TrackerAlertsCardProps) {
     isLoading,
     isError,
   } = useTrackerAlerts(
-    { enabled: !!facilityNumber, limit: 50 },
+    { enabled: !!facilityNumber, limit: 50, slug },
     { refetchInterval: 60_000 },
   );
 
@@ -412,17 +437,41 @@ export function TrackerAlertsCard({ facilityNumber }: TrackerAlertsCardProps) {
 
   const visible = showAll ? sorted : sorted.slice(0, 3);
 
-  return (
-    <section aria-label="Tracker alerts">
-      <Card>
-        <CardContent className="p-0">
+  // Filter-related display state. When `slug` is set we know the chip
+  // resolves; otherwise the unfiltered title applies.
+  const filteredTrackerName = slug
+    ? trackerNameBySlug.get(slug) ?? slug
+    : null;
+  const isFiltered = !!slug;
+
+  const ariaLabel = isFiltered
+    ? `Tracker alerts filtered to ${filteredTrackerName}`
+    : "Tracker alerts";
+
+  const body = (
+    <>
           <div
             className="portal-section-header"
             style={{ borderColor: "var(--portal-border-subtle)" }}
           >
-            <div className="portal-section-header__title">
+            <button
+              type="button"
+              onClick={() => setCollapsed((v) => !v)}
+              className="portal-section-header__title flex items-center gap-1.5 hover:text-stone-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm"
+              aria-expanded={!collapsed}
+              aria-controls="tracker-alerts-body"
+            >
+              {collapsed ? (
+                <ChevronDown className="h-3.5 w-3.5 text-stone-500" />
+              ) : (
+                <ChevronUp className="h-3.5 w-3.5 text-stone-500" />
+              )}
               <Bell className="h-3.5 w-3.5 text-stone-500" />
-              Tracker alerts
+              {isFiltered ? (
+                <>Active alerts — {filteredTrackerName}</>
+              ) : (
+                <>Tracker alerts</>
+              )}
               {counts.total > 0 && (
                 <Badge
                   variant="outline"
@@ -453,8 +502,8 @@ export function TrackerAlertsCard({ facilityNumber }: TrackerAlertsCardProps) {
                   {counts.warn} warn
                 </Badge>
               )}
-            </div>
-            {!isLoading && counts.total > 3 && (
+            </button>
+            {!collapsed && !isLoading && counts.total > 3 && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -467,51 +516,94 @@ export function TrackerAlertsCard({ facilityNumber }: TrackerAlertsCardProps) {
             )}
           </div>
 
-          {isLoading ? (
-            <div className="p-4 space-y-2">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-3/4" />
+          {!collapsed && isFiltered && onClearFilter && (
+            <div
+              className="px-5 py-2 border-b flex items-center gap-2"
+              style={{ borderColor: "var(--portal-border-subtle)" }}
+            >
+              <span className="text-[11px] font-medium text-stone-500 uppercase tracking-wide">
+                Filtered
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-stone-50 px-2 py-0.5 text-[12px] font-medium text-stone-700">
+                {filteredTrackerName}
+                <button
+                  type="button"
+                  onClick={onClearFilter}
+                  aria-label={`Clear ${filteredTrackerName} filter`}
+                  className="inline-flex items-center justify-center rounded-full hover:bg-stone-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                >
+                  <X className="h-3 w-3 text-stone-500" aria-hidden="true" />
+                </button>
+              </span>
             </div>
-          ) : isError ? (
-            <div className="px-5 py-4 text-[13px] text-destructive">
-              Couldn't load tracker alerts. Try refreshing the page.
-            </div>
-          ) : counts.total === 0 ? (
-            <div className="px-5 py-4 flex items-center gap-3">
-              <CheckCircle2
-                className="h-4 w-4 text-[var(--portal-status-ok)] shrink-0"
-                aria-hidden="true"
-              />
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium leading-tight text-stone-900">
-                  All clear
-                </p>
-                <p className="text-[12px] text-muted-foreground mt-0.5">
-                  No active tracker alerts. New criticals will surface here
-                  automatically.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <ul>
-              {visible.map((a) => (
-                <TrackerAlertRow
-                  key={a.id}
-                  alert={a}
-                  trackerName={
-                    trackerNameBySlug.get(a.trackerSlug) ?? a.trackerSlug
-                  }
-                  resident={
-                    a.residentId != null
-                      ? residentById.get(a.residentId)
-                      : undefined
-                  }
-                />
-              ))}
-            </ul>
           )}
-        </CardContent>
+
+          {!collapsed && (
+            <div id="tracker-alerts-body">
+              {isLoading ? (
+                <div className="p-4 space-y-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-3/4" />
+                </div>
+              ) : isError ? (
+                <div className="px-5 py-4 text-[13px] text-destructive">
+                  Couldn't load tracker alerts. Try refreshing the page.
+                </div>
+              ) : counts.total === 0 ? (
+                <div className="px-5 py-4 flex items-center gap-3">
+                  <CheckCircle2
+                    className="h-4 w-4 text-[var(--portal-status-ok)] shrink-0"
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium leading-tight text-stone-900">
+                      {isFiltered
+                        ? `No active alerts for ${filteredTrackerName}`
+                        : "All clear"}
+                    </p>
+                    <p className="text-[12px] text-muted-foreground mt-0.5">
+                      {isFiltered
+                        ? "Other trackers may still have active alerts — clear the filter to see them."
+                        : "No active tracker alerts. New criticals will surface here automatically."}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <ul>
+                  {visible.map((a) => (
+                    <TrackerAlertRow
+                      key={a.id}
+                      alert={a}
+                      trackerName={
+                        trackerNameBySlug.get(a.trackerSlug) ?? a.trackerSlug
+                      }
+                      resident={
+                        a.residentId != null
+                          ? residentById.get(a.residentId)
+                          : undefined
+                      }
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div ref={ref} aria-label={ariaLabel} role="region">
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <section ref={ref} aria-label={ariaLabel}>
+      <Card>
+        <CardContent className="p-0">{body}</CardContent>
       </Card>
     </section>
   );
-}
+});

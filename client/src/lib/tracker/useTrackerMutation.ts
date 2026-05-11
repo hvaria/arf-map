@@ -6,10 +6,32 @@
  * bodies. On success we invalidate the list cache for the affected slug; on
  * the by-id endpoints we additionally invalidate the single-entry key.
  */
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Shift } from "@shared/tracker-schemas";
 import type { TrackerEntryRow } from "./useTrackerEntries";
+
+/**
+ * Invalidate every cache surface a tracker-entry mutation can affect:
+ *   • the per-slug entries list (prefix-match every filter variant)
+ *   • the global alerts list (server may have created/cleared alerts as a
+ *     side-effect of evaluating the new payload)
+ *   • the alerts summary used by tracker-card badges and the in-tracker
+ *     red banner
+ *
+ * Keys here match the literal `queryKey`s used in `useTrackerEntries`,
+ * `useTrackerAlerts`, and `useTrackerAlertSummary` — verified against those
+ * files; do not paraphrase.
+ */
+function invalidateTrackerCaches(qc: QueryClient, slug: string) {
+  qc.invalidateQueries({ queryKey: ["/api/ops/trackers", slug, "entries"] });
+  qc.invalidateQueries({ queryKey: ["/api/ops/trackers/alerts"] });
+  qc.invalidateQueries({ queryKey: ["/api/ops/trackers/alerts/summary"] });
+}
 
 export interface CreateEntryInput {
   /** UUID v4 — caller MUST persist across retries. */
@@ -63,7 +85,7 @@ export function useCreateTrackerEntry(slug: string) {
       return (await res.json()) as CreateEntryResponse;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/ops/trackers", slug, "entries"] });
+      invalidateTrackerCaches(qc, slug);
     },
   });
 }
@@ -93,7 +115,7 @@ export function usePatchTrackerEntry(slug: string) {
       return (await res.json()) as { success: true; data: TrackerEntryRow };
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/ops/trackers", slug, "entries"] });
+      invalidateTrackerCaches(qc, slug);
     },
   });
 }
@@ -114,7 +136,7 @@ export function useDeleteTrackerEntry(slug: string) {
       return (await res.json()) as { success: true; data: TrackerEntryRow };
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/ops/trackers", slug, "entries"] });
+      invalidateTrackerCaches(qc, slug);
     },
   });
 }

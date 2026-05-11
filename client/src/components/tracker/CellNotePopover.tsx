@@ -52,6 +52,13 @@ export interface CellNotePopoverProps {
    * entries query refetch.
    */
   onSaved: (savedNote: string) => void;
+  /**
+   * Notifies the parent grid that the popover just closed. The grid uses this
+   * to briefly suppress pointer events on the underlying ADL cell — the
+   * Cancel/Save click on a touch device otherwise bubbles through as a
+   * pointerup/click and silently cycles the cell's status. See Bug #1.
+   */
+  onAfterClose?: () => void;
 }
 
 export function CellNotePopover({
@@ -64,6 +71,7 @@ export function CellNotePopover({
   statusLabel,
   shift,
   onSaved,
+  onAfterClose,
 }: CellNotePopoverProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string>(note ?? "");
@@ -148,8 +156,30 @@ export function CellNotePopover({
     ? `Edit note for ${residentName} · ${goalLabel}`
     : `Add note for ${residentName} · ${goalLabel}`;
 
+  // Bug #1: `modal` blocks pointer events on layers beneath the popover. The
+  // bug was that Cancel's pointerup bubbled to the underlying ADL cell and
+  // silently cycled its status — modal=true plus the explicit
+  // stopPropagation on the Cancel onClick (below) plus the parent-side
+  // pointer-events suppression (~150ms via onAfterClose) defeats the
+  // touchscreen pointerup-leak that fires when the release lands outside
+  // the popover's hit-test region.
+  function closePopover(e?: React.SyntheticEvent) {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    setOpen(false);
+  }
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) onAfterClose?.();
+      }}
+      modal
+    >
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -239,7 +269,12 @@ export function CellNotePopover({
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => setOpen(false)}
+              onClick={(e) => closePopover(e)}
+              onPointerDown={(e) => {
+                // Stop pointerdown too — on touch the cell underneath listens
+                // for pointerup/click and we can't trust click ordering alone.
+                e.stopPropagation();
+              }}
               disabled={patchMutation.isPending}
             >
               <X className="mr-1 h-3.5 w-3.5" aria-hidden="true" />

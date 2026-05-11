@@ -1,6 +1,6 @@
 # Facilities Data Audit
 
-_Generated: 2026-05-05T00:32:50.999Z_
+_Generated: 2026-05-06T19:18:15.251Z_
 
 ## 1. Row counts
 
@@ -41,8 +41,8 @@ Distinct values: **33**
 | Residential Care Facility for the Chronically Ill | 17 |
 | Community Crisis Home (DDS / Children's) | 14 |
 | Day Care Center for Mildly Ill Children | 7 |
-| Group Home — Children with Special Health Care Needs | 6 |
 | Crisis Nursery | 6 |
+| Group Home — Children with Special Health Care Needs | 6 |
 | STRTP — Children's Crisis Residential | 3 |
 | Community Treatment Facility | 2 |
 | _empty_ | 1 |
@@ -159,13 +159,12 @@ _(none)_
 
 | geocode_quality | n |
 | --- | --- |
-| chhs_geo | 26866 |
+| chhs_geo | 26842 |
 | _empty_ | 21717 |
-| census_batch | 19102 |
-| nominatim_fallback | 509 |
-| nominatim_no_match | 332 |
+| census_batch | 19125 |
+| census_no_match | 842 |
 
-- Rows with NULL lat or lng: **22049** (32.2%)
+- Rows with NULL lat or lng: **22559** (32.9%)
 
 
 ## 9. phone formatting
@@ -188,13 +187,13 @@ _(none)_
 
 | field | populated | pct |
 | --- | --- | --- |
-| last_inspection_date | 25 | 0.0% |
+| last_inspection_date | 32559 | 47.5% |
 | total_visits > 0 | 0 | 0.0% |
-| citations > 0 | 0 | 0.0% |
+| citations > 0 | 15 | 0.0% |
 | total_type_b > 0 | 0 | 0.0% |
 | administrator | 68525 | 100.0% |
 | licensee | 68526 | 100.0% |
-| enriched_at | 25 | 0.0% |
+| enriched_at | 32565 | 47.5% |
 
 
 ## 11. Taxonomy coverage
@@ -209,5 +208,5 @@ _(none — every stored facility_type matches a taxonomy entry)_
 - **1** rows have empty facility_type.
 - **3949** rows have capacity=0 (cannot distinguish "unknown" from "actually zero").
 - **1** phone numbers do not match canonical format.
-- last_inspection_date populated on only 0.0% of rows — enrichment is incomplete.
-- **22049** rows have no geocoded coordinates.
+- last_inspection_date populated on only 47.5% of rows — enrichment is incomplete.
+- **22559** rows have no geocoded coordinates.

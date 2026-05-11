@@ -97,8 +97,11 @@ export function NoteDetailPane({
     onSuccess: () => {
       setOptimisticAcked(true);
       if (noteId !== null) {
+        // Server auto-archives on a fresh ack — invalidate the list queries
+        // (bell urgent count, modal list, embedded feed) so the acked note
+        // drops out, alongside the per-note detail.
         queryClient.invalidateQueries({
-          queryKey: [`/api/ops/notes/${noteId}`],
+          predicate: NOTES_INVALIDATE_PREDICATE,
         });
         // The Ack button only renders after detail loads, so `note` is
         // expected to be truthy here. Skip telemetry entirely if it isn't —

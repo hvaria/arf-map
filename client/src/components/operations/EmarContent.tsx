@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -147,7 +147,9 @@ function MedCard({ entry, facilityNumber, isExpanded, onToggle, dateKey }: MedCa
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass?date=${dateKey}`] });
+      // Prefix invalidation: matches every `[base, dateOrAnything]` key in cache
+      // — covers EMAR's day-scoped query AND OperationsTab's TodayStrip query.
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`] });
       toast({ title: "Med pass charted" });
       onToggle();
       setStep("detail"); setMode(null); setNotes(""); setRefuseReason("");
@@ -612,9 +614,23 @@ export function EmarContent({ facilityNumber, onBack, initialDate }: {
     data: dayEnvelope, isLoading: dayLoading, error: dayError,
     refetch: dayRefetch, isFetching: dayFetching,
   } = useQuery<{ success: boolean; data: MedPassEntry[] } | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass?date=${selectedDate}`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
+    // `[base, date]` shape so this query shares a cache prefix with the
+    // OperationsTab TodayStrip — the chart mutation invalidates `[base]`
+    // and both refetch in one round-trip.
+    queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`, selectedDate],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/ops/facilities/${facilityNumber}/med-pass?date=${selectedDate}`,
+        { credentials: "include" },
+      );
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
     enabled: !!facilityNumber,
+    // 30 s — fresher than the global Infinity default, so navigating away
+    // and back doesn't render long-stale chart state.
+    staleTime: 30_000,
     refetchInterval: 2 * 60 * 1000,
   });
 

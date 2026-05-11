@@ -18,7 +18,7 @@
  * bell icon in the FacilityPortal header (NotesNotificationButton). The
  * keyboard shortcut g+n dispatches a custom event the bell listens for.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
@@ -49,7 +49,14 @@ import {
   MessageSquare, Bell, ArrowRight, Clock,
   CheckCircle2, Inbox, UserCog, Keyboard,
   Calendar as CalendarIcon, Activity,
+  ChevronDown, ChevronUp, Plus,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ResidentsContent } from "@/components/operations/ResidentsContent";
 import { EmarContent } from "@/components/operations/EmarContent";
 import { IncidentsContent } from "@/components/operations/IncidentsContent";
@@ -222,6 +229,9 @@ function relativeTime(ts: number | null | undefined): string {
   return formatDistanceToNow(new Date(ts), { addSuffix: true });
 }
 
+// Local YYYY-MM-DD. Shared shape with EmarContent so the dashboard and EMAR
+// share a React Query cache prefix (`["/api/ops/.../med-pass"]`) — invalidations
+// from EMAR's chart mutation propagate to the dashboard's TodayStrip count.
 function todayIso(): string {
   const d = new Date();
   const y = d.getFullYear();
@@ -762,6 +772,7 @@ function TrackerSubView({
   onTabChange,
   onFiltersChange,
   onBack,
+  onViewAllAlerts,
 }: {
   slug: string | null;
   tab: TrackerMode;
@@ -774,6 +785,13 @@ function TrackerSubView({
     patch: Partial<{ date: number; shift: Shift; residentId: number | undefined }>,
   ) => void;
   onBack: () => void;
+  /**
+   * Bug #2: clicking "View all" inside the in-tracker red banner pre-filters
+   * the overview's TrackerAlertsCard to this tracker's slug, unwinds the
+   * sub-view, and scrolls the card into view. Owned by OperationsTab so the
+   * filter persists across navigation.
+   */
+  onViewAllAlerts: (slug: string) => void;
 }) {
   // Picker-mode list. Always fetched (cached 5 min) so auto-select works.
   const {
@@ -909,7 +927,7 @@ function TrackerSubView({
       onFiltersChange={onFiltersChange}
       onBack={onBack}
       activeAlertCount={alertCountsBySlug.get(defEnv.data.slug) ?? 0}
-      onViewAllAlerts={onBack}
+      onViewAllAlerts={() => onViewAllAlerts(defEnv.data.slug)}
     />
   );
 }
@@ -935,8 +953,14 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   const [showCalendar, setShowCalendar] = useState(true);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAllAlerts, setShowAllAlerts] = useState(false);
+  const [needsAttentionOpen, setNeedsAttentionOpen] = useState(true);
   const [lensOverride, setLensOverride] = useState<Role | null>(null);
   const [addTaskOpen, setAddTaskOpen] = useState(false);
+  // Bug #2: when the in-tracker "View all" banner is clicked we unwind to
+  // the overview AND set this filter slug so the TrackerAlertsCard scopes to
+  // that tracker. Cleared via the chip's X.
+  const [alertsFilterSlug, setAlertsFilterSlug] = useState<string | null>(null);
+  const trackerAlertsCardRef = useRef<HTMLDivElement | null>(null);
 
   const { data: me } = useSession();
   const userRole: Role = isRole(me?.role) ? me.role : "facility_admin";
@@ -956,11 +980,26 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     staleTime: 60_000,
   });
 
+  // Cache key is `[base, date]` so it shares a prefix with EmarContent.tsx —
+  // EMAR's chart mutation invalidates the `[base]` prefix, which propagates to
+  // both this dashboard query and EMAR's own day-scoped query in one call.
+  // Custom queryFn so the date stays a `?date=` query param on the URL and
+  // doesn't accidentally become a path segment (the previous bug that made
+  // this endpoint 404 silently).
+  const medPassDate = todayIso();
   const { data: medEnv, isLoading: medLoading } = useQuery<
     { success: boolean; data: MedPassEntry[] } | null
   >({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`, todayIso()],
-    queryFn: getQueryFn({ on401: "returnNull" }),
+    queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`, medPassDate],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/ops/facilities/${facilityNumber}/med-pass?date=${medPassDate}`,
+        { credentials: "include" },
+      );
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
     enabled,
     staleTime: 60_000,
   });
@@ -1596,6 +1635,19 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           setTrackerFilters((prev) => ({ ...prev, ...patch }))
         }
         onBack={trackerBack}
+        onViewAllAlerts={(s) => {
+          // Bug #2: scope the overview's TrackerAlertsCard to this slug,
+          // unwind sub-view, and scroll the card into view next frame
+          // (after the overview re-renders).
+          setAlertsFilterSlug(s);
+          subViewBack();
+          requestAnimationFrame(() => {
+            trackerAlertsCardRef.current?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          });
+        }}
       />
     ) :
     null;
@@ -1615,7 +1667,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   });
 
   return (
-    <div className="space-y-6 pb-24">
+    <div className="space-y-6">
       {/* ── Page header ──────────────────────────────────────────────────
        * Identity is carried by the FacilityPortal top bar above; this
        * header focuses on the *operational state*: today's date, status
@@ -1670,6 +1722,68 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
               />
             </div>
           )}
+
+          {/* Quick actions — primary action surfaced as a solid button,
+              the rest live under a "More" dropdown. Trackers is reachable
+              via its own KPI tile, so we never duplicate it here. */}
+          {(() => {
+            const primaryKey = lens.quickActions[0];
+            const primary = primaryKey ? QUICK_ACTIONS[primaryKey] : null;
+            const rest = lens.quickActions.slice(1);
+            const PIcon = primary?.icon ?? Plus;
+            return (
+              <>
+                {primary && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={() => navigateTarget(primary.subView)}
+                    className="gap-1.5 h-8"
+                  >
+                    <PIcon className="h-4 w-4" />
+                    {primary.label}
+                  </Button>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1 h-8"
+                      aria-label="More quick actions"
+                    >
+                      More
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    {rest.map((key) => {
+                      const a = QUICK_ACTIONS[key];
+                      const A = a.icon;
+                      return (
+                        <DropdownMenuItem
+                          key={key}
+                          onClick={() => navigateTarget(a.subView)}
+                          className="gap-2 cursor-pointer"
+                        >
+                          <A className="h-4 w-4 text-stone-500" />
+                          {a.label}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                    <DropdownMenuItem
+                      onClick={() => setAddTaskOpen(true)}
+                      className="gap-2 cursor-pointer"
+                    >
+                      <ClipboardList className="h-4 w-4 text-stone-500" />
+                      Add task
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            );
+          })()}
+
           <Button
             size="icon"
             variant="ghost"
@@ -1717,21 +1831,31 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </SubViewErrorBoundary>
       ) : (
         <>
-      {/* ── Needs attention ────────────────────────────────────────────────
-       * Surfaced first because urgency outranks count tiles. The previous
-       * always-on colored left-bar was visual noise — when there's nothing
-       * to attend to, no color is the right answer. Critical state still
-       * gets a single counter chip in the header; the absence of one means
-       * "we're fine" without painting the whole card green.
+      {/* ── Alerts (unified) ───────────────────────────────────────────────
+       * Single container holds two sub-sections — cross-module "Needs
+       * attention" on top, "Tracker alerts" below — separated by a hairline
+       * rule. Matches the CaringData pattern of co-locating related alert
+       * surfaces under one card so the page reads as one decision per row.
        */}
       <section aria-label="Alerts and exceptions">
-        <Card>
+        <Card className="overflow-hidden">
           <CardContent className="p-0">
             <div
               className="portal-section-header"
               style={{ borderColor: "var(--portal-border-subtle)" }}
             >
-              <div className="portal-section-header__title">
+              <button
+                type="button"
+                onClick={() => setNeedsAttentionOpen((v) => !v)}
+                className="portal-section-header__title flex items-center gap-1.5 hover:text-stone-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm"
+                aria-expanded={needsAttentionOpen}
+                aria-controls="needs-attention-body"
+              >
+                {needsAttentionOpen ? (
+                  <ChevronUp className="h-3.5 w-3.5 text-stone-500" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5 text-stone-500" />
+                )}
                 <Bell className="h-3.5 w-3.5 text-stone-500" />
                 Needs attention
                 {!alertsLoading && alerts.length > 0 && (
@@ -1749,8 +1873,8 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
                     {overdueCount} overdue
                   </Badge>
                 )}
-              </div>
-              {!alertsLoading && alerts.length > 6 && (
+              </button>
+              {needsAttentionOpen && !alertsLoading && alerts.length > 6 && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1762,73 +1886,131 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
               )}
             </div>
 
-            {alertsLoading ? (
-              <div className="p-4 space-y-2">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-3/4" />
+            {needsAttentionOpen && (
+              <div id="needs-attention-body">
+                {alertsLoading ? (
+                  <div className="p-4 space-y-2">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-3/4" />
+                  </div>
+                ) : alerts.length === 0 ? (
+                  <div className="px-5 py-4 flex items-center gap-3">
+                    <CheckCircle2 className="h-4 w-4 text-[var(--portal-status-ok)] shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-tight text-stone-900">All caught up</p>
+                      <p className="text-[12px] text-muted-foreground mt-0.5">
+                        {medPasses.length > 0 ? (
+                          <>
+                            Next med pass at{" "}
+                            <span className="font-medium text-stone-700 portal-num">
+                              {medPasses.find((m) => m.status === "pending")?.scheduledTime ?? "—"}
+                            </span>
+                            .
+                          </>
+                        ) : (
+                          <>Nothing urgent right now.</>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <ul>
+                    {visibleAlerts.map((a) => (
+                      <AlertRow key={a.id} alert={a} onAct={navigateTarget} />
+                    ))}
+                  </ul>
+                )}
               </div>
-            ) : alerts.length === 0 ? (
-              <div className="px-5 py-4 flex items-center gap-3">
-                <CheckCircle2 className="h-4 w-4 text-[var(--portal-status-ok)] shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[13px] font-medium leading-tight text-stone-900">All caught up</p>
-                  <p className="text-[12px] text-muted-foreground mt-0.5">
-                    {medPasses.length > 0 ? (
-                      <>
-                        Next med pass at{" "}
-                        <span className="font-medium text-stone-700 portal-num">
-                          {medPasses.find((m) => m.status === "pending")?.scheduledTime ?? "—"}
-                        </span>
-                        .
-                      </>
-                    ) : (
-                      <>Nothing urgent right now.</>
-                    )}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <ul>
-                {visibleAlerts.map((a) => (
-                  <AlertRow key={a.id} alert={a} onAct={navigateTarget} />
-                ))}
-              </ul>
             )}
+
+            {/* Tracker alerts — embedded as a sub-section under the same Card,
+                divided by a hairline rule. */}
+            <div
+              className="border-t"
+              style={{ borderColor: "var(--portal-border-subtle)" }}
+            />
+            <TrackerAlertsCard
+              ref={trackerAlertsCardRef}
+              facilityNumber={facilityNumber}
+              slug={alertsFilterSlug ?? undefined}
+              onClearFilter={
+                alertsFilterSlug ? () => setAlertsFilterSlug(null) : undefined
+              }
+              embedded
+            />
           </CardContent>
         </Card>
       </section>
 
-      {/* Tracker alerts — vitals out-of-range, etc. Sits beside the unified
-          alerts panel so both alerting surfaces are co-located. */}
-      <TrackerAlertsCard facilityNumber={facilityNumber} />
-
       {/* ── KPIs ────────────────────────────────────────────────────────
-       * 4-up at lg (was 7-up). Lens-driven order is preserved, but the
-       * grid no longer forces seven 170px tiles into one row. At lg the
-       * row reads as four operational counts; at xl it can wrap to a
-       * second row of three.
+       * 2 × 4 symmetric grid on lg+. Lens-filtered operational counts in
+       * scan order, with a "Trackers" tile appended as the entry point to
+       * the tracker sub-view (replaces the duplicate "Trackers" button
+       * that used to live in the sticky action bar). For roles whose
+       * lens trims the KPI list, the grid wraps naturally — no dangling
+       * rows.
        */}
       <section aria-label="Key indicators">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3">
-          {dashLoading
-            ? Array.from({ length: 4 }).map((_, i) => <KpiSkeleton key={i} />)
-            : orderedKpis.length > 0
-              ? orderedKpis.map((t) => (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {dashLoading ? (
+            Array.from({ length: 8 }).map((_, i) => <KpiSkeleton key={i} />)
+          ) : orderedKpis.length > 0 ? (
+            <>
+              {orderedKpis.map((t) => (
+                <KpiCard
+                  key={t.label}
+                  tile={t}
+                  onClick={() => goToSubView(t.subView)}
+                  onChipClick={(sv) => goToSubView(sv)}
+                />
+              ))}
+              {/* Trackers tile — count is total active tracker alerts; tone
+                  follows severity. Renders even when zero so the entry
+                  point is always discoverable. */}
+              {(() => {
+                const trkCount = trackerAlertSummary.active;
+                const trkTone: KpiTile["tone"] =
+                  trackerAlertSummary.critical > 0
+                    ? "danger"
+                    : trackerAlertSummary.warn > 0
+                      ? "warn"
+                      : trkCount > 0
+                        ? "info"
+                        : "ok";
+                const trkSubtitle =
+                  trackerAlertSummary.critical > 0
+                    ? `${trackerAlertSummary.critical} critical`
+                    : trackerAlertSummary.warn > 0
+                      ? `${trackerAlertSummary.warn} warning`
+                      : trkCount > 0
+                        ? `${trkCount} active`
+                        : "Open trackers";
+                const trackerTile: KpiTile = {
+                  key: "residents", // not lens-keyed; placeholder
+                  label: "Trackers",
+                  count: trkCount,
+                  subtitle: trkSubtitle,
+                  icon: Activity,
+                  tone: trkTone,
+                  subView: "tracker",
+                };
+                return (
                   <KpiCard
-                    key={t.label}
-                    tile={t}
-                    onClick={() => goToSubView(t.subView)}
-                    onChipClick={(sv) => goToSubView(sv)}
+                    key="trackers-tile"
+                    tile={trackerTile}
+                    onClick={() => goToSubView("tracker")}
                   />
-                ))
-              : (
-                <div className="col-span-2 md:col-span-3 lg:col-span-4 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  {!facilityNumber
-                    ? "Facility not found. Please log out and back in."
-                    : "Could not load operations data. Try refreshing the page."}
-                </div>
-              )}
+                );
+              })()}
+            </>
+          ) : (
+            <div className="col-span-2 md:col-span-3 lg:col-span-4 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+              {!facilityNumber
+                ? "Facility not found. Please log out and back in."
+                : "Could not load operations data. Try refreshing the page."}
+            </div>
+          )}
         </div>
       </section>
 
@@ -1885,62 +2067,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
       )}
         </>
       )}
-
-      {/* ── Sticky quick-action bar ─────────────────────────────────────
-       * Bottom rail of contextual actions. Aligned with the new tokens —
-       * subtle border, no decorative shadow blur, neutral divider.
-       */}
-      <div
-        className="fixed bottom-0 left-0 right-0 border-t bg-white z-30"
-        style={{ borderColor: "var(--portal-border-subtle)" }}
-      >
-        <div className="max-w-[1440px] mx-auto px-4 lg:px-6 py-2.5 flex items-center gap-2 flex-wrap">
-          <span className="portal-eyebrow hidden sm:inline">Quick actions</span>
-          {lens.quickActions.map((key, idx) => {
-            const a = QUICK_ACTIONS[key];
-            const A = a.icon;
-            return (
-              <Button
-                key={key}
-                size="sm"
-                variant={idx === 0 ? "default" : "outline"}
-                onClick={() => navigateTarget(a.subView)}
-                className="gap-1.5"
-              >
-                <A className="h-4 w-4" />
-                {a.label}
-              </Button>
-            );
-          })}
-          <span
-            aria-hidden="true"
-            className="hidden sm:inline-block h-5 w-px mx-1"
-            style={{ background: "var(--portal-border-subtle)" }}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setAddTaskOpen(true)}
-            className="gap-1.5"
-          >
-            <ClipboardList className="h-4 w-4" />
-            Add task
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => goToSubView("tracker")}
-            className="gap-1.5"
-          >
-            <ClipboardList className="h-4 w-4" />
-            Trackers
-          </Button>
-          <div className="ml-auto text-[11px] text-muted-foreground hidden md:flex items-center gap-1">
-            Press <kbd className="px-1.5 py-0.5 rounded bg-stone-100 border text-[10px] font-mono"
-                       style={{ borderColor: "var(--portal-border-subtle)" }}>?</kbd> for shortcuts
-          </div>
-        </div>
-      </div>
 
       <ShortcutHelp open={showShortcuts} onOpenChange={setShowShortcuts} />
       <AddTaskDialog
