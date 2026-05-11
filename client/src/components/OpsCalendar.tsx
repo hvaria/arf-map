@@ -638,34 +638,6 @@ function SeedDemoButton({ facilityNumber }: { facilityNumber: string }) {
   );
 }
 
-const STATUS_LEGEND: Array<{ status: MedStatus; label: string }> = [
-  { status: "pending", label: "Pending" },
-  { status: "given",   label: "Given"   },
-  { status: "late",    label: "Late"    },
-  { status: "missed",  label: "Missed"  },
-  { status: "refused", label: "Refused" },
-  { status: "held",    label: "Held"    },
-];
-
-function StatusLegend({ className }: { className?: string }) {
-  return (
-    <div className={cn("flex items-center gap-1.5 flex-wrap", className)}>
-      {STATUS_LEGEND.map(({ status, label }) => (
-        <span
-          key={status}
-          className={cn(
-            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold",
-            MED_STATUS_STYLE[status],
-          )}
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-          {label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 // ── DayTimeGrid: vertical hour rail for a single day ──────────────────────────
 
 function DayTimeGrid({
@@ -784,9 +756,6 @@ function DayTimeGrid({
           )}
         </div>
         <div className="flex items-center gap-3">
-          {(filter === "all" || filter === "emar") && (
-            <StatusLegend className="hidden md:flex" />
-          )}
           <button
             type="button"
             onClick={() => setShowOvernight((v) => !v)}

@@ -28,6 +28,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,7 @@ import {
   CheckCircle2, Inbox, UserCog, Keyboard,
   Calendar as CalendarIcon, Activity,
   ChevronDown, ChevronUp, Plus,
+  LayoutDashboard,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -70,6 +72,7 @@ import OpsCalendar from "@/components/OpsCalendar";
 // Tracker module — embedded as a sub-view (no per-tracker URL anymore).
 import { TrackerShell } from "@/components/tracker/TrackerShell";
 import { TrackerCard } from "@/components/tracker/TrackerCard";
+import { resolveTrackerIcon } from "@/components/tracker/trackerIcons";
 import {
   TrackerLoading,
   TrackerCardSkeleton,
@@ -166,7 +169,42 @@ type SubView =
   | "billing"
   | "staff"
   | "compliance"
-  | "tracker";
+  | "tracker"
+  | "calendar";
+
+// Sidebar navigation items. `key === null` is the Dashboard / overview view.
+// Order is the canonical scan order — clinical first, then ops/admin, then
+// the Calendar at the bottom.
+const NAV_ITEMS: Array<{ key: SubView | null; label: string; icon: React.ElementType }> = [
+  { key: null,         label: "Dashboard",   icon: LayoutDashboard },
+  { key: "residents",  label: "Residents",   icon: Users },
+  { key: "emar",       label: "eMAR",        icon: Pill },
+  { key: "tasks",      label: "Tasks",       icon: ClipboardList },
+  { key: "incidents",  label: "Incidents",   icon: AlertTriangle },
+  { key: "tracker",    label: "Trackers",    icon: Activity },
+  { key: "compliance", label: "Compliance",  icon: ShieldCheck },
+  { key: "crm",        label: "CRM",         icon: UserPlus },
+  { key: "billing",    label: "Billing",     icon: Receipt },
+  { key: "staff",      label: "Staff",       icon: UserCog },
+  { key: "calendar",   label: "Calendar",    icon: CalendarIcon },
+];
+
+// Per-slug accent — must mirror SLUG_PALETTE in TrackerCard so the sidebar
+// dot and the picker card avatar feel like the same visual object. Kept as
+// a separate constant here because TrackerCard's palette uses Tailwind bg-*
+// utility classes; the sidebar needs the same colors but with smaller
+// expressions (a 6px dot rather than a 48px circle).
+const TRACKER_DOT_COLOR: Record<string, string> = {
+  adl:        "bg-indigo-500",
+  vitals:     "bg-rose-500",
+  toileting:  "bg-orange-500",
+  hygiene:    "bg-amber-500",
+  skin_check: "bg-pink-500",
+  seizure:    "bg-violet-500",
+  sleep:      "bg-blue-500",
+  inventory:  "bg-emerald-500",
+  cleaning:   "bg-cyan-500",
+};
 
 // ── Time / urgency helpers ───────────────────────────────────────────────────
 
@@ -368,6 +406,7 @@ function KpiSkeleton() {
     </Card>
   );
 }
+
 
 // ── Alerts & Exceptions ──────────────────────────────────────────────────────
 
@@ -753,6 +792,119 @@ class OperationsErrorBoundary extends React.Component<
   }
 }
 
+// ── Tracker picker ────────────────────────────────────────────────────────────
+
+/**
+ * TrackerPicker — landing grid of all active tracker definitions for the
+ * facility. Modeled on the CaringData tracker hub: page title + description
+ * + search box in the header, then a 3-column grid of colored-icon cards.
+ *
+ * The search filter is client-side over already-fetched definitions, so it's
+ * instant. Matches against name, shortName, and category label.
+ */
+function TrackerPicker({
+  definitions,
+  isLoading,
+  isError,
+  alertCountsBySlug,
+  onSelectTracker,
+  onBack,
+}: {
+  definitions: SerializedTrackerDefinition[];
+  isLoading: boolean;
+  isError: boolean;
+  alertCountsBySlug: Map<string, number>;
+  onSelectTracker: (slug: string, def: SerializedTrackerDefinition) => void;
+  onBack: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return definitions;
+    return definitions.filter((d) => {
+      const name = d.name.toLowerCase();
+      const shortName = (d.shortName ?? "").toLowerCase();
+      const cat = d.category.replace(/-/g, " ").toLowerCase();
+      return name.includes(q) || shortName.includes(q) || cat.includes(q);
+    });
+  }, [definitions, search]);
+
+  return (
+    <div className="space-y-4">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onBack}
+        className="gap-1.5 -ml-2"
+        aria-label="Back to overview"
+      >
+        ← Back to Overview
+      </Button>
+
+      <header className="flex items-end justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3 min-w-0">
+          <div
+            className="h-10 w-10 rounded-md bg-stone-50 border flex items-center justify-center text-stone-700 shrink-0"
+            style={{ borderColor: "var(--portal-border-subtle)" }}
+          >
+            <ClipboardList className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-[20px] font-semibold leading-tight text-stone-900">
+              Trackers
+            </h1>
+            <p className="text-[13px] text-muted-foreground mt-0.5">
+              Access and manage your trackers.
+            </p>
+          </div>
+        </div>
+        <Input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search trackers..."
+          className="w-full sm:w-72 h-10"
+          aria-label="Search trackers"
+        />
+      </header>
+
+      {isLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <TrackerCardSkeleton key={i} />
+          ))}
+        </div>
+      ) : isError ? (
+        <TrackerEmpty
+          title="Couldn't load trackers"
+          hint="Try refreshing the page."
+        />
+      ) : definitions.length === 0 ? (
+        <TrackerEmpty
+          title="No trackers configured for your facility"
+          hint="Trackers are added centrally — check back soon."
+        />
+      ) : filtered.length === 0 ? (
+        <TrackerEmpty
+          title={`No trackers match "${search}"`}
+          hint="Try a different search term."
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {filtered.map((def) => (
+            <TrackerCard
+              key={def.slug}
+              definition={def}
+              activeAlertCount={alertCountsBySlug.get(def.slug) ?? 0}
+              onSelect={(s) => onSelectTracker(s, def)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Tracker sub-view ──────────────────────────────────────────────────────────
 
 /**
@@ -820,65 +972,14 @@ function TrackerSubView({
   } = useTrackerDefinition(slug ?? undefined);
 
   if (slug === null) {
-    return (
-      <div className="space-y-4">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onBack}
-          className="gap-1.5 -ml-2"
-          aria-label="Back to overview"
-        >
-          ← Back to Overview
-        </Button>
-        <header>
-          <div className="flex items-center gap-3">
-            <div
-              className="h-10 w-10 rounded-md bg-stone-50 border flex items-center justify-center text-stone-700"
-              style={{ borderColor: "var(--portal-border-subtle)" }}
-            >
-              <ClipboardList className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-[18px] font-semibold leading-tight text-stone-900">Trackers</h1>
-              <p className="text-[13px] text-muted-foreground mt-0.5">
-                Document daily care, vitals, ADLs, and more — pick a tracker
-                to start charting.
-              </p>
-            </div>
-          </div>
-        </header>
-
-        {defsLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <TrackerCardSkeleton key={i} />
-            ))}
-          </div>
-        ) : defsError ? (
-          <TrackerEmpty
-            title="Couldn't load trackers"
-            hint="Try refreshing the page."
-          />
-        ) : definitions.length === 0 ? (
-          <TrackerEmpty
-            title="No trackers configured for your facility"
-            hint="Trackers are added centrally — check back soon."
-          />
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {definitions.map((def) => (
-              <TrackerCard
-                key={def.slug}
-                definition={def}
-                activeAlertCount={alertCountsBySlug.get(def.slug) ?? 0}
-                onSelect={(s) => onSelectTracker(s, def)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    );
+    return <TrackerPicker
+      definitions={definitions}
+      isLoading={defsLoading}
+      isError={defsError}
+      alertCountsBySlug={alertCountsBySlug}
+      onSelectTracker={onSelectTracker}
+      onBack={onBack}
+    />;
   }
 
   if (defLoading) {
@@ -947,13 +1048,13 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     date: startOfDay(Date.now()),
     shift: deriveCurrentShift(),
   }));
-  // Calendar is visible by default — it's the main operational view.
-  // Users can collapse it via the toggle in Today's-schedule if they want
-  // more screen space for alerts/queue.
-  const [showCalendar, setShowCalendar] = useState(true);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAllAlerts, setShowAllAlerts] = useState(false);
   const [needsAttentionOpen, setNeedsAttentionOpen] = useState(true);
+  // Sidebar: "Trackers" expands to show each tracker as a sub-item. Auto-
+  // expanded whenever the user is inside the tracker sub-view so the active
+  // tracker is always visible in the rail.
+  const [trackersNavOpen, setTrackersNavOpen] = useState(false);
   const [lensOverride, setLensOverride] = useState<Role | null>(null);
   const [addTaskOpen, setAddTaskOpen] = useState(false);
   // Bug #2: when the in-tracker "View all" banner is clicked we unwind to
@@ -1104,6 +1205,67 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   const staff = staffEnv?.data ?? [];
   const notes = notesEnv?.data?.items ?? [];
 
+  // ── Sidebar counts ─────────────────────────────────────────────────────────
+  // Same metric per sidebar item that the matching KPI card shows. Keyed by
+  // SubView so the sidebar render can look up count + tone without inlining
+  // dashboard logic. Items without a meaningful count (Dashboard, Staff,
+  // Calendar) are omitted and render label-only.
+  type NavTone = "ok" | "info" | "warn" | "danger";
+  const navCounts: Partial<Record<SubView, { count: number; tone: NavTone }>> = useMemo(() => {
+    const out: Partial<Record<SubView, { count: number; tone: NavTone }>> = {};
+    if (dashboard) {
+      out.residents = { count: dashboard.activeResidents, tone: "info" };
+
+      const lateMissed = medPasses.filter(
+        (m) => m.status === "late" || m.status === "missed",
+      ).length;
+      out.emar = {
+        count: dashboard.pendingMedPasses,
+        tone: lateMissed > 0
+          ? "danger"
+          : dashboard.pendingMedPasses > 0
+            ? "info"
+            : "ok",
+      };
+
+      out.tasks = {
+        count: dashboard.overdueTasks,
+        tone: dashboard.overdueTasks > 0 ? "danger" : "ok",
+      };
+
+      out.incidents = {
+        count: dashboard.openIncidents,
+        tone: dashboard.openIncidents > 0 ? "danger" : "ok",
+      };
+
+      out.crm = {
+        count: dashboard.pendingLeads,
+        tone: dashboard.pendingLeads > 0 ? "info" : "ok",
+      };
+
+      out.billing = {
+        count: dashboard.overdueInvoices,
+        tone: dashboard.overdueInvoices > 0 ? "danger" : "ok",
+      };
+
+      out.compliance = {
+        count: dashboard.overdueCompliance,
+        tone: dashboard.overdueCompliance > 0 ? "warn" : "ok",
+      };
+    }
+    out.tracker = {
+      count: trackerAlertSummary.active,
+      tone: trackerAlertSummary.critical > 0
+        ? "danger"
+        : trackerAlertSummary.warn > 0
+          ? "warn"
+          : trackerAlertSummary.active > 0
+            ? "info"
+            : "ok",
+    };
+    return out;
+  }, [dashboard, medPasses, trackerAlertSummary]);
+
   const goToSubView = (sv: SubView, date: string | null = null) => {
     setSubView(sv);
     setSubViewDate(date);
@@ -1111,6 +1273,32 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     // can re-enter the same tracker if they want by clicking its card.
     if (sv === "tracker") setSelectedTrackerSlug(null);
   };
+
+  // Tracker definitions feed the sidebar's expandable Trackers sub-list. The
+  // query is also called inside TrackerSubView; React Query dedupes by key.
+  const { data: trackerDefsEnv } = useTrackerDefinitions();
+  const trackerDefinitions = trackerDefsEnv?.data ?? [];
+
+  // Direct-navigate to a specific tracker (used by sidebar sub-items). Sets
+  // the same state TrackerSubView's onSelectTracker does, so deep-linking
+  // from the rail behaves identically to picking a card from the grid.
+  const navigateToTracker = (def: SerializedTrackerDefinition) => {
+    setSubView("tracker");
+    setSelectedTrackerSlug(def.slug);
+    const defaultMode = (def.defaultMode as TrackerMode | undefined) ?? "quick";
+    setTrackerTab(defaultMode);
+    setTrackerFilters({
+      date: startOfDay(Date.now()),
+      shift: deriveCurrentShift(),
+    });
+    setSubViewDate(null);
+  };
+
+  // Auto-expand the Trackers nav group when the user is inside a tracker
+  // sub-view, so the active tracker is always visible in the rail.
+  useEffect(() => {
+    if (subView === "tracker") setTrackersNavOpen(true);
+  }, [subView]);
 
   // Unified "go" — alerts/quick actions can target either a sub-view or the
   // global notes bell.
@@ -1612,6 +1800,14 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "calendar"   ? (
+      <OpsCalendar
+        facilityNumber={facilityNumber}
+        onNavigate={(sv, date) => {
+          goToSubView(sv as SubView, date ?? null);
+        }}
+      />
+    ) :
     subView === "tracker"    ? (
       <TrackerSubView
         slug={selectedTrackerSlug}
@@ -1825,6 +2021,193 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </div>
       )}
 
+      {/* ── Mobile nav strip (horizontal scroll) ──────────────────────── */}
+      <div className="lg:hidden -mx-1 px-1 overflow-x-auto">
+        <div className="inline-flex gap-1.5 whitespace-nowrap pb-1">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isActive = subView === item.key;
+            return (
+              <button
+                key={item.key ?? "dashboard"}
+                type="button"
+                onClick={() => {
+                  if (item.key === null) subViewBack();
+                  else goToSubView(item.key);
+                }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-3 h-8 rounded-full border text-[12px] transition-colors",
+                  isActive
+                    ? "bg-stone-900 text-white border-stone-900"
+                    : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50",
+                )}
+                aria-current={isActive ? "page" : undefined}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex gap-6">
+        {/* ── Sidebar (lg+) ─────────────────────────────────────────────── */}
+        <aside className="hidden lg:block w-60 shrink-0">
+          <nav className="space-y-2 sticky top-4" aria-label="Operations navigation">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const isActive = subView === item.key;
+              const data = item.key ? navCounts[item.key] : undefined;
+              const isTrackersItem = item.key === "tracker";
+              const trackersExpanded =
+                isTrackersItem && trackersNavOpen && trackerDefinitions.length > 0;
+              const countClass = !data
+                ? ""
+                : isActive
+                  ? "text-white"
+                  : data.tone === "danger"
+                    ? "text-red-700"
+                    : data.tone === "warn"
+                      ? "text-amber-800"
+                      : data.tone === "info"
+                        ? "text-stone-900"
+                        : "text-stone-400";
+              const dotClass = !data
+                ? ""
+                : data.tone === "danger"
+                  ? "bg-red-500"
+                  : data.tone === "warn"
+                    ? "bg-amber-500"
+                    : data.tone === "info"
+                      ? "bg-stone-300"
+                      : "bg-emerald-500";
+              return (
+                <div key={item.key ?? "dashboard"}>
+                  <div
+                    className={cn(
+                      "w-full flex items-stretch rounded-lg border transition-all overflow-hidden",
+                      isActive
+                        ? "bg-stone-900 text-white border-stone-900 shadow-sm"
+                        : "bg-white text-stone-800 border-stone-200 hover:bg-stone-50 hover:border-stone-300",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (item.key === null) subViewBack();
+                        else goToSubView(item.key);
+                        if (isTrackersItem) setTrackersNavOpen(true);
+                      }}
+                      className="flex items-center gap-3 p-3 text-left flex-1 min-w-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                      aria-current={isActive ? "page" : undefined}
+                    >
+                      <span
+                        className={cn(
+                          "h-9 w-9 rounded-md flex items-center justify-center shrink-0",
+                          isActive ? "bg-white/15" : "bg-stone-100",
+                        )}
+                        aria-hidden="true"
+                      >
+                        <Icon
+                          className={cn(
+                            "h-4 w-4",
+                            isActive ? "text-white" : "text-stone-600",
+                          )}
+                        />
+                      </span>
+                      <span className="font-medium text-[13px] truncate flex-1">
+                        {item.label}
+                      </span>
+                      {data ? (
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          <span
+                            className={cn(
+                              "h-1.5 w-1.5 rounded-full",
+                              isActive ? "bg-white/50" : dotClass,
+                            )}
+                            aria-hidden="true"
+                          />
+                          <span
+                            className={cn(
+                              "text-[14px] font-semibold portal-num leading-none",
+                              countClass,
+                            )}
+                          >
+                            {data.count}
+                          </span>
+                        </span>
+                      ) : null}
+                    </button>
+                    {isTrackersItem && trackerDefinitions.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setTrackersNavOpen((v) => !v)}
+                        className={cn(
+                          "px-2 flex items-center justify-center shrink-0 border-l focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+                          isActive
+                            ? "border-white/20 hover:bg-white/10"
+                            : "border-stone-200 hover:bg-stone-100",
+                        )}
+                        aria-label={trackersExpanded ? "Collapse trackers list" : "Expand trackers list"}
+                        aria-expanded={trackersExpanded}
+                      >
+                        {trackersExpanded ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Trackers sub-list — each tracker definition rendered as
+                      an indented row with its own icon + colored dot. Click
+                      navigates directly to that tracker (not the picker). */}
+                  {trackersExpanded && (
+                    <ul className="mt-1 ml-3 pl-3 border-l space-y-0.5"
+                        style={{ borderColor: "var(--portal-border-subtle)" }}>
+                      {trackerDefinitions.map((def) => {
+                        const TIcon = resolveTrackerIcon(def.icon);
+                        const isThisActive =
+                          subView === "tracker" && selectedTrackerSlug === def.slug;
+                        const dotColor = TRACKER_DOT_COLOR[def.slug] ?? "bg-stone-400";
+                        return (
+                          <li key={def.slug}>
+                            <button
+                              type="button"
+                              onClick={() => navigateToTracker(def)}
+                              className={cn(
+                                "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-[12.5px] transition-colors",
+                                isThisActive
+                                  ? "bg-stone-100 text-stone-900 font-medium"
+                                  : "text-stone-600 hover:bg-stone-50 hover:text-stone-900",
+                              )}
+                              aria-current={isThisActive ? "page" : undefined}
+                            >
+                              <span
+                                className={cn(
+                                  "h-1.5 w-1.5 rounded-full shrink-0",
+                                  dotColor,
+                                )}
+                                aria-hidden="true"
+                              />
+                              <TIcon className="h-3.5 w-3.5 text-stone-400 shrink-0" />
+                              <span className="truncate">{def.shortName ?? def.name}</span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* ── Main content ─────────────────────────────────────────────── */}
+        <main className="flex-1 min-w-0 space-y-6">
       {subView && subViewContent ? (
         <SubViewErrorBoundary key={subView} onBack={subViewBack}>
           {subViewContent}
@@ -2014,48 +2397,8 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         </div>
       </section>
 
-      {/* ── My work + Today's schedule (2-col at lg) ───────────────────── */}
-      <section aria-label="Work and schedule">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <PersonalQueue
-            items={myQueue}
-            isLoading={myQueueLoading}
-            onAct={navigateTarget}
-          />
-          <Card>
-            <CardContent className="p-0">
-              <div
-                className="portal-section-header"
-                style={{ borderColor: "var(--portal-border-subtle)" }}
-              >
-                <div className="portal-section-header__title">
-                  <Clock className="h-3.5 w-3.5 text-stone-500" />
-                  Today's schedule
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs gap-1"
-                  onClick={() => setShowCalendar((v) => !v)}
-                >
-                  {showCalendar ? "Hide calendar" : "Open calendar"}
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-              <div className="p-4">
-                <TodayStrip
-                  medPasses={medPasses}
-                  isLoading={medLoading}
-                  onAction={() => goToSubView("emar")}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </section>
-
-      {/* Optional embedded calendar */}
-      {showCalendar && facilityNumber && (
+      {/* ── Calendar embedded on the dashboard ─────────────────────────── */}
+      {facilityNumber && (
         <section aria-label="Operations calendar">
           <OpsCalendar
             facilityNumber={facilityNumber}
@@ -2065,8 +2408,11 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           />
         </section>
       )}
+
         </>
       )}
+        </main>
+      </div>
 
       <ShortcutHelp open={showShortcuts} onOpenChange={setShowShortcuts} />
       <AddTaskDialog
