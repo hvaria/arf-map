@@ -2,6 +2,10 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { ResidentProfileContent } from "@/components/operations/ResidentProfileContent";
+import {
+  VoiceAddResidentChat,
+  type AddResidentForm,
+} from "@/components/operations/VoiceAddResidentChat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +14,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useResidents } from "@/hooks/useResidents";
-import { Plus, Search, User, ArrowLeft } from "lucide-react";
+import { ArrowLeft, MessageSquare, Mic, Plus, Search, User } from "lucide-react";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Active",
@@ -36,21 +41,6 @@ function ResidentStatusBadge({ status }: { status: string }) {
       {STATUS_LABELS[status] ?? status}
     </Badge>
   );
-}
-
-interface AddResidentForm {
-  firstName: string;
-  lastName: string;
-  dob: string;
-  gender: string;
-  roomNumber: string;
-  admissionDate: string;
-  primaryDx: string;
-  levelOfCare: string;
-  emergencyContactName: string;
-  emergencyContactPhone: string;
-  fundingSource: string;
-  status: string;
 }
 
 const EMPTY_FORM: AddResidentForm = {
@@ -80,6 +70,7 @@ function AddResidentDialog({
   const { toast } = useToast();
   const qc = useQueryClient();
   const [form, setForm] = useState<AddResidentForm>(EMPTY_FORM);
+  const [mode, setMode] = useState<"form" | "voice">("form");
 
   const set = (key: keyof AddResidentForm, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -99,19 +90,64 @@ function AddResidentDialog({
       toast({ title: "Resident added" });
       onOpenChange(false);
       setForm(EMPTY_FORM);
+      setMode("form");
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
 
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      setForm(EMPTY_FORM);
+      setMode("form");
+    }
+    onOpenChange(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Add Resident</DialogTitle>
+          <DialogTitle className="flex items-center justify-between gap-3 pr-6">
+            <span>Add Resident</span>
+            <ToggleGroup
+              type="single"
+              value={mode}
+              onValueChange={(v) => {
+                if (v === "form" || v === "voice") setMode(v);
+              }}
+              className="bg-[#EEF2FF] rounded-md p-0.5"
+            >
+              <ToggleGroupItem
+                value="form"
+                aria-label="Form mode"
+                className="h-7 px-2.5 text-xs data-[state=on]:bg-white data-[state=on]:shadow-sm"
+              >
+                <MessageSquare className="h-3.5 w-3.5 mr-1" />
+                Form
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="voice"
+                aria-label="Voice chat mode"
+                className="h-7 px-2.5 text-xs data-[state=on]:bg-white data-[state=on]:shadow-sm"
+              >
+                <Mic className="h-3.5 w-3.5 mr-1" />
+                Voice
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        {mode === "voice" ? (
+          <VoiceAddResidentChat
+            form={form}
+            setField={set}
+            onSubmit={() => mutation.mutate()}
+            onCancel={() => handleOpenChange(false)}
+            isPending={mutation.isPending}
+          />
+        ) : (
+          <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>First Name</Label>
@@ -202,16 +238,17 @@ function AddResidentDialog({
             </Select>
           </div>
           <div className="flex gap-2 justify-end pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
             <Button
               variant="gradient"
               onClick={() => mutation.mutate()}
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || !form.firstName || !form.lastName}
             >
               {mutation.isPending ? "Adding..." : "Add Resident"}
             </Button>
           </div>
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );
