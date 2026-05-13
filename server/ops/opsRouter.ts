@@ -12,6 +12,7 @@ import { pool } from "../db/index";
 import * as ops from "./opsStorage";
 import { notesRouter } from "./notesRouter";
 import { trackerRouter } from "../trackers/routes";
+import { requireActiveSubscription } from "../middleware/requireActiveSubscription";
 import {
   MedicationCreateInput,
   MedicationUpdateInput,
@@ -39,6 +40,13 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
 
 // Apply to all ops routes
 opsRouter.use(requireFacilityAuth);
+
+// Operations paywall gate (Phase 0). MUST run after requireFacilityAuth so
+// req.user is populated. Returns 402 SUBSCRIPTION_REQUIRED unless the
+// account's cached subscription_status is `active` or `trialing`. This is
+// the single gating point for all of /api/ops/* — residents, eMAR,
+// incidents, trackers, notes, etc. all inherit the gate via this router.
+opsRouter.use(requireActiveSubscription);
 
 // Notes module — mounted under the auth middleware so handlers can rely on
 // req.isAuthenticated() and req.user being populated.

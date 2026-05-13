@@ -35,6 +35,7 @@ import { Strategy as LocalStrategy } from "passport-local";
 import { storage } from "../../storage";
 import { hashPassword, comparePassword } from "../../auth";
 import { pool } from "../../db/index";
+import { bootstrapMainSchema } from "../../db/bootstrap";
 import { opsRouter } from "../../ops/opsRouter";
 import type { FacilityAccount } from "@shared/schema";
 
@@ -58,6 +59,18 @@ export type TestFacility = {
 
 let cachedApp: Express | null = null;
 let passportInitialized = false;
+
+// Schema bootstrap is idempotent (uses CREATE TABLE IF NOT EXISTS + ADD
+// COLUMN IF NOT EXISTS), but pool.query has connection overhead — run it
+// at most once per worker fork. Tests call seedFacility() before they
+// INSERT into facility_accounts, so we hook the bootstrap there.
+let schemaBootstrapPromise: Promise<void> | null = null;
+async function ensureMainSchema(): Promise<void> {
+  if (!schemaBootstrapPromise) {
+    schemaBootstrapPromise = bootstrapMainSchema();
+  }
+  return schemaBootstrapPromise;
+}
 
 /**
  * Build (or return cached) Express app wired exactly like server/index.ts
@@ -179,23 +192,39 @@ export async function seedFacility(input: {
   username: string;
   password: string;
   email: string;
+  /**
+   * Override the cached subscription_status on the seeded account. Defaults
+   * to "active" so existing tracker/ops tests (which all assume access to
+   * /api/ops/*) keep passing once the requireActiveSubscription gate is
+   * mounted. Paywall-specific tests pass `null` or `"past_due"` explicitly
+   * to exercise the 402 path.
+   */
+  subscriptionStatus?: string | null;
 }): Promise<TestFacility> {
+  // Ensure the new subscription_status / subscription_current_period_end
+  // columns on facility_accounts exist before we try to INSERT into them.
+  // No-op if a previous run / earlier test already bootstrapped the schema.
+  await ensureMainSchema();
   const hashed = await hashPassword(input.password);
   const now = Date.now();
+  const subStatus =
+    input.subscriptionStatus === undefined ? "active" : input.subscriptionStatus;
   // Upsert by facility_number so reruns don't need to clean up first. We
-  // refresh the username/email/password every time to keep tests
-  // deterministic if a previous run left stale data behind.
+  // refresh the username/email/password/subscription_status every time to
+  // keep tests deterministic if a previous run left stale data behind.
   const result = await pool.query<{ id: number }>(
     `INSERT INTO facility_accounts
-       (facility_number, username, password, role, email, email_verified, created_at)
-     VALUES ($1, $2, $3, 'facility_admin', $4, 1, $5)
+       (facility_number, username, password, role, email, email_verified,
+        created_at, subscription_status)
+     VALUES ($1, $2, $3, 'facility_admin', $4, 1, $5, $6)
      ON CONFLICT (facility_number) DO UPDATE SET
        username = EXCLUDED.username,
        password = EXCLUDED.password,
        email = EXCLUDED.email,
-       email_verified = 1
+       email_verified = 1,
+       subscription_status = EXCLUDED.subscription_status
      RETURNING id`,
-    [input.facilityNumber, input.username, hashed, input.email, now],
+    [input.facilityNumber, input.username, hashed, input.email, now, subStatus],
   );
   const id = Number(result.rows[0].id);
   return {

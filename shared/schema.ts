@@ -58,6 +58,40 @@ export const facilityAccounts = pgTable("facility_accounts", {
   verificationExpiry: ts("verification_expiry"),
   createdAt: ts("created_at").notNull(),
   failedLoginCount: integer("failed_login_count").notNull().default(0),
+  // ── Operations paywall cache columns (Phase 0) ──────────────────────────────
+  // Hot-path columns the Operations gate middleware reads on every request.
+  // Duplicated from facility_subscriptions so the gate can authorize without a
+  // join. Kept in sync by the subscription writer (Phase 1 — Stripe webhook).
+  // Nullable subscriptionStatus = "no record yet / free tier".
+  subscriptionStatus: text("subscription_status"),
+  subscriptionCurrentPeriodEnd: ts("subscription_current_period_end"),
+});
+
+// ── Operations paywall: per-account Stripe subscription record (Phase 0) ─────
+// One row per facility_accounts.id (UNIQUE). All Stripe-specific columns are
+// nullable until Phase 1 wires the Stripe SDK and webhook. `status` is the raw
+// Stripe subscription status string; null = free tier / never subscribed.
+export const facilitySubscriptions = pgTable("facility_subscriptions", {
+  id: serial("id").primaryKey(),
+  facilityAccountId: integer("facility_account_id").notNull().unique(),
+  // UNIQUE — one Stripe customer maps to at most one facility account, so a
+  // webhook resolving customer→account via findAccountByStripeCustomerId
+  // can never confuse two accounts. Postgres allows multiple NULLs here,
+  // which is fine: brand-new subscription rows have no Stripe customer yet.
+  stripeCustomerId: text("stripe_customer_id").unique(),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripePriceId: text("stripe_price_id"),
+  status: text("status"),
+  currentPeriodStart: ts("current_period_start"),
+  currentPeriodEnd: ts("current_period_end"),
+  // Boolean-as-int matches existing convention (see emailVerified above).
+  cancelAtPeriodEnd: integer("cancel_at_period_end").notNull().default(0),
+  trialEnd: ts("trial_end"),
+  latestInvoiceUrl: text("latest_invoice_url"),
+  lastFour: text("last_four"),
+  cardBrand: text("card_brand"),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
 });
 
 export const facilityOverrides = pgTable("facility_overrides", {
@@ -138,6 +172,23 @@ export type ApplicantInterest = typeof applicantInterests.$inferSelect;
 export type InsertApplicantInterest = typeof applicantInterests.$inferInsert;
 export const interestStatusSchema = z.enum(["pending", "viewed", "shortlisted"]);
 export type InterestStatus = z.infer<typeof interestStatusSchema>;
+
+// ── Operations paywall subscription types (Phase 0) ──────────────────────────
+export type FacilitySubscription = typeof facilitySubscriptions.$inferSelect;
+export type NewFacilitySubscription = typeof facilitySubscriptions.$inferInsert;
+// Stripe subscription status values. `null` (column nullable) means "no
+// subscription record yet" — the gate treats that the same as a missing row.
+export const subscriptionStatusSchema = z.enum([
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+  "unpaid",
+  "incomplete",
+  "incomplete_expired",
+  "paused",
+]);
+export type SubscriptionStatus = z.infer<typeof subscriptionStatusSchema>;
 
 // ============ ZOD SCHEMAS ============
 

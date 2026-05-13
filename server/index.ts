@@ -19,6 +19,7 @@ import { bootstrapTrackersSchema } from "./trackers/trackerStorage";
 // trackerRouter is mounted under opsRouter in server/ops/opsRouter.ts so it
 // inherits requireFacilityAuth — see M4 fix.
 import { bootstrapMainSchema } from "./db/bootstrap";
+import { stripeWebhookHandler } from "./billing/webhookHandler";
 import type { FacilityAccount } from "@shared/schema";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
@@ -47,6 +48,17 @@ declare module "http" {
 // gzip/brotli-style compression for all responses. Cuts the /api/facilities
 // JSON payload (and the slim /api/facilities/pins payload) by ~5× on the wire.
 app.use(compression());
+
+// ── Stripe webhook (Phase 1) ──────────────────────────────────────────────────
+// MUST be mounted BEFORE express.json() — Stripe's signature verification
+// requires the raw request body Buffer. Once express.json() parses the body
+// the original bytes are gone and verification will fail. Also bypasses the
+// CSRF guard below (Stripe doesn't send X-Requested-With).
+app.post(
+  "/api/billing/webhook",
+  express.raw({ type: "application/json" }),
+  stripeWebhookHandler,
+);
 
 app.use(
   express.json({
@@ -95,6 +107,12 @@ app.use(passport.session());
 // All frontend mutations flow through apiRequest() in queryClient.ts, which
 // sets this header automatically (including Capacitor native builds).
 app.use((req: Request, res: Response, next: NextFunction) => {
+  // Stripe webhook requests originate from Stripe's servers (not a browser)
+  // and cannot send our custom X-Requested-With header. The route is also
+  // mounted above this middleware with express.raw() — but if request
+  // matching order ever changes, this bypass keeps the webhook reachable.
+  if (req.path === "/api/billing/webhook") return next();
+
   const method = req.method.toUpperCase();
   if (
     ["POST", "PUT", "DELETE", "PATCH"].includes(method) &&

@@ -4,9 +4,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff, MapPin } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff, MapPin, Lock } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import OperationsTab from "@/components/OperationsTab";
+import { OperationsPaywall } from "@/components/billing/OperationsPaywall";
+import { isOperationsActive } from "@/lib/subscription";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,6 +70,10 @@ interface SessionUser {
   id: number;
   facilityNumber: string;
   username: string;
+  // Phase 0 Operations paywall: optional because older server builds may
+  // not include it. The gate predicate (`isOperationsActive`) treats
+  // missing/null as "not active", so consumers can always read defensively.
+  subscription?: import("@/lib/subscription").FacilitySubscription | null;
 }
 
 interface DbJobPosting {
@@ -1001,11 +1007,101 @@ function JobsManager({ facilityNumber }: { facilityNumber: string }) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
+/**
+ * Read query params from the current hash URL.
+ *
+ * The app uses wouter's `useHashLocation`, so the canonical URL is
+ *   #/facility-portal?billing=success
+ * — meaning query params live INSIDE `window.location.hash`, not in
+ * `window.location.search`. wouter's `useSearch()` reads `location.search`
+ * and would always see an empty string for us, so we parse the hash
+ * directly (same precedent as `useNotesUrlState.ts` and `OpsCalendar.tsx`).
+ */
+function readHashParams(): URLSearchParams {
+  if (typeof window === "undefined") return new URLSearchParams();
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf("?");
+  if (qIdx === -1) return new URLSearchParams();
+  return new URLSearchParams(hash.slice(qIdx + 1));
+}
+
+/**
+ * Strip the named query params from the hash without triggering a wouter
+ * navigation. Uses `history.replaceState` so the URL updates in-place and
+ * a page refresh won't re-fire the post-checkout toast.
+ */
+function clearHashParams(keys: string[]) {
+  if (typeof window === "undefined") return;
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf("?");
+  if (qIdx === -1) return;
+  const path = hash.slice(0, qIdx);
+  const params = new URLSearchParams(hash.slice(qIdx + 1));
+  for (const k of keys) params.delete(k);
+  const qs = params.toString();
+  const nextHash = qs ? `${path}?${qs}` : path;
+  if (nextHash === hash) return;
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+  window.history.replaceState(null, "", nextUrl);
+}
+
 function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { facilityByNumber } = useFacilities();
   const [editingDetails, setEditingDetails] = useState(false);
+
+  // Controlled tab state — so the post-checkout / paywall-deeplink effects
+  // below can force-select the Operations tab. Default still "details".
+  const [activeTab, setActiveTab] = useState<string>("details");
+
+  // Handle the billing redirect from Stripe and the paywall deep-link from
+  // NotesPage. Runs once on mount: the toasts/refetch must fire on the
+  // landing render, not on every re-render, and clearing the param ensures
+  // a refresh won't re-fire.
+  //
+  // billing=success → toast + force-refetch /api/facility/me so the new
+  //   subscription.status propagates and the Operations gate flips active.
+  // billing=cancelled → softer toast, no refetch.
+  // paywall=1 → auto-select Operations so the user lands on the paywall
+  //   card (was redirected here from NotesPage's paywall gate).
+  //
+  // eslint-disable-next-line react-hooks/exhaustive-deps — empty deps is
+  // deliberate; we want a single-shot on mount.
+  useEffect(() => {
+    const params = readHashParams();
+    const billing = params.get("billing");
+    const paywallHint = params.get("paywall");
+
+    if (billing === "success") {
+      toast({
+        title: "Welcome to Operations Pro!",
+        description: "Your subscription is active.",
+      });
+      qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
+      setActiveTab("operations");
+      clearHashParams(["billing"]);
+    } else if (billing === "cancelled" || billing === "canceled") {
+      // Stripe historically spells it "canceled" (single-l); we accept
+      // both to be defensive if the backend's redirect URL ever drifts.
+      toast({
+        title: "Checkout cancelled",
+        description: "You can upgrade anytime.",
+      });
+      setActiveTab("operations");
+      clearHashParams(["billing"]);
+    }
+
+    if (paywallHint === "1") {
+      // Less invasive than a toast: just put the user on the Operations
+      // tab so the paywall card is the first thing they see. NotesPage
+      // sets this when the dedicated /facility-portal/notes route is
+      // gated by an inactive subscription.
+      setActiveTab("operations");
+      clearHashParams(["paywall"]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const facility = facilityByNumber.get(user.facilityNumber) ?? null;
 
@@ -1046,7 +1142,11 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   );
 
   return (
-    <Tabs defaultValue="details" className="min-h-screen flex flex-col bg-white">
+    <Tabs
+      value={activeTab}
+      onValueChange={setActiveTab}
+      className="min-h-screen flex flex-col bg-white"
+    >
       {/* ── Top bar ─────────────────────────────────────────────────────────
        * Single row at 56px. Identity collapses inline rather than stacking
        * into an avatar + 3-line block: brand mark establishes identity, the
@@ -1158,22 +1258,38 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             <TabsTrigger value="operations">
               <span className="inline-flex items-center gap-1.5">
                 Operations
-                {notesCount > 0 && (
+                {/* Phase 0 paywall: small "Pro" lock badge when the
+                   subscription isn't active — kept subtle so it reads as
+                   an upsell affordance, not a warning. The notes counter
+                   below is suppressed in this state since the user can't
+                   open the feed anyway. */}
+                {!isOperationsActive(user.subscription) ? (
                   <span
-                    aria-label={
-                      hasUrgentNote
-                        ? `${notesCount} open notes, contains urgent`
-                        : `${notesCount} open notes`
-                    }
-                    className={cn(
-                      "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-medium portal-num",
-                      hasUrgentNote
-                        ? "bg-[var(--portal-status-critical)] text-white"
-                        : "bg-stone-100 text-stone-600 border border-stone-200"
-                    )}
+                    aria-label="Operations Pro — upgrade required"
+                    data-testid="operations-tab-pro-badge"
+                    className="inline-flex items-center gap-1 h-[18px] px-1.5 rounded-full text-[10px] font-medium bg-stone-100 text-stone-600 border border-stone-200"
                   >
-                    {notesCount > 99 ? "99+" : notesCount}
+                    <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+                    Pro
                   </span>
+                ) : (
+                  notesCount > 0 && (
+                    <span
+                      aria-label={
+                        hasUrgentNote
+                          ? `${notesCount} open notes, contains urgent`
+                          : `${notesCount} open notes`
+                      }
+                      className={cn(
+                        "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-medium portal-num",
+                        hasUrgentNote
+                          ? "bg-[var(--portal-status-critical)] text-white"
+                          : "bg-stone-100 text-stone-600 border border-stone-200"
+                      )}
+                    >
+                      {notesCount > 99 ? "99+" : notesCount}
+                    </span>
+                  )
                 )}
               </span>
             </TabsTrigger>
@@ -1281,10 +1397,20 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         </div>
 
         {/* Operations runs full-bleed and supplies its own padding/canvas
-            so the embedded calendar can use the full viewport width. */}
+            so the embedded calendar can use the full viewport width.
+            Phase 0 paywall: when the facility's subscription isn't active
+            or trialing, the tab content area renders the `OperationsPaywall`
+            instead of the toolkit itself. The tab trigger above stays
+            visible (with a small "Pro" lock badge) so the upsell remains
+            discoverable. Treats a missing `subscription` field as paywall
+            in case the backend hasn't redeployed yet. */}
         <TabsContent value="operations" className="mt-0">
           <div className="px-4 lg:px-6 pt-6 pb-8 max-w-[1440px] mx-auto">
-            <OperationsTab facilityNumber={user.facilityNumber} />
+            {isOperationsActive(user.subscription) ? (
+              <OperationsTab facilityNumber={user.facilityNumber} />
+            ) : (
+              <OperationsPaywall subscription={user.subscription ?? null} />
+            )}
           </div>
         </TabsContent>
       </main>

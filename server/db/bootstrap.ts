@@ -144,6 +144,45 @@ const MAIN_PG_SCHEMA_SQL = `
     attempted_at    BIGINT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts(email);
+
+  -- ── Operations paywall (Phase 0): per-account Stripe subscription ──────────
+  -- Stripe columns are nullable until Phase 1 wires the SDK + webhook.
+  -- One row per facility_accounts.id; the unique index below enforces that.
+  CREATE TABLE IF NOT EXISTS facility_subscriptions (
+    id                       SERIAL PRIMARY KEY,
+    facility_account_id      INTEGER NOT NULL,
+    stripe_customer_id       TEXT,
+    stripe_subscription_id   TEXT,
+    stripe_price_id          TEXT,
+    status                   TEXT,
+    current_period_start     BIGINT,
+    current_period_end       BIGINT,
+    cancel_at_period_end     INTEGER NOT NULL DEFAULT 0,
+    trial_end                BIGINT,
+    latest_invoice_url       TEXT,
+    last_four                TEXT,
+    card_brand               TEXT,
+    created_at               BIGINT NOT NULL,
+    updated_at               BIGINT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS facility_subscriptions_account_idx
+    ON facility_subscriptions(facility_account_id);
+  CREATE INDEX IF NOT EXISTS facility_subscriptions_stripe_sub_idx
+    ON facility_subscriptions(stripe_subscription_id);
+  -- UNIQUE on stripe_customer_id (allows multiple NULLs by default in
+  -- Postgres) so the webhook's customer→account fallback resolution is
+  -- guaranteed to be 1:1 — prevents customer-id confusion if duplicate
+  -- subscription rows ever get created by hand.
+  CREATE UNIQUE INDEX IF NOT EXISTS facility_subscriptions_stripe_customer_idx
+    ON facility_subscriptions(stripe_customer_id);
+
+  -- Hot-path cache columns on facility_accounts so the Operations gate
+  -- middleware can authorize without joining facility_subscriptions. Kept in
+  -- sync by the subscription writer (Phase 1). Idempotent for redeploys.
+  ALTER TABLE facility_accounts
+    ADD COLUMN IF NOT EXISTS subscription_status TEXT;
+  ALTER TABLE facility_accounts
+    ADD COLUMN IF NOT EXISTS subscription_current_period_end BIGINT;
 `;
 
 export async function bootstrapMainSchema(): Promise<void> {

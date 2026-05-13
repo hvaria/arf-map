@@ -42,6 +42,20 @@ vi.mock("@/lib/featureFlags", () => ({
 
 import { useQuery } from "@tanstack/react-query";
 import NotesPage from "../pages/notes/NotesPage";
+import type { FacilitySubscription } from "../lib/subscription";
+
+// Default active subscription — most tests want the happy path where the
+// Operations paywall gate (Phase 0) lets the user through. The subscription-
+// gate test cases below override this to assert the locked-out behaviour.
+const ACTIVE_SUBSCRIPTION: FacilitySubscription = {
+  status: "active",
+  currentPeriodEnd: null,
+  cancelAtPeriodEnd: false,
+  planId: null,
+  latestInvoiceUrl: null,
+  lastFour: null,
+  cardBrand: null,
+};
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -102,6 +116,7 @@ describe("NotesPage — auth gate", () => {
         username: "owner@facility.com",
         email: "owner@facility.com",
         emailVerified: 1,
+        subscription: ACTIVE_SUBSCRIPTION,
       },
       isLoading: false,
     } as unknown as ReturnType<typeof useQuery>);
@@ -153,6 +168,82 @@ describe("NotesPage — Slice 2 beta-flag gate", () => {
         username: "owner@facility.com",
         email: "owner@facility.com",
         emailVerified: 1,
+        subscription: ACTIVE_SUBSCRIPTION,
+      },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    const { getByTestId } = renderPage();
+
+    await waitFor(() => {
+      expect(getByTestId("notes-page-shell")).toBeInTheDocument();
+    });
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("NotesPage — Phase 0 paywall gate", () => {
+  it("redirects to /facility-portal?paywall=1 when subscription is null", async () => {
+    useFeatureFlagMock.mockReturnValue(true);
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        id: 1,
+        facilityNumber: "197600123",
+        username: "owner@facility.com",
+        email: "owner@facility.com",
+        emailVerified: 1,
+        subscription: null,
+      },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    const { queryByTestId } = renderPage();
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/facility-portal?paywall=1", {
+        replace: true,
+      });
+    });
+
+    // Shell must NOT render while the user is paywalled.
+    expect(queryByTestId("notes-page-shell")).not.toBeInTheDocument();
+  });
+
+  it("redirects when subscription.status is past_due", async () => {
+    useFeatureFlagMock.mockReturnValue(true);
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        id: 1,
+        facilityNumber: "197600123",
+        username: "owner@facility.com",
+        email: "owner@facility.com",
+        emailVerified: 1,
+        subscription: { ...ACTIVE_SUBSCRIPTION, status: "past_due" },
+      },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/facility-portal?paywall=1", {
+        replace: true,
+      });
+    });
+  });
+
+  it("renders the shell when subscription.status is trialing", async () => {
+    useFeatureFlagMock.mockReturnValue(true);
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        id: 1,
+        facilityNumber: "197600123",
+        username: "owner@facility.com",
+        email: "owner@facility.com",
+        emailVerified: 1,
+        subscription: { ...ACTIVE_SUBSCRIPTION, status: "trialing" },
       },
       isLoading: false,
     } as unknown as ReturnType<typeof useQuery>);

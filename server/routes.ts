@@ -10,6 +10,7 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { adminEtlRouter } from "./routes/adminEtl";
 import { interestsRouter } from "./routes/interests"; // NEW: expression-of-interest
+import { billingRouter } from "./routes/billing";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 import {
   getCachedFacilities,
@@ -122,6 +123,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.use("/api/jobseeker", jobseekerAuthRouter);
   app.use("/api/admin/etl", adminEtlRouter);
   app.use("/api", interestsRouter); // NEW: expression-of-interest
+  app.use("/api/billing", billingRouter);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -744,11 +746,28 @@ export async function registerRoutes(server: Server, app: Express) {
     if (!req.isAuthenticated() || !req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
+    // Subscription block (Phase 0): exposes the hot-path cache columns the
+    // Operations gate reads from. status + currentPeriodEnd are populated by
+    // the Stripe webhook writer (Phase 1); the remaining fields are
+    // intentionally stubbed null and will be filled in from
+    // facility_subscriptions when Phase 1 lands. Frontend treats null fields
+    // as "not yet wired" — see client/src/types/subscription if it exists.
     res.json({
       id: req.user.id,
       facilityNumber: req.user.facilityNumber,
       username: req.user.username,
       role: req.user.role ?? "facility_admin",
+      subscription: {
+        status: req.user.subscriptionStatus ?? null,
+        currentPeriodEnd: req.user.subscriptionCurrentPeriodEnd ?? null,
+        // Phase 1 fields — populated from facility_subscriptions once the
+        // Stripe webhook writer is in place.
+        cancelAtPeriodEnd: false,
+        planId: null,
+        latestInvoiceUrl: null,
+        lastFour: null,
+        cardBrand: null,
+      },
     });
   });
 

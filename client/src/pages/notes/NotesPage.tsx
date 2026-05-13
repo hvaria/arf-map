@@ -9,6 +9,13 @@
  * Slice 2: also gated behind the `notes_dedicated_page` beta feature flag.
  * Non-super-admin users whose facility is not in
  * `VITE_NOTES_DEDICATED_PAGE_FACILITIES` are redirected to `/facility-portal`.
+ *
+ * Phase 0 Operations paywall: Notes is a sub-feature of Operations, so the
+ * same gate applies here. If the facility's subscription is not `active` or
+ * `trialing`, the user is redirected to `/facility-portal?paywall=1` where
+ * the OperationsTab paywall will be visible. We deliberately do not render
+ * the paywall inline here — keeping the upsell on a single surface avoids
+ * inconsistent state messaging.
  */
 import { useEffect } from "react";
 import { useLocation } from "wouter";
@@ -16,6 +23,10 @@ import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { NotesPageShell } from "@/components/notes/NotesPageShell";
 import { useFeatureFlag } from "@/lib/featureFlags";
+import {
+  isOperationsActive,
+  type FacilitySubscription,
+} from "@/lib/subscription";
 
 interface SessionUser {
   id: number;
@@ -25,6 +36,7 @@ interface SessionUser {
   emailVerified: number;
   role?: string;
   displayName?: string;
+  subscription?: FacilitySubscription | null;
 }
 
 export default function NotesPage() {
@@ -56,6 +68,20 @@ export default function NotesPage() {
     }
   }, [isLoading, me, dedicatedPageEnabled, navigate]);
 
+  // Phase 0 paywall gate — Notes is a sub-feature of Operations. Push
+  // unpaid accounts back to the portal where the paywall card lives.
+  // `?paywall=1` is a hint for any future analytics / landing copy; the
+  // portal itself does not currently read it but it is intentional.
+  // Note: missing/null `subscription` (older server build) is treated as
+  // paywall so we fail closed, not open.
+  useEffect(() => {
+    if (!isLoading && me && dedicatedPageEnabled) {
+      if (!isOperationsActive(me.subscription)) {
+        navigate("/facility-portal?paywall=1", { replace: true });
+      }
+    }
+  }, [isLoading, me, dedicatedPageEnabled, navigate]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
@@ -71,6 +97,13 @@ export default function NotesPage() {
 
   if (!dedicatedPageEnabled) {
     // Brief blank flash while the flag-redirect effect runs.
+    return null;
+  }
+
+  // Phase 0 paywall: suppress the shell while the paywall-redirect effect
+  // runs so the user never sees a flash of the dedicated Notes UI before
+  // being kicked back to the portal.
+  if (!isOperationsActive(me.subscription)) {
     return null;
   }
 

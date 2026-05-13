@@ -176,6 +176,14 @@ Both flows use 6-digit OTP email verification (15-minute expiry) and support pas
 | `ETL_HOUR_UTC` | Override nightly enrichment hour (default: 2) |
 | `SKIP_PREWARM` | Set to skip facility cache pre-warm on startup |
 | `DATABASE_URL` | SQLite file path (used by Drizzle Kit) |
+| `STRIPE_SECRET_KEY` | Stripe API key (`sk_test_...` / `sk_live_...`) — required for `/api/billing/*`; absent ⇒ checkout returns 503 |
+| `STRIPE_WEBHOOK_SECRET` | Webhook signing secret (`whsec_...`) from `stripe listen` or the Dashboard endpoint config |
+| `STRIPE_PRICE_ID_OPS_PRO_MONTHLY` | Stripe Price ID for the $99/month Operations plan (created in the Dashboard) |
+| `STRIPE_CHECKOUT_SUCCESS_URL` | Where Stripe redirects after a successful Checkout, e.g. `.../#/facility-portal?billing=success` |
+| `STRIPE_CHECKOUT_CANCEL_URL` | Where Stripe redirects on a cancelled Checkout |
+| `STRIPE_PORTAL_RETURN_URL` | Where the Stripe Customer Portal returns the user when they close it |
+
+**Local Stripe webhook testing**: `stripe listen --forward-to localhost:5000/api/billing/webhook` — copy the printed `whsec_...` into `STRIPE_WEBHOOK_SECRET`. The webhook route is mounted with `express.raw()` BEFORE the global JSON parser so Stripe's signature verification sees the unparsed body.
 
 ### Deployment
 
