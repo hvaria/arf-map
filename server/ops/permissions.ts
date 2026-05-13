@@ -1,0 +1,114 @@
+/**
+ * F4 — Ops role-based permission scaffold.
+ *
+ * Pattern reused: mounts alongside the existing `requireFacilityAuth`
+ * middleware in `server/ops/opsRouter.ts:34-42` — does NOT replace it.
+ * Every Wave 0 endpoint chains `requireFacilityAuth` (already in the
+ * router) → `requireActiveSubscription` (already in the router) →
+ * `requireOpsPermission(resource, action)` (this file).
+ *
+ * Wave 0 v0 stance: every authenticated facility session resolves to
+ * `"admin"`. The `resolveRole()` function is the seam that Wave 3 will
+ * replace once auditor share-links and role assignments land. Until then
+ * `auditor` exists as a read-only matrix that no live session can hit.
+ */
+
+import type { NextFunction, Request, Response } from "express";
+
+export type OpsRole =
+  | "admin"
+  | "auditor"
+  | "don"
+  | "med_tech"
+  | "schedule_lead"
+  | "office_manager";
+
+export type OpsAction =
+  | "read"
+  | "create"
+  | "update"
+  | "delete"
+  | "resolve"
+  | "close"
+  | "manage_settings";
+
+export interface Permission {
+  resource: string;
+  actions: OpsAction[];
+}
+
+// Resources known in Wave 0. Wave 1+ tickets append to this list; the
+// permissions matrix below is keyed by resource string so the additions
+// are local.
+export const OPS_RESOURCES = {
+  REG_SETTING: "ops_reg_setting",
+  EVIDENCE: "ops_evidence",
+  AUDIT_TRAIL: "ops_audit_trail",
+} as const;
+
+const ADMIN_ALL: Permission[] = [
+  {
+    resource: OPS_RESOURCES.REG_SETTING,
+    actions: ["read", "create", "update", "manage_settings"],
+  },
+  {
+    resource: OPS_RESOURCES.EVIDENCE,
+    // attach = create, detach = delete (soft).
+    actions: ["read", "create", "delete"],
+  },
+  {
+    resource: OPS_RESOURCES.AUDIT_TRAIL,
+    actions: ["read"],
+  },
+];
+
+const AUDITOR_READ_ONLY: Permission[] = [
+  { resource: OPS_RESOURCES.REG_SETTING, actions: ["read"] },
+  { resource: OPS_RESOURCES.EVIDENCE, actions: ["read"] },
+  { resource: OPS_RESOURCES.AUDIT_TRAIL, actions: ["read"] },
+];
+
+// Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills
+// them in when the staff-credential / shift work lands. Leaving them
+// here keeps the contract stable so Wave 1 route mounts don't churn.
+export const ROLE_PERMISSIONS: Record<OpsRole, Permission[]> = {
+  admin: ADMIN_ALL,
+  auditor: AUDITOR_READ_ONLY,
+  don: [],
+  med_tech: [],
+  schedule_lead: [],
+  office_manager: [],
+};
+
+/**
+ * Resolve the effective Ops role for the request. Wave 0: every
+ * authenticated facility session is `"admin"`. Wave 3 will replace this
+ * implementation with token-bound lookup. Test code can monkey-patch
+ * `resolveRole` via module mocking to assert the auditor / deny paths.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function resolveRole(_req: Request): OpsRole {
+  return "admin";
+}
+
+/**
+ * Express middleware factory. Mounted per-route as the third middleware
+ * in the chain (after auth + subscription). On deny it returns the
+ * standard ops envelope shape `{ success: false, error }` so the FE
+ * error-banner pattern keeps working without a special case.
+ */
+export function requireOpsPermission(resource: string, action: OpsAction) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const role = resolveRole(req);
+    const perms = ROLE_PERMISSIONS[role] ?? [];
+    const allowed = perms.some(
+      (p) => p.resource === resource && p.actions.includes(action),
+    );
+    if (!allowed) {
+      return res
+        .status(403)
+        .json({ success: false, error: "Forbidden" });
+    }
+    return next();
+  };
+}

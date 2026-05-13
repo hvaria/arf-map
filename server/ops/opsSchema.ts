@@ -444,6 +444,13 @@ export const OPS_PG_SCHEMA_SQL = `
     updated_at      BIGINT NOT NULL,
     UNIQUE(facility_number, setting_key)
   );
+  -- Idempotent UNIQUE backfill for deployments where ops_facility_settings
+  -- predates the inline UNIQUE clause above (CREATE TABLE IF NOT EXISTS
+  -- skips the body entirely on an existing table). Without this, ON
+  -- CONFLICT (facility_number, setting_key) inside regSettings.ts fails
+  -- against legacy DBs.
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_ops_facility_settings_key
+    ON ops_facility_settings(facility_number, setting_key);
 
   CREATE TABLE IF NOT EXISTS ops_compliance_calendar (
     id                   BIGSERIAL PRIMARY KEY,
@@ -460,6 +467,40 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_cc_facility ON ops_compliance_calendar(facility_number);
   CREATE INDEX IF NOT EXISTS idx_ops_cc_due_date ON ops_compliance_calendar(due_date);
   CREATE INDEX IF NOT EXISTS idx_ops_cc_status   ON ops_compliance_calendar(status);
+
+  CREATE TABLE IF NOT EXISTS ops_evidence_attachments (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    entity_type     TEXT NOT NULL,
+    entity_id       BIGINT NOT NULL,
+    kind            TEXT NOT NULL,
+    filename        TEXT,
+    mime            TEXT,
+    byte_size       INTEGER,
+    storage_uri     TEXT NOT NULL,
+    sha256          TEXT,
+    uploaded_by     TEXT NOT NULL,
+    uploaded_at     BIGINT NOT NULL,
+    deleted_at      BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_evidence_facility ON ops_evidence_attachments(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_evidence_entity   ON ops_evidence_attachments(entity_type, entity_id);
+
+  CREATE TABLE IF NOT EXISTS ops_audit_trail (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    actor_id        TEXT NOT NULL,
+    actor_role      TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    entity_type     TEXT NOT NULL,
+    entity_id       BIGINT NOT NULL,
+    before_json     TEXT,
+    after_json      TEXT,
+    occurred_at     BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_audit_facility ON ops_audit_trail(facility_number, occurred_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_audit_entity   ON ops_audit_trail(entity_type, entity_id, occurred_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_audit_actor    ON ops_audit_trail(actor_id, occurred_at);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -890,6 +931,39 @@ export const opsComplianceCalendar = pgTable("ops_compliance_calendar", {
   createdAt:         ts("created_at").notNull(),
 });
 
+// ── Wave 0: F2 Evidence attachments ───────────────────────────────────────
+
+export const opsEvidenceAttachments = pgTable("ops_evidence_attachments", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  entityType:     text("entity_type").notNull(),
+  entityId:       bigint("entity_id", { mode: "number" }).notNull(),
+  kind:           text("kind").notNull(),
+  filename:       text("filename"),
+  mime:           text("mime"),
+  byteSize:       integer("byte_size"),
+  storageUri:     text("storage_uri").notNull(),
+  sha256:         text("sha256"),
+  uploadedBy:     text("uploaded_by").notNull(),
+  uploadedAt:     ts("uploaded_at").notNull(),
+  deletedAt:      ts("deleted_at"),
+});
+
+// ── Wave 0: F3 Audit trail (immutable, append-only) ───────────────────────
+
+export const opsAuditTrail = pgTable("ops_audit_trail", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  actorId:        text("actor_id").notNull(),
+  actorRole:      text("actor_role").notNull(),
+  action:         text("action").notNull(),
+  entityType:     text("entity_type").notNull(),
+  entityId:       bigint("entity_id", { mode: "number" }).notNull(),
+  beforeJson:     text("before_json"),
+  afterJson:      text("after_json"),
+  occurredAt:     ts("occurred_at").notNull(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -950,3 +1024,9 @@ export type InsertOpsFacilitySetting = typeof opsFacilitySettings.$inferInsert;
 
 export type OpsComplianceItem       = typeof opsComplianceCalendar.$inferSelect;
 export type InsertOpsComplianceItem = typeof opsComplianceCalendar.$inferInsert;
+
+export type OpsEvidenceAttachment       = typeof opsEvidenceAttachments.$inferSelect;
+export type InsertOpsEvidenceAttachment = typeof opsEvidenceAttachments.$inferInsert;
+
+export type OpsAuditTrailEntry          = typeof opsAuditTrail.$inferSelect;
+export type InsertOpsAuditTrailEntry    = typeof opsAuditTrail.$inferInsert;

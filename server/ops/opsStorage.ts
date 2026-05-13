@@ -62,9 +62,37 @@ import {
 // Bootstrap — create all ops_ tables in PostgreSQL on startup
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Bootstrap is idempotent (CREATE TABLE IF NOT EXISTS / CREATE INDEX IF
+// NOT EXISTS), but concurrent invocations across vitest forks can still
+// race on Postgres' internal type creation and produce
+// `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`.
+// Wrap the DDL in a Postgres session-level advisory lock so only one
+// caller at a time runs the bootstrap. Within a single process, also
+// cache the promise so repeat callers no-op.
+const OPS_BOOTSTRAP_LOCK_KEY = 0x6f70735f626f6f74; // 'ops_boot' (low 64 bits)
+let opsBootstrapPromise: Promise<void> | null = null;
+
 export async function bootstrapOpsSchema(): Promise<void> {
-  await pool.query(OPS_PG_SCHEMA_SQL);
-  console.log("[ops] PostgreSQL tables bootstrapped");
+  if (!opsBootstrapPromise) {
+    opsBootstrapPromise = (async () => {
+      const client = await pool.connect();
+      try {
+        // pg_advisory_lock blocks until the lock is acquired; the
+        // pg_advisory_unlock at the bottom releases it. Cross-fork
+        // contention serializes here without spamming retries.
+        await client.query(`SELECT pg_advisory_lock($1)`, [OPS_BOOTSTRAP_LOCK_KEY]);
+        try {
+          await client.query(OPS_PG_SCHEMA_SQL);
+        } finally {
+          await client.query(`SELECT pg_advisory_unlock($1)`, [OPS_BOOTSTRAP_LOCK_KEY]);
+        }
+        console.log("[ops] PostgreSQL tables bootstrapped");
+      } finally {
+        client.release();
+      }
+    })();
+  }
+  return opsBootstrapPromise;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

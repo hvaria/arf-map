@@ -185,7 +185,29 @@ const MAIN_PG_SCHEMA_SQL = `
     ADD COLUMN IF NOT EXISTS subscription_current_period_end BIGINT;
 `;
 
+// Bootstrap is idempotent, but concurrent vitest forks running ADD
+// COLUMN IF NOT EXISTS against the same table can deadlock against each
+// other's ACCESS EXCLUSIVE locks. Serialize cross-fork by acquiring a
+// Postgres advisory lock and cache the promise within a single fork.
+const MAIN_BOOTSTRAP_LOCK_KEY = 0x6d61696e5f626f74; // 'main_bot'
+let mainBootstrapPromise: Promise<void> | null = null;
+
 export async function bootstrapMainSchema(): Promise<void> {
-  await pool.query(MAIN_PG_SCHEMA_SQL);
-  console.log("[db] main PostgreSQL tables bootstrapped");
+  if (!mainBootstrapPromise) {
+    mainBootstrapPromise = (async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`SELECT pg_advisory_lock($1)`, [MAIN_BOOTSTRAP_LOCK_KEY]);
+        try {
+          await client.query(MAIN_PG_SCHEMA_SQL);
+        } finally {
+          await client.query(`SELECT pg_advisory_unlock($1)`, [MAIN_BOOTSTRAP_LOCK_KEY]);
+        }
+        console.log("[db] main PostgreSQL tables bootstrapped");
+      } finally {
+        client.release();
+      }
+    })();
+  }
+  return mainBootstrapPromise;
 }

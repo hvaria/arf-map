@@ -7,12 +7,36 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
+import multer from "multer";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { pool } from "../db/index";
 import * as ops from "./opsStorage";
 import { notesRouter } from "./notesRouter";
 import { trackerRouter } from "../trackers/routes";
 import { requireActiveSubscription } from "../middleware/requireActiveSubscription";
+import {
+  requireOpsPermission,
+  resolveRole,
+  OPS_RESOURCES,
+} from "./permissions";
+import {
+  isKnownRegSettingKey,
+  listRegSettings,
+  setRegSetting,
+  seedDefaultsForFacility,
+} from "./regSettings";
+import {
+  EVIDENCE_MAX_BYTES,
+  EVIDENCE_ALLOWED_MIME,
+  EVIDENCE_KIND_VALUES,
+  EvidenceValidationError,
+  attachEvidence,
+  listEvidence,
+  readEvidenceStream,
+  softDeleteEvidence,
+} from "./evidenceStorage";
+import { listAuditForFacility } from "./auditStorage";
 import {
   MedicationCreateInput,
   MedicationUpdateInput,
@@ -2215,3 +2239,389 @@ opsRouter.post("/facilities/:facilityNumber/seed-demo", async (req, res) => {
     return res.status(500).json({ success: false, error: "Internal error" });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 0 — Foundations: Reg settings (F1), Evidence (F2), Audit trail (F3)
+//
+// Pattern reused: each route follows the existing
+//   try { zod.safeParse → tenant/permission check → storage call → 200 envelope }
+//   catch { 500 envelope }
+// shape from the Module 1–6 routes above. Tenant scope is enforced TWICE —
+// once by opsRouter.param("facilityNumber") at the top of the file (defense
+// at the URL boundary) and once inside each storage function (defense in
+// depth so a misplaced caller can't cross-tenant read).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Zod schemas ───────────────────────────────────────────────────────────────
+
+const regSettingUpdateSchema = z.object({
+  value: z.string().min(1, "value is required"),
+  sourceNote: z.string().max(2000).optional(),
+  validated: z.boolean().optional(),
+}).strict();
+
+const evidenceAttachSchema = z.object({
+  entityType: z.string().min(1, "entityType is required"),
+  entityId: z.coerce.number().int().positive("entityId must be a positive integer"),
+  kind: z.enum(EVIDENCE_KIND_VALUES),
+  externalUri: z.string().url().optional(),
+}).strict();
+
+const evidenceListQuerySchema = z.object({
+  entityType: z.string().min(1, "entityType is required"),
+  entityId: z.coerce.number().int().positive("entityId must be a positive integer"),
+}).strict();
+
+const auditTrailQuerySchema = z.object({
+  entityType: z.string().optional(),
+  entityId: z.coerce.number().int().positive().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+// ── Multer + per-session rate limiter for evidence upload ────────────────────
+
+// In-memory storage so we sniff/validate the buffer before touching disk.
+const evidenceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: EVIDENCE_MAX_BYTES,
+    files: 1,
+    fields: 20,
+  },
+});
+
+// 10 uploads / minute / facility account. Comfortably handles the 100-
+// facility concurrent target without exposing a DOS surface. Pattern
+// reused: shape mirrors `billingRateLimiter` at
+// `server/middleware/rateLimiter.ts:34-50`.
+const evidenceUploadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many uploads — please wait a minute and try again.",
+  },
+  keyGenerator: (req: Request) => {
+    const u = req.user as { id?: number; facilityNumber?: string } | undefined;
+    return u?.id ? `evidence:${u.id}` : "evidence:unauthenticated";
+  },
+});
+
+// Helper — extract the actor identity in the shape the audit/storage
+// layer expects. Username is the human-readable id we want in audit rows.
+function getActor(req: Request): { id: string; role: string } {
+  const u = req.user as { username?: string } | undefined;
+  return { id: u?.username ?? "unknown", role: resolveRole(req) };
+}
+
+// ── F1 — Reg settings ────────────────────────────────────────────────────────
+
+// GET /facilities/:facilityNumber/reg-settings
+opsRouter.get(
+  "/facilities/:facilityNumber/reg-settings",
+  requireOpsPermission(OPS_RESOURCES.REG_SETTING, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const data = await listRegSettings(facilityNumber);
+      return res.json({ success: true, data });
+    } catch (e) {
+      console.error("[ops] reg-settings list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// PUT /reg-settings/:key — body { value, sourceNote?, validated? }
+// Facility derived from the session (the key is global to the catalogue;
+// the per-facility scope comes from req.user.facilityNumber).
+opsRouter.put(
+  "/reg-settings/:key",
+  requireOpsPermission(OPS_RESOURCES.REG_SETTING, "manage_settings"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const keyParam = String(req.params.key);
+      if (!isKnownRegSettingKey(keyParam)) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Unknown reg setting key" });
+      }
+      const parsed = regSettingUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      await setRegSetting(facilityNumber, keyParam, parsed.data.value, {
+        sourceNote: parsed.data.sourceNote ?? undefined,
+        validated: parsed.data.validated,
+        actorId: actor.id,
+        actorRole: actor.role,
+      });
+      // Re-read so the response shows placeholder/validated state.
+      const data = (await listRegSettings(facilityNumber)).find(
+        (r) => r.key === keyParam,
+      );
+      return res.json({ success: true, data });
+    } catch (e) {
+      console.error("[ops] reg-settings update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /facilities/:facilityNumber/reg-settings/seed
+opsRouter.post(
+  "/facilities/:facilityNumber/reg-settings/seed",
+  requireOpsPermission(OPS_RESOURCES.REG_SETTING, "manage_settings"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const result = await seedDefaultsForFacility(facilityNumber);
+      return res.json({ success: true, data: result });
+    } catch (e) {
+      console.error("[ops] reg-settings seed failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── F2 — Evidence attachments ─────────────────────────────────────────────────
+
+// GET /facilities/:facilityNumber/evidence?entityType=&entityId=
+opsRouter.get(
+  "/facilities/:facilityNumber/evidence",
+  requireOpsPermission(OPS_RESOURCES.EVIDENCE, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = evidenceListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const data = await listEvidence(
+        facilityNumber,
+        parsed.data.entityType,
+        parsed.data.entityId,
+      );
+      return res.json({ success: true, data });
+    } catch (e) {
+      console.error("[ops] evidence list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /evidence — multipart/form-data
+// Body fields: entityType, entityId, kind, externalUri?
+// File field:  file (single, ≤ 5 MB, mime-sniffed)
+opsRouter.post(
+  "/evidence",
+  requireOpsPermission(OPS_RESOURCES.EVIDENCE, "create"),
+  evidenceUploadLimiter,
+  // Multer needs to run AFTER the permission check but BEFORE the body
+  // handler — wrap to convert multer errors into the envelope shape.
+  (req: Request, res: Response, next: NextFunction) => {
+    evidenceUpload.single("file")(req, res, (err: unknown) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res
+            .status(413)
+            .json({ success: false, error: "File exceeds 5 MB limit" });
+        }
+        return res
+          .status(400)
+          .json({ success: false, error: err.message });
+      }
+      if (err) return next(err);
+      return next();
+    });
+  },
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = evidenceAttachSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const fileBuf = (req as Request & { file?: Express.Multer.File }).file;
+
+      if (parsed.data.kind === "external_link") {
+        if (!parsed.data.externalUri) {
+          return res
+            .status(400)
+            .json({ success: false, error: "externalUri is required for external_link" });
+        }
+        const row = await attachEvidence({
+          facilityNumber,
+          entityType: parsed.data.entityType,
+          entityId: parsed.data.entityId,
+          kind: "external_link",
+          externalUri: parsed.data.externalUri,
+          uploadedBy: actor.id,
+          actorRole: actor.role,
+        });
+        return res.status(201).json({ success: true, data: row });
+      }
+
+      if (!fileBuf) {
+        return res
+          .status(400)
+          .json({ success: false, error: "file field is required" });
+      }
+      // Multer's declared mime comes from the client's form-data and is
+      // therefore untrusted; we pass it as the "declared" value and the
+      // storage layer sniffs the buffer to confirm.
+      const declaredMime = fileBuf.mimetype || undefined;
+      if (declaredMime && !EVIDENCE_ALLOWED_MIME.has(declaredMime)) {
+        return res
+          .status(400)
+          .json({ success: false, error: `Mime ${declaredMime} is not allowed` });
+      }
+      const row = await attachEvidence({
+        facilityNumber,
+        entityType: parsed.data.entityType,
+        entityId: parsed.data.entityId,
+        kind: parsed.data.kind,
+        filename: fileBuf.originalname,
+        mime: declaredMime,
+        bytes: fileBuf.buffer,
+        uploadedBy: actor.id,
+        actorRole: actor.role,
+      });
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (e instanceof EvidenceValidationError) {
+        const status = e.code === "FILE_TOO_LARGE" ? 413 : 400;
+        return res.status(status).json({ success: false, error: e.message });
+      }
+      console.error("[ops] evidence attach failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /evidence/:id/download — streams file with proper headers
+opsRouter.get(
+  "/evidence/:id/download",
+  requireOpsPermission(OPS_RESOURCES.EVIDENCE, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseInt(String(req.params.id), 10);
+      if (Number.isNaN(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const result = await readEvidenceStream(facilityNumber, id);
+      if (!result) {
+        return res.status(404).json({ success: false, error: "Not found" });
+      }
+      // Filename was sanitized at write time; re-quote per RFC 6266
+      // (Content-Disposition) by replacing any stray quote chars.
+      const safeName = result.filename.replace(/"/g, "_");
+      res.setHeader("Content-Type", result.mime);
+      res.setHeader("Content-Length", String(result.byteSize));
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${safeName}"`,
+      );
+      // PHI-ish — never cache.
+      res.setHeader("Cache-Control", "private, no-store");
+      result.stream.on("error", (streamErr) => {
+        console.error("[ops] evidence stream error", streamErr);
+        if (!res.headersSent) {
+          res.status(500).end();
+        } else {
+          res.destroy(streamErr);
+        }
+      });
+      return result.stream.pipe(res);
+    } catch (e) {
+      console.error("[ops] evidence download failed", e);
+      if (!res.headersSent) {
+        return res.status(500).json({ success: false, error: "Internal error" });
+      }
+      return res.end();
+    }
+  },
+);
+
+// DELETE /evidence/:id — soft-delete (sets deleted_at, no hard remove)
+opsRouter.delete(
+  "/evidence/:id",
+  requireOpsPermission(OPS_RESOURCES.EVIDENCE, "delete"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseInt(String(req.params.id), 10);
+      if (Number.isNaN(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const actor = getActor(req);
+      const row = await softDeleteEvidence(facilityNumber, id, actor);
+      if (!row) {
+        return res.status(404).json({ success: false, error: "Not found" });
+      }
+      return res.json({ success: true, data: { id: row.id, deletedAt: row.deletedAt } });
+    } catch (e) {
+      console.error("[ops] evidence delete failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── F3 — Audit trail (read-only) ─────────────────────────────────────────────
+
+// GET /facilities/:facilityNumber/audit-trail?entityType=&entityId=&page=&limit=
+opsRouter.get(
+  "/facilities/:facilityNumber/audit-trail",
+  requireOpsPermission(OPS_RESOURCES.AUDIT_TRAIL, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = auditTrailQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await listAuditForFacility(facilityNumber, {
+        entityType: parsed.data.entityType,
+        entityId: parsed.data.entityId,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] audit-trail list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
