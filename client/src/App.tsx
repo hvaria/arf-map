@@ -11,6 +11,7 @@ import JobSeekerPage from "./pages/JobSeekerPage";
 import StatsPage from "./pages/StatsPage";
 import LoginPage from "./pages/jobseeker/LoginPage";
 import DashboardPage from "./pages/jobseeker/DashboardPage";
+import JobDetailPage from "./pages/jobs/JobDetailPage";
 import NotesPage from "./pages/notes/NotesPage";
 import MarketingLanding from "./pages/MarketingLanding";
 import NotFound from "./pages/not-found";
@@ -52,6 +53,9 @@ function AppRouter() {
             Mounted above the catch-all and below the portal entry. */}
         <Route path="/facility-portal/notes" component={NotesPage} />
         <Route path="/job-seeker" component={JobSeekerPage} />
+        {/* Public job detail page — anonymous-readable; Express Interest
+            CTA reuses the existing pendingAction flow for unauth seekers. */}
+        <Route path="/jobs/:id" component={JobDetailPage} />
         {/* Job seeker auth + dashboard routes */}
         <Route path="/jobseeker/login" component={LoginPage} />
         <Route path="/jobseeker/dashboard" component={DashboardPage} />

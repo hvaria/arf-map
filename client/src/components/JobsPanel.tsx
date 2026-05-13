@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Briefcase, MapPin, DollarSign, Clock, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -15,9 +16,12 @@ interface DbJob {
   description: string;
   requirements: string[];
   postedAt: number;
+  payMin?: number | null;
+  payMax?: number | null;
 }
 
 interface DisplayJob {
+  id: number;
   key: string;
   facilityNumber: string;
   title: string;
@@ -26,6 +30,21 @@ interface DisplayJob {
   description: string;
   requirements: string[];
   postedAt: number;
+  payMin: number | null;
+  payMax: number | null;
+}
+
+function formatMoney(n: number): string {
+  return n % 1 === 0 ? String(n) : n.toFixed(2);
+}
+
+function formatPayRange(payMin: number | null, payMax: number | null, fallback: string): string {
+  if (payMin == null && payMax == null) return fallback;
+  if (payMin != null && payMax != null && payMin !== payMax) {
+    return `$${formatMoney(payMin)}–$${formatMoney(payMax)}/hr`;
+  }
+  const single = payMin ?? payMax!;
+  return `$${formatMoney(single)}/hr`;
 }
 
 interface JobsPanelProps {
@@ -60,6 +79,8 @@ function isJunkJob(j: { title: string; description: string; salary: string }): b
 }
 
 export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber }: JobsPanelProps) {
+  const [, setLocation] = useLocation();
+
   // DB jobs from the facility portal — single source of truth now that the
   // pin payload no longer carries embedded jobPostings. Facility metadata
   // (name, city) is looked up by facility number against any pins that
@@ -74,6 +95,7 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
     return dbJobs
       .filter((j) => !isJunkJob(j))
       .map((j) => ({
+        id: j.id,
         key: `db-${j.id}`,
         facilityNumber: j.facilityNumber,
         title: j.title,
@@ -82,6 +104,8 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
         description: j.description,
         requirements: j.requirements,
         postedAt: j.postedAt,
+        payMin: j.payMin ?? null,
+        payMax: j.payMax ?? null,
       }))
       .sort((a, b) => b.postedAt - a.postedAt);
   }, [dbJobs]);
@@ -125,7 +149,10 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
                   job={job}
                   facility={facility}
                   isSelected={isSelected}
-                  onClick={() => facility && onSelectFacility(facility)}
+                  onClick={() => {
+                    if (facility) onSelectFacility(facility);
+                    setLocation(`/jobs/${job.id}`);
+                  }}
                 />
               );
             })
@@ -197,7 +224,7 @@ function JobCard({
       <div className="flex items-center gap-3 mt-2.5 text-[12px]">
         <span className="flex items-center gap-0.5 text-stone-900 font-medium portal-num">
           <DollarSign className="h-3 w-3 text-stone-400" />
-          {job.salary}
+          {formatPayRange(job.payMin, job.payMax, job.salary)}
         </span>
         <span className="flex items-center gap-0.5 text-muted-foreground portal-num">
           <Clock className="h-3 w-3" />
