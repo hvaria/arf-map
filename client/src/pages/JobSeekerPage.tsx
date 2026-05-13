@@ -210,7 +210,7 @@ function LoginForm({
     // React Query cache — all in one place.
     mutationFn: () => login({ email: form.email, password: form.password }),
     onSuccess: () => {
-      navigate("/");
+      navigate("/map");
     },
     onError: (err: any) => {
       if (err.code === "EMAIL_NOT_VERIFIED") {
@@ -1093,7 +1093,7 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
                     )}
 
                     {facility && (
-                      <a href="/#/" className="mt-3 inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                      <a href="/#/map" className="mt-3 inline-flex items-center gap-1 text-xs text-primary hover:underline">
                         <MapPin className="h-3 w-3" />View facility on map
                       </a>
                     )}
@@ -1152,7 +1152,7 @@ export default function JobSeekerPage() {
       .catch(() => {})
       .finally(() => {
         clearPendingAction();
-        navigate("/");
+        navigate("/map");
       });
   }, [account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1174,7 +1174,7 @@ export default function JobSeekerPage() {
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
           <BrandLogo />
           <Separator orientation="vertical" className="h-8" />
-          <a href="/#/">
+          <a href="/#/map">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="h-4 w-4 mr-1.5" />
               Map

@@ -73,7 +73,7 @@ export default function StatsPage() {
       {/* Header */}
       <header className="border-b bg-background/95 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
-          <a href="/#/">
+          <a href="/#/map">
             <Button variant="ghost" size="sm" className="gap-1.5 -ml-2">
               <ArrowLeft className="h-4 w-4" />
               Map
