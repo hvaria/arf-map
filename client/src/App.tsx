@@ -12,6 +12,7 @@ import StatsPage from "./pages/StatsPage";
 import LoginPage from "./pages/jobseeker/LoginPage";
 import DashboardPage from "./pages/jobseeker/DashboardPage";
 import NotesPage from "./pages/notes/NotesPage";
+import MarketingLanding from "./pages/MarketingLanding";
 import NotFound from "./pages/not-found";
 
 // /facility-portal is the only canonical operations route. All `/portal/*`
@@ -27,12 +28,24 @@ function RedirectToFacilityPortal() {
   return null;
 }
 
+// LandingRoute — root `/` is the public marketing page (ncaref.com front door).
+// The marketing page itself reads session state and swaps its primary CTA
+// between "Enter the app" (anonymous) and "Go to your portal" (authed), so
+// we render it for everyone and stop auto-redirecting authed users away.
+function LandingRoute() {
+  return <MarketingLanding />;
+}
+
 function AppRouter() {
   return (
     <Router hook={useHashLocation}>
       <Switch>
-        {/* Existing routes — DO NOT MODIFY */}
-        <Route path="/" component={MapPage} />
+        {/* Root is now the public marketing landing (ncaref.com). */}
+        <Route path="/" component={LandingRoute} />
+        {/* Map moved off `/` so the marketing landing can claim the front
+            door. Unauthenticated visitors who reach the map see the existing
+            role-picker dialog auto-open with the map dimmed behind it. */}
+        <Route path="/map" component={MapPage} />
         <Route path="/stats" component={StatsPage} />
         <Route path="/facility-portal" component={FacilityPortal} />
         {/* Dedicated split-pane Notes page (Slice 1 of the Notes redesign).
