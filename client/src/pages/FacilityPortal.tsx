@@ -31,7 +31,9 @@ import { NotesNotificationButton } from "@/components/operations/NotesNotificati
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
 const loginSchema = z.object({
-  username: z.string().min(1, "Username is required"),
+  // Field name kept as `username` for wire compat with Passport's default
+  // usernameField; the value may be either the account's username or its email.
+  username: z.string().min(1, "Username or email is required"),
   password: z.string().min(1, "Password is required"),
 });
 
@@ -161,8 +163,8 @@ function LoginForm({
           name="username"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Username</FormLabel>
-              <FormControl><Input placeholder="your-username" {...field} /></FormControl>
+              <FormLabel>Username or Email</FormLabel>
+              <FormControl><Input placeholder="your-username or you@example.com" autoComplete="username" {...field} /></FormControl>
               <FormMessage />
             </FormItem>
           )}
@@ -1167,7 +1169,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
               "Neighbourhood / Care / Finder" text labels. */}
           <BrandLogo />
 
-          <Link href="/" className="hidden md:block">
+          <Link href="/map" className="hidden md:block">
             <Button
               variant="ghost"
               size="sm"
@@ -1467,7 +1469,7 @@ export default function FacilityPortal() {
         {/* DO NOT MODIFY - Brand Lock */}
         <BrandLogo />
         <Separator orientation="vertical" className="h-8" />
-        <Link href="/">
+        <Link href="/map">
           <Button variant="ghost" size="sm" className="-ml-2">
             <ArrowLeft className="h-4 w-4 mr-1.5" />
             Back to Map

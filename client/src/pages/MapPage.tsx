@@ -153,7 +153,7 @@ export default function MapPage() {
     );
   }, []);
 
-  const { user: jobSeeker } = useAuth();
+  const { user: jobSeeker, isReady: jobSeekerReady } = useAuth();
 
   const { data: jobSeekerProfile } = useQuery<{ profilePictureUrl?: string | null; firstName?: string | null } | null>({
     queryKey: ["/api/jobseeker/profile"],
@@ -161,7 +161,19 @@ export default function MapPage() {
     enabled: !!jobSeeker,
   });
 
-  const { data: facilityUser } = useSession();
+  const { data: facilityUser, isLoading: facilitySessionLoading } = useSession();
+
+  // Force the role-picker dialog open for any visitor who has neither a
+  // job-seeker nor a facility session. The dialog is rendered with a
+  // translucent backdrop (see <Dialog overlayClassName> below) so the map
+  // teases through — visible enough to create curiosity, gated enough that
+  // they can't actually interact with it until they pick a role.
+  const sessionsReady = jobSeekerReady && !facilitySessionLoading;
+  const hasSession = Boolean(jobSeeker || facilityUser);
+  const gateActive = sessionsReady && !hasSession;
+  useEffect(() => {
+    if (gateActive) setLoginDialogOpen(true);
+  }, [gateActive]);
 
   const handleSelectFacility = useCallback((facility: FacilityPin) => {
     setSelectedFacility(facility);
@@ -437,8 +449,26 @@ export default function MapPage() {
        * pattern and a soft neutral hover; the accent only appears on the
        * icon when hovered, so the panel doesn't shout in orange.
        */}
-      <Dialog open={loginDialogOpen} onOpenChange={setLoginDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog
+        open={loginDialogOpen}
+        onOpenChange={(next) => {
+          // While the gate is active the dialog is the only way forward —
+          // ignore outside clicks / Escape so the visitor must pick a role.
+          if (gateActive && !next) return;
+          setLoginDialogOpen(next);
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-md"
+          overlayClassName={gateActive ? "bg-black/20 backdrop-blur-sm" : undefined}
+          hideCloseButton={gateActive}
+          onInteractOutside={(e) => {
+            if (gateActive) e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            if (gateActive) e.preventDefault();
+          }}
+        >
           <DialogHeader className="text-left">
             <DialogTitle className="text-[17px] font-semibold text-stone-900">
               Welcome

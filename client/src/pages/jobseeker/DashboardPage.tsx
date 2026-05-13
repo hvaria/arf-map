@@ -157,7 +157,7 @@ export default function DashboardPage() {
           </a>
 
           <a
-            href="#/"
+            href="#/map"
             className="group flex items-start gap-4 rounded-xl p-5 transition-shadow hover:shadow-md"
             style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}
           >

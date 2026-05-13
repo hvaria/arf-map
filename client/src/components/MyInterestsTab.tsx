@@ -70,7 +70,7 @@ export function MyInterestsTab() {
         <p className="text-xs text-muted-foreground mt-1">
           Browse the map and click "Express Interest" on a facility to get started.
         </p>
-        <a href="#/" className="mt-4 inline-block text-xs text-primary hover:underline">
+        <a href="#/map" className="mt-4 inline-block text-xs text-primary hover:underline">
           Browse facilities →
         </a>
       </div>
