@@ -10,6 +10,8 @@ export interface SeekerInterest {
   id: number;
   facilityNumber: string;
   facilityName: string | null;
+  jobId: number | null;
+  jobTitle: string | null;
   roleInterest: string | null;
   message: string | null;
   status: string;

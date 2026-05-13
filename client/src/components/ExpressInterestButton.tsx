@@ -53,15 +53,25 @@ interface JobSeekerAuth {
 interface SeekerInterest {
   id: number;
   facilityNumber: string;
+  jobId: number | null;
   status: string;
 }
 
 interface Props {
   facilityNumber: string;
   facilityName: string;
+  /**
+   * When provided, this button represents per-job interest. The "already
+   * applied" indicator and the upsert are scoped to (seeker, jobId) so a
+   * facility with multiple openings has independent state per posting.
+   * Omit for facility-level interest (legacy behavior on `<FacilityPanel>`).
+   */
+  jobId?: number;
+  /** Optional CTA label override — defaults to "Express Interest". */
+  ctaLabel?: string;
 }
 
-export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
+export function ExpressInterestButton({ facilityNumber, facilityName, jobId, ctaLabel }: Props) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -82,12 +92,21 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
     staleTime: 30000,
   });
 
-  const existing = interests.find((i) => i.facilityNumber === facilityNumber);
+  // Scope the "already applied" check to the right grain. Per-job grain
+  // (jobId provided) finds an exact (seeker, jobId) row. Facility grain
+  // (jobId omitted) finds a (seeker, facilityNumber, jobId IS NULL) row.
+  // A facility-level interest does NOT light up "Interest Sent" on a job
+  // detail page, and applying to one job at a facility does NOT light up
+  // "Interest Sent" on the facility panel — these are independent intents.
+  const existing = jobId != null
+    ? interests.find((i) => i.jobId === jobId)
+    : interests.find((i) => i.facilityNumber === facilityNumber && i.jobId == null);
 
   const submitMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", "/api/jobseeker/interests", {
         facilityNumber,
+        jobId,
         roleInterest: role,
         message: message.trim() || undefined,
       }),
@@ -113,7 +132,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
         }}
       >
         <Send className="h-4 w-4" />
-        Express Interest
+        {ctaLabel ?? "Express Interest"}
       </button>
     );
   }
@@ -155,7 +174,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName }: Props) {
         onClick={() => setDialogOpen(true)}
       >
         <Send className="h-4 w-4" />
-        Express Interest
+        {ctaLabel ?? "Express Interest"}
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
