@@ -6,6 +6,7 @@ import { randomInt, createHash, timingSafeEqual } from "crypto";
 import { storage } from "./storage";
 import { authRateLimiter } from "./middleware/rateLimiter";
 import { hashPassword } from "./auth";
+import { parseSalary } from "./services/payParser";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { adminEtlRouter } from "./routes/adminEtl";
@@ -788,11 +789,34 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/jobs", async (_req, res) => {
     const jobs = await storage.getAllJobPostings();
     res.json(
-      jobs.map((jp) => ({
-        ...jp,
-        requirements: JSON.parse(jp.requirements) as string[],
-      })),
+      jobs.map((jp) => {
+        const { payMin, payMax } = parseSalary(jp.salary);
+        return {
+          ...jp,
+          requirements: JSON.parse(jp.requirements) as string[],
+          payMin,
+          payMax,
+        };
+      }),
     );
+  });
+
+  app.get("/api/jobs/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid job id" });
+    }
+    const jp = await storage.getJobPostingById(id);
+    if (!jp) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+    const { payMin, payMax } = parseSalary(jp.salary);
+    res.json({
+      ...jp,
+      requirements: JSON.parse(jp.requirements) as string[],
+      payMin,
+      payMax,
+    });
   });
 
   // ── Public facility data ─────────────────────────────────────────────────────

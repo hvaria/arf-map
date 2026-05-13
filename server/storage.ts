@@ -46,6 +46,7 @@ export interface IStorage {
   ): Promise<FacilityOverride>;
 
   getAllJobPostings(): Promise<DbJobPosting[]>;
+  getJobPostingById(id: number): Promise<DbJobPosting | undefined>;
   getJobPostings(facilityNumber: string): Promise<DbJobPosting[]>;
   createJobPosting(
     facilityNumber: string,
@@ -154,6 +155,15 @@ export class DatabaseStorage implements IStorage {
 
   async getAllJobPostings(): Promise<DbJobPosting[]> {
     return db.select().from(jobPostingsTable);
+  }
+
+  async getJobPostingById(id: number): Promise<DbJobPosting | undefined> {
+    const rows = await db
+      .select()
+      .from(jobPostingsTable)
+      .where(eq(jobPostingsTable.id, id))
+      .limit(1);
+    return rows[0];
   }
 
   async getJobPostings(facilityNumber: string): Promise<DbJobPosting[]> {
