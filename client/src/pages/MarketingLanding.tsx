@@ -1,7 +1,6 @@
 import {
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -14,7 +13,6 @@ import {
   useTransform,
   type Variants,
 } from "framer-motion";
-import type { Map as MaplibreMap } from "maplibre-gl";
 import {
   ArrowRight,
   Heart,
@@ -360,17 +358,14 @@ function Hero({
 }) {
   return (
     <section className="relative -mt-20 min-h-[100svh] overflow-hidden bg-[#0A0E13]">
-      {/* Full-bleed map background */}
-      <HeroMap />
-
-      {/* Layered gradient overlays for legibility + cinematic feel */}
+      {/* Subtle hero vignette so the centerpiece sits in the lit middle */}
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none"
         style={{
           background: `
-            linear-gradient(90deg, rgba(10,14,19,0.96) 0%, rgba(10,14,19,0.75) 35%, rgba(10,14,19,0.25) 65%, rgba(10,14,19,0.55) 100%),
-            linear-gradient(180deg, rgba(10,14,19,0.55) 0%, rgba(10,14,19,0) 25%, rgba(10,14,19,0) 65%, rgba(10,14,19,1) 100%)
+            radial-gradient(60% 70% at 70% 50%, rgba(232,134,74,0.06) 0%, rgba(10,14,19,0) 65%),
+            linear-gradient(180deg, rgba(10,14,19,0) 60%, rgba(10,14,19,1) 100%)
           `,
         }}
       />
@@ -514,69 +509,19 @@ function GlowButton({
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * HeroMap — the full-bleed dark MapLibre map behind the hero copy.
- * Lazy-loaded so it doesn't bloat the initial JS. Drifts in bearing slowly
- * after load for ambient motion.
- * ──────────────────────────────────────────────────────────────────────── */
-function HeroMap() {
-  const mapContainer = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MaplibreMap | null>(null);
-  const reduce = useReducedMotion();
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { default: maplibregl } = await import("maplibre-gl");
-      if (cancelled || !mapContainer.current || mapRef.current) return;
-      const spot =
-        STREET_LEVEL_SPOTS[
-          Math.floor(Math.random() * STREET_LEVEL_SPOTS.length)
-        ];
-      const map = new maplibregl.Map({
-        container: mapContainer.current,
-        style:
-          "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-        center: spot,
-        zoom: 15.5,
-        bearing: -8,
-        interactive: false,
-        attributionControl: false,
-        dragRotate: false,
-        pitchWithRotate: false,
-      });
-      mapRef.current = map;
-      // Slow ambient drift — barely perceptible per frame, adds life over time.
-      if (!reduce) {
-        map.on("load", () => {
-          map.easeTo({
-            bearing: 12,
-            duration: 120000,
-            easing: (t) => t,
-          });
-        });
-      }
-    })();
-    return () => {
-      cancelled = true;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, [reduce]);
-
-  return (
-    <div
-      ref={mapContainer}
-      className="absolute inset-0"
-      aria-hidden="true"
-    />
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
- * AnimatedBrandMark — heart + 8 facility dots overlaid on the hero map.
- * No card, no frame; sits directly on the page background.
+ * AnimatedBrandMark — the full brand story in a single 3D scene.
+ *
+ * A stylized dark city grid backdrop (deterministic — same composition on
+ * every load) with the heart at the center, eight facility points spaced
+ * clockwise around it, and connecting spokes. On top of the static scene,
+ * three loops continually reinforce the metaphor: the heart pulses, ripple
+ * rings expand outward from the center (the platform radiating out), and
+ * tiny particles stream inward along each spoke (connections flowing back
+ * to the platform). Cursor-tracked Tilt3D wrapper sells the depth.
+ *
+ * Replaces the earlier live-map embed — the live map's random street view
+ * sometimes parked the eight facility dots on rivers or off-road, which
+ * broke the metaphor.
  * ──────────────────────────────────────────────────────────────────────── */
 function AnimatedBrandMark() {
   const reduce = useReducedMotion();
@@ -649,7 +594,103 @@ function AnimatedBrandMark() {
             <stop offset="0%" stopColor="#F09659" />
             <stop offset="100%" stopColor="#C25A2E" />
           </linearGradient>
+          {/* Vignette darkens the panel edges so the heart sits in a lit pool */}
+          <radialGradient id="panelVignette" cx="50%" cy="50%" r="60%">
+            <stop offset="0%" stopColor="#0E141B" stopOpacity="0" />
+            <stop offset="100%" stopColor="#070A0D" stopOpacity="0.85" />
+          </radialGradient>
+          {/* Rounded clip so the grid never bleeds past the panel's rounded corners */}
+          <clipPath id="panelClip">
+            <rect x="0" y="0" width="400" height="400" rx="22" ry="22" />
+          </clipPath>
         </defs>
+
+        {/* Map panel base — a stylized "neighborhood" backdrop. Deterministic
+            on every load so the eight facility dots always land on intentional
+            grid intersections, never on a river. */}
+        <g clipPath="url(#panelClip)">
+          <rect x="0" y="0" width="400" height="400" fill="#0E141B" />
+
+          {/* Stylized street grid */}
+          <g aria-hidden="true">
+            {/* Major arterials — slightly brighter, thicker */}
+            <line x1="0" y1="140" x2="400" y2="140" stroke="#1F2731" strokeWidth="2" />
+            <line x1="0" y1="260" x2="400" y2="260" stroke="#1F2731" strokeWidth="2" />
+            <line x1="140" y1="0" x2="140" y2="400" stroke="#1F2731" strokeWidth="2" />
+            <line x1="260" y1="0" x2="260" y2="400" stroke="#1F2731" strokeWidth="2" />
+
+            {/* Secondary streets — thinner, dimmer */}
+            <line x1="0" y1="70" x2="400" y2="70" stroke="#181F27" strokeWidth="1.25" />
+            <line x1="0" y1="330" x2="400" y2="330" stroke="#181F27" strokeWidth="1.25" />
+            <line x1="70" y1="0" x2="70" y2="400" stroke="#181F27" strokeWidth="1.25" />
+            <line x1="330" y1="0" x2="330" y2="400" stroke="#181F27" strokeWidth="1.25" />
+
+            {/* A diagonal cross-street for visual variety */}
+            <line x1="-20" y1="-20" x2="420" y2="420" stroke="#141A22" strokeWidth="1" opacity="0.55" />
+            <line x1="420" y1="-20" x2="-20" y2="420" stroke="#141A22" strokeWidth="1" opacity="0.55" />
+
+            {/* Subtle building blocks scattered in the corners */}
+            <rect x="22" y="22" width="36" height="36" rx="2" fill="#141B23" />
+            <rect x="22" y="80" width="36" height="42" rx="2" fill="#131A22" />
+            <rect x="342" y="22" width="36" height="36" rx="2" fill="#141B23" />
+            <rect x="342" y="80" width="36" height="42" rx="2" fill="#131A22" />
+            <rect x="22" y="342" width="36" height="36" rx="2" fill="#141B23" />
+            <rect x="22" y="278" width="36" height="42" rx="2" fill="#131A22" />
+            <rect x="342" y="342" width="36" height="36" rx="2" fill="#141B23" />
+            <rect x="342" y="278" width="36" height="42" rx="2" fill="#131A22" />
+            <rect x="155" y="22" width="60" height="36" rx="2" fill="#141B23" />
+            <rect x="220" y="22" width="32" height="36" rx="2" fill="#131A22" />
+            <rect x="155" y="342" width="32" height="36" rx="2" fill="#131A22" />
+            <rect x="218" y="342" width="58" height="36" rx="2" fill="#141B23" />
+          </g>
+
+          {/* Inner vignette so the heart's lit pool reads against shaded edges */}
+          <rect
+            x="0"
+            y="0"
+            width="400"
+            height="400"
+            fill="url(#panelVignette)"
+            pointerEvents="none"
+          />
+        </g>
+
+        {/* Panel hairline — sells the "lit panel" floating-card cue */}
+        <rect
+          x="0.5"
+          y="0.5"
+          width="399"
+          height="399"
+          rx="21.5"
+          ry="21.5"
+          fill="none"
+          stroke="rgba(232,134,74,0.18)"
+          strokeWidth="1"
+        />
+
+        {/* Continuous ripple rings — the platform radiating outward. Three
+            staggered rings expand from the heart and fade as they reach the
+            panel edge, on a long repeat for ambient motion. */}
+        {!reduce &&
+          [0, 1, 2].map((i) => (
+            <motion.circle
+              key={`ripple-${i}`}
+              cx={center.x}
+              cy={center.y}
+              fill="none"
+              stroke="#E8864A"
+              strokeWidth={1.2}
+              initial={{ r: 20, opacity: 0 }}
+              animate={{ r: 195, opacity: [0, 0.55, 0] }}
+              transition={{
+                duration: 4.5,
+                repeat: Infinity,
+                delay: 1.5 + i * 1.5,
+                ease: "easeOut",
+                times: [0, 0.18, 1],
+              }}
+            />
+          ))}
 
         {/* Connecting spokes */}
         {dots.map((d, i) => {
@@ -769,6 +810,42 @@ function AnimatedBrandMark() {
             </motion.g>
           );
         })}
+
+        {/* Inbound particle stream — small lights travel from each facility
+            point toward the heart. Visualizes "connections flowing back to
+            the platform." Loops continuously after the entrance settles. */}
+        {!reduce &&
+          reveal &&
+          dots.map((d, i) => {
+            // Particle starts ~15% out from the dot and dies ~15% from the heart.
+            const dx = center.x - d.x;
+            const dy = center.y - d.y;
+            const startX = d.x + dx * 0.15;
+            const startY = d.y + dy * 0.15;
+            const endX = d.x + dx * 0.82;
+            const endY = d.y + dy * 0.82;
+            return (
+              <motion.circle
+                key={`particle-${i}`}
+                r={2}
+                fill="#FFD7B0"
+                initial={{ cx: startX, cy: startY, opacity: 0 }}
+                animate={{
+                  cx: [startX, endX],
+                  cy: [startY, endY],
+                  opacity: [0, 1, 1, 0],
+                }}
+                transition={{
+                  duration: 2.4,
+                  delay: 3.0 + i * 0.32,
+                  repeat: Infinity,
+                  repeatDelay: 2.6,
+                  ease: "easeIn",
+                  times: [0, 0.18, 0.78, 1],
+                }}
+              />
+            );
+          })}
       </svg>
     </Tilt3D>
   );
@@ -790,26 +867,6 @@ function BrandHeart({ cx, cy }: { cx: number; cy: number }) {
     </g>
   );
 }
-
-const STREET_LEVEL_SPOTS: [number, number][] = [
-  [-118.2837, 34.0689], // Koreatown, Los Angeles
-  [-118.4068, 34.0703], // Beverly Hills
-  [-118.1937, 33.7847], // Long Beach
-  [-118.1445, 34.1478], // Pasadena
-  [-117.8311, 33.7175], // Santa Ana
-  [-117.1611, 32.751], // Hillcrest, San Diego
-  [-117.2713, 32.8417], // La Jolla, San Diego
-  [-117.3961, 33.1959], // Oceanside
-  [-122.4194, 37.7749], // San Francisco
-  [-122.2711, 37.8044], // Oakland
-  [-122.0838, 37.3861], // Mountain View
-  [-121.8863, 37.3382], // San Jose
-  [-121.4944, 38.5816], // Sacramento
-  [-119.7871, 36.7378], // Fresno
-  [-119.0187, 35.3733], // Bakersfield
-  [-117.3962, 34.1083], // San Bernardino
-  [-117.3756, 33.9533], // Riverside
-];
 
 /* ─────────────────────────────────────────────────────────────────────────
  * SectionShell — common dark-section wrapper with optional ambient orbs
