@@ -19,8 +19,8 @@ import {
 import { BrandLogo } from "@/components/BrandLogo";
 import { useToast } from "@/hooks/use-toast";
 import type { Facility } from "@shared/schema";
-import { useFacilities } from "@/hooks/useFacilities";
 import { getPendingAction, clearPendingAction } from "@/lib/pendingAction"; // NEW: expression-of-interest
+import { MyInterestsTab } from "@/components/MyInterestsTab";
 
 // All job types relevant to Adult Residential Facilities
 const JOB_TYPE_OPTIONS = [
@@ -75,24 +75,6 @@ interface JobSeekerProfile {
   jobTypes: string[];
   bio: string | null;
   updatedAt: number;
-}
-
-interface PublicJob {
-  id: number;
-  facilityNumber: string;
-  title: string;
-  type: string;
-  salary: string;
-  description: string;
-  requirements: string[];
-  postedAt: number;
-}
-
-function daysAgo(ts: number) {
-  const days = Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24));
-  if (days === 0) return "Today";
-  if (days === 1) return "1 day ago";
-  return `${days} days ago`;
 }
 
 // Resize image to max 300x300 and return base64 data URL
@@ -900,7 +882,6 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
   const { toast } = useToast();
   const { logout } = useAuth();
   const qc = useQueryClient();
-  const { facilityByNumber } = useFacilities();
 
   const { data: profile } = useQuery<JobSeekerProfile | null>({
     queryKey: ["/api/jobseeker/profile"],
@@ -916,11 +897,6 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
       setEditingProfile(true);
     }
   }, [profile]);
-
-  const { data: jobs = [] } = useQuery<PublicJob[]>({
-    queryKey: ["/api/jobs"],
-    staleTime: 60000,
-  });
 
   const logoutMutation = useMutation({
     // auth.logout() calls the API, clears AuthProvider state, and removes
@@ -1028,81 +1004,14 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
         </CardContent>
       </Card>
 
-      {/* Job listings */}
+      {/* My applications — replaces the "Open Positions" feed. Browsing
+          open jobs lives on the map (JobsPanel); the profile surface now
+          tracks what *this* seeker has applied to. Same MyInterestsTab
+          component used on /jobseeker/dashboard so the two surfaces stay
+          consistent and per-job rows deep-link back to /#/jobs/:id. */}
       <div>
-        <h3 className="text-base font-semibold mb-3">Open Positions</h3>
-        {jobs.length === 0 ? (
-          <div className="text-center py-10 text-muted-foreground border rounded-xl">
-            <Briefcase className="h-8 w-8 mx-auto mb-2 opacity-30" />
-            <p className="text-sm">No open positions right now. Check back later.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {jobs.map((job) => {
-              const facility = facilityByNumber.get(job.facilityNumber);
-              const isMatch =
-                profile?.jobTypes && profile.jobTypes.length > 0
-                  ? profile.jobTypes.some(
-                      (t) =>
-                        job.type.toLowerCase().includes(t.toLowerCase()) ||
-                        job.title.toLowerCase().includes(t.toLowerCase()),
-                    )
-                  : false;
-              return (
-                <Card key={job.id} className={isMatch ? "border-primary/50 bg-primary/5" : ""}>
-                  <CardContent className="pt-4 pb-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="text-sm font-semibold">{job.title}</h4>
-                          {isMatch && (
-                            <Badge className="text-[10px] px-1.5 py-0 bg-primary/10 text-primary border-primary/30">
-                              Matches your profile
-                            </Badge>
-                          )}
-                        </div>
-                        {facility && (
-                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                            <Building2 className="h-3 w-3" />
-                            {facility.name} · {facility.city}
-                          </p>
-                        )}
-                      </div>
-                      <Badge variant="secondary" className="text-xs shrink-0">{job.type}</Badge>
-                    </div>
-
-                    <div className="flex flex-wrap gap-3 mt-2 text-xs">
-                      <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
-                        <DollarSign className="h-3 w-3" />{job.salary}
-                      </span>
-                      <span className="flex items-center gap-1 text-muted-foreground">
-                        <Clock className="h-3 w-3" />{daysAgo(job.postedAt)}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{job.description}</p>
-
-                    {job.requirements.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {job.requirements.map((r, i) => (
-                          <span key={i} className="inline-flex items-center gap-1 text-[10px] bg-muted border rounded-full px-2 py-0.5 text-muted-foreground">
-                            <CheckCircle2 className="h-2.5 w-2.5 text-green-500" />{r}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {facility && (
-                      <a href="/#/map" className="mt-3 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                        <MapPin className="h-3 w-3" />View facility on map
-                      </a>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
+        <h3 className="text-base font-semibold mb-3">My Applications</h3>
+        <MyInterestsTab />
       </div>
 
       <Separator />

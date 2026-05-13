@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock, Send, Trash2 } from "lucide-react";
+import { Link } from "wouter";
+import { Briefcase, Building2, ChevronRight, Clock, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -68,12 +69,12 @@ export function MyInterestsTab() {
     return (
       <div className="rounded-xl border border-dashed p-10 text-center">
         <Send className="h-8 w-8 mx-auto text-muted-foreground mb-3 opacity-40" />
-        <p className="text-sm font-medium text-muted-foreground">No interests submitted yet</p>
+        <p className="text-sm font-medium text-muted-foreground">No applications yet</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Browse the map and click "Express Interest" on a facility to get started.
+          Browse the map, open a job, and click "Apply to this job" to get started.
         </p>
         <a href="#/map" className="mt-4 inline-block text-xs text-primary hover:underline">
-          Browse facilities →
+          Browse jobs →
         </a>
       </div>
     );
@@ -81,54 +82,84 @@ export function MyInterestsTab() {
 
   return (
     <div className="space-y-3">
-      {interests.map((interest) => (
-        <div key={interest.id} className="rounded-xl p-4" style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "#EEF2FF" }}>
-                <Building2 className="h-4 w-4" style={{ color: "#818CF8" }} />
+      {interests.map((interest) => {
+        // Per-job interests (jobId set) lead with the job title and link to
+        // the public job detail page so the seeker can return to the
+        // posting they applied to. Facility-level interests (jobId null,
+        // legacy + the FacilityPanel "I'm interested in this place" CTA)
+        // keep the facility-name-first treatment.
+        const isPerJob = interest.jobId != null;
+        const primary = isPerJob
+          ? interest.jobTitle ?? `Job #${interest.jobId}`
+          : interest.facilityName ?? `Facility #${interest.facilityNumber}`;
+        const secondary = isPerJob
+          ? interest.facilityName ?? `Facility #${interest.facilityNumber}`
+          : `License #${interest.facilityNumber}`;
+        const Icon = isPerJob ? Briefcase : Building2;
+        return (
+          <div key={interest.id} className="rounded-xl p-4" style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "#EEF2FF" }}>
+                  <Icon className="h-4 w-4" style={{ color: "#818CF8" }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium leading-tight truncate">{primary}</p>
+                  <p className="text-xs text-muted-foreground truncate">{secondary}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-sm font-medium leading-tight truncate">
-                  {interest.facilityName ?? `Facility #${interest.facilityNumber}`}
-                </p>
-                <p className="text-xs text-muted-foreground">License #{interest.facilityNumber}</p>
-              </div>
+              <StatusBadge status={interest.status} className="shrink-0" />
             </div>
-            <StatusBadge status={interest.status} className="shrink-0" />
-          </div>
 
-          <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
-            {interest.roleInterest && (
-              <Badge variant="secondary" className="text-xs font-normal">
-                {interest.roleInterest}
-              </Badge>
+            <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
+              {interest.roleInterest && (
+                <Badge variant="secondary" className="text-xs font-normal">
+                  {interest.roleInterest}
+                </Badge>
+              )}
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />{timeAgo(interest.createdAt)}
+              </span>
+            </div>
+
+            {interest.status === "shortlisted" && (
+              <p className="mt-2 text-xs font-medium" style={{ color: "#92400E" }}>
+                The facility is reviewing your profile!
+              </p>
             )}
-            <span className="flex items-center gap-1">
-              <Clock className="h-3 w-3" />{timeAgo(interest.createdAt)}
-            </span>
-          </div>
 
-          {interest.status === "shortlisted" && (
-            <p className="mt-2 text-xs font-medium" style={{ color: "#92400E" }}>
-              The facility is reviewing your profile!
-            </p>
-          )}
-
-          <div className="mt-3 flex justify-end">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-muted-foreground hover:text-destructive"
-              onClick={() => withdrawMutation.mutate(interest.id)}
-              disabled={withdrawMutation.isPending}
-            >
-              <Trash2 className="h-3 w-3 mr-1" />
-              Withdraw
-            </Button>
+            <div className="mt-3 flex items-center justify-between gap-2">
+              {isPerJob ? (
+                <Link
+                  href={`/jobs/${interest.jobId}`}
+                  className="inline-flex items-center gap-1 text-xs font-medium hover:underline"
+                  style={{ color: "#4F46E5" }}
+                >
+                  View job <ChevronRight className="h-3 w-3" />
+                </Link>
+              ) : (
+                <Link
+                  href="/map"
+                  className="inline-flex items-center gap-1 text-xs font-medium hover:underline"
+                  style={{ color: "#4F46E5" }}
+                >
+                  View facility on map <ChevronRight className="h-3 w-3" />
+                </Link>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                onClick={() => withdrawMutation.mutate(interest.id)}
+                disabled={withdrawMutation.isPending}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Withdraw
+              </Button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
