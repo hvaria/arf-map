@@ -6,7 +6,14 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation } from "wouter";
-import { motion, useReducedMotion, type Variants } from "framer-motion";
+import {
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useSpring,
+  useTransform,
+  type Variants,
+} from "framer-motion";
 import type { Map as MaplibreMap } from "maplibre-gl";
 import {
   ArrowRight,
@@ -151,6 +158,82 @@ function FadeUp({
 }
 
 /**
+ * Tilt3D — Antigravity-style cursor-tracked 3D tilt. Children rotate on X/Y
+ * axes based on cursor position within the element, springing back to flat
+ * when the cursor leaves. Used to make cards and the brand mark feel like
+ * they're levitating in space rather than pinned to the page.
+ *
+ * - `max` caps the rotation amount in degrees (subtle for hero, stronger
+ *   for cards).
+ * - `glare` overlays a soft white reflection that follows the cursor — the
+ *   "light from above" cue that sells the floating illusion.
+ * - Respects reduced-motion: returns children unwrapped with no listeners.
+ */
+function Tilt3D({
+  children,
+  max = 8,
+  glare = false,
+  className,
+}: {
+  children: ReactNode;
+  max?: number;
+  glare?: boolean;
+  className?: string;
+}) {
+  const reduce = useReducedMotion();
+  const px = useMotionValue(0); // normalized -0.5 to 0.5
+  const py = useMotionValue(0);
+  const springConf = { stiffness: 180, damping: 22, mass: 0.4 };
+  const rotateX = useSpring(useTransform(py, [-0.5, 0.5], [max, -max]), springConf);
+  const rotateY = useSpring(useTransform(px, [-0.5, 0.5], [-max, max]), springConf);
+  // Glare position in % across the surface
+  const glareX = useTransform(px, [-0.5, 0.5], ["0%", "100%"]);
+  const glareY = useTransform(py, [-0.5, 0.5], ["0%", "100%"]);
+
+  if (reduce) {
+    return <div className={className}>{children}</div>;
+  }
+
+  return (
+    <motion.div
+      className={className}
+      style={{
+        rotateX,
+        rotateY,
+        transformStyle: "preserve-3d",
+        transformPerspective: 1100,
+        willChange: "transform",
+      }}
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        px.set((e.clientX - rect.left) / rect.width - 0.5);
+        py.set((e.clientY - rect.top) / rect.height - 0.5);
+      }}
+      onMouseLeave={() => {
+        px.set(0);
+        py.set(0);
+      }}
+    >
+      {children}
+      {glare && (
+        <motion.div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-[inherit]"
+          style={{
+            background: useTransform(
+              [glareX, glareY] as never,
+              ([gx, gy]: string[]) =>
+                `radial-gradient(circle at ${gx} ${gy}, rgba(255,255,255,0.16), transparent 45%)`,
+            ),
+            mixBlendMode: "overlay",
+          }}
+        />
+      )}
+    </motion.div>
+  );
+}
+
+/**
  * AmbientOrbs — three slow-breathing orange radial blooms drift behind the
  * content. Pure decoration, pointer-events: none. The animation is gentle
  * enough that users with reduced-motion preferences get a static version.
@@ -212,13 +295,13 @@ function NavBar({
 }) {
   return (
     <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#0A0E13]/85 border-b border-white/[0.06]">
-      <div className="max-w-7xl mx-auto px-6 sm:px-10 h-20 flex items-center justify-between gap-8">
+      <div className="max-w-[1400px] mx-auto px-6 sm:px-10 h-20 flex items-center justify-between gap-8">
         <a
           href="#/"
           aria-label="Neighbourhood Care Finder home"
           className="flex items-center shrink-0"
         >
-          <BrandLogo size={40} />
+          <BrandLogo size={80} />
         </a>
 
         <nav className="hidden md:flex items-center gap-9 text-[13px] font-medium text-[#A8B0BA]">
@@ -295,7 +378,7 @@ function Hero({
       <AmbientOrbs />
 
       {/* Content */}
-      <div className="relative pt-24 pb-20 sm:pt-32 sm:pb-28 max-w-7xl mx-auto px-5 sm:px-8 min-h-[100svh] flex items-center">
+      <div className="relative pt-24 pb-20 sm:pt-32 sm:pb-28 max-w-[1400px] mx-auto px-6 sm:px-10 min-h-[100svh] flex items-center">
         <div className="grid lg:grid-cols-12 gap-10 lg:gap-16 items-center w-full">
           <div className="lg:col-span-6 text-center lg:text-left">
             <motion.div
@@ -522,7 +605,7 @@ function AnimatedBrandMark() {
   const step = reduce ? 0 : 0.1;
 
   return (
-    <div className="relative w-full max-w-[560px] aspect-square">
+    <Tilt3D max={5} className="relative w-full max-w-[560px] aspect-square">
       {/* Soft warm glow behind so the mark feels lit from within */}
       <div
         aria-hidden="true"
@@ -531,6 +614,18 @@ function AnimatedBrandMark() {
           background:
             "radial-gradient(closest-side, rgba(232,134,74,0.22), transparent 70%)",
           filter: "blur(30px)",
+          transform: "translateZ(-30px)",
+        }}
+      />
+      {/* Floating drop-shadow under the mark — fades into the dark canvas */}
+      <div
+        aria-hidden="true"
+        className="absolute left-[15%] right-[15%] bottom-2 h-12 rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(closest-side, rgba(0,0,0,0.55), transparent 70%)",
+          filter: "blur(18px)",
+          transform: "translateZ(-60px)",
         }}
       />
 
@@ -675,7 +770,7 @@ function AnimatedBrandMark() {
           );
         })}
       </svg>
-    </div>
+    </Tilt3D>
   );
 }
 
@@ -749,7 +844,7 @@ function SectionShell({
 function Mission() {
   return (
     <SectionShell id="mission" withOrbs>
-      <div className="max-w-4xl mx-auto px-5 sm:px-8 py-24 sm:py-32 text-center">
+      <div className="max-w-4xl mx-auto px-6 sm:px-10 py-24 sm:py-32 text-center">
         <StaggerSection>
           <FadeUp>
             <p className="portal-eyebrow text-[#FFB07A]">Our mission</p>
@@ -814,7 +909,7 @@ function Mission() {
 function ForCaregivers({ onCta }: { onCta: () => void }) {
   return (
     <SectionShell id="for-caregivers" surface="elev">
-      <div className="max-w-7xl mx-auto px-5 sm:px-8 py-24 sm:py-32">
+      <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-24 sm:py-32">
         <StaggerSection className="grid lg:grid-cols-12 gap-12 items-center">
           <FadeUp className="lg:col-span-5 order-2 lg:order-1">
             <QuoteCard
@@ -910,7 +1005,7 @@ function ForCaregivers({ onCta }: { onCta: () => void }) {
 function ForOperators({ onCta }: { onCta: () => void }) {
   return (
     <SectionShell id="for-operators">
-      <div className="max-w-7xl mx-auto px-5 sm:px-8 py-24 sm:py-32">
+      <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-24 sm:py-32">
         <StaggerSection className="grid lg:grid-cols-12 gap-12 items-center">
           <div className="lg:col-span-7">
             <FadeUp>
@@ -1027,41 +1122,88 @@ function QuoteCard({
       ? "linear-gradient(135deg, #C25A2E, #7A2E0B)"
       : "linear-gradient(135deg, #FFB07A, #C25A2E)";
   return (
-    <div className="relative aspect-[4/5] rounded-3xl overflow-hidden bg-[#141A22] border border-white/10 group">
+    <Tilt3D max={7} glare className="relative aspect-[4/5] group">
+      {/* Floating shadow underneath — drops the card off the page in Z */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-6 -bottom-4 h-12 rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(closest-side, rgba(0,0,0,0.6), transparent 70%)",
+          filter: "blur(22px)",
+          transform: "translateZ(-80px)",
+        }}
+      />
+
       {/* Animated soft gradient border on hover */}
       <div
         aria-hidden="true"
         className="absolute -inset-px rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
         style={{
           background:
-            "conic-gradient(from 180deg at 50% 50%, rgba(232,134,74,0.4), transparent 25%, rgba(212,105,58,0.35) 50%, transparent 75%, rgba(232,134,74,0.4))",
-          filter: "blur(8px)",
+            "conic-gradient(from 180deg at 50% 50%, rgba(232,134,74,0.45), transparent 25%, rgba(212,105,58,0.4) 50%, transparent 75%, rgba(232,134,74,0.45))",
+          filter: "blur(10px)",
+          transform: "translateZ(-10px)",
         }}
       />
-      {/* Inner glow */}
+
+      {/* Glass-morphism panel */}
       <div
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none"
+        className="relative h-full rounded-3xl overflow-hidden border border-white/10"
         style={{
           background:
-            "radial-gradient(60% 50% at 50% 30%, rgba(232,134,74,0.18) 0%, transparent 70%)",
+            "linear-gradient(160deg, rgba(28,36,46,0.85) 0%, rgba(15,20,25,0.7) 100%)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          boxShadow:
+            "inset 0 1px 0 rgba(255,255,255,0.08), 0 30px 60px -25px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,176,122,0.05)",
         }}
-      />
-      <div className="relative h-full flex items-center justify-center">
-        <div className="text-center px-8">
+      >
+        {/* Top reflective edge — sells the "panel under light" cue */}
+        <div
+          aria-hidden="true"
+          className="absolute top-0 inset-x-8 h-px"
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, rgba(255,176,122,0.55), transparent)",
+          }}
+        />
+
+        {/* Inner warm glow */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(60% 50% at 50% 30%, rgba(232,134,74,0.18) 0%, transparent 70%)",
+          }}
+        />
+
+        {/* Content — pushed forward in Z so it floats above the surface */}
+        <div className="relative h-full flex items-center justify-center">
           <div
-            className="mx-auto w-20 h-20 rounded-2xl flex items-center justify-center text-white shadow-[0_10px_30px_-8px_rgba(232,134,74,0.6)]"
-            style={{ background: iconBg }}
+            className="text-center px-8"
+            style={{ transform: "translateZ(28px)" }}
           >
-            {icon}
+            <div
+              className="mx-auto w-20 h-20 rounded-2xl flex items-center justify-center text-white"
+              style={{
+                background: iconBg,
+                boxShadow:
+                  "0 14px 32px -8px rgba(232,134,74,0.65), inset 0 1px 0 rgba(255,255,255,0.25)",
+                transform: "translateZ(20px)",
+              }}
+            >
+              {icon}
+            </div>
+            <p className="mt-7 text-2xl font-black text-[#F5EFE7] leading-tight">
+              {quote}
+            </p>
+            <p className="mt-4 text-sm text-[#A8B0BA]">{caption}</p>
           </div>
-          <p className="mt-7 text-2xl font-black text-[#F5EFE7] leading-tight">
-            {quote}
-          </p>
-          <p className="mt-4 text-sm text-[#A8B0BA]">{caption}</p>
         </div>
       </div>
-    </div>
+    </Tilt3D>
   );
 }
 
@@ -1116,7 +1258,7 @@ function TheStandard() {
 
   return (
     <SectionShell id="standard" surface="elev" withOrbs>
-      <div className="max-w-7xl mx-auto px-5 sm:px-8 py-24 sm:py-32">
+      <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-24 sm:py-32">
         <StaggerSection>
           <FadeUp>
             <p className="portal-eyebrow text-[#FFB07A]">The standard</p>
@@ -1172,32 +1314,81 @@ function PillarCard({
   deep?: boolean;
 }) {
   return (
-    <div className="group relative h-full">
-      {/* Hover halo */}
+    <Tilt3D max={9} className="group relative h-full">
+      {/* Soft floating shadow underneath the card */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-4 -bottom-3 h-8 rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(closest-side, rgba(0,0,0,0.55), transparent 70%)",
+          filter: "blur(16px)",
+          transform: "translateZ(-60px)",
+        }}
+      />
+
+      {/* Hover halo — glows from the top edge */}
       <div
         aria-hidden="true"
         className="absolute -inset-px rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
         style={{
           background:
-            "radial-gradient(60% 100% at 50% 0%, rgba(232,134,74,0.35), transparent 60%)",
-          filter: "blur(10px)",
+            "radial-gradient(60% 100% at 50% 0%, rgba(232,134,74,0.4), transparent 60%)",
+          filter: "blur(12px)",
+          transform: "translateZ(-10px)",
         }}
       />
-      <div className="relative h-full bg-[#141A22] rounded-2xl p-6 border border-white/10 group-hover:border-[rgba(232,134,74,0.4)] transition-colors">
+
+      {/* Glass panel */}
+      <div
+        className="relative h-full rounded-2xl p-6 border border-white/10 group-hover:border-[rgba(232,134,74,0.4)] transition-colors overflow-hidden"
+        style={{
+          background:
+            "linear-gradient(160deg, rgba(28,36,46,0.85) 0%, rgba(15,20,25,0.7) 100%)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          boxShadow:
+            "inset 0 1px 0 rgba(255,255,255,0.06), 0 20px 40px -20px rgba(0,0,0,0.6)",
+        }}
+      >
+        {/* Top reflective edge */}
         <div
-          className="w-11 h-11 rounded-xl flex items-center justify-center text-white shadow-[0_8px_22px_-8px_rgba(232,134,74,0.55)]"
+          aria-hidden="true"
+          className="absolute top-0 inset-x-4 h-px"
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, rgba(255,176,122,0.4), transparent)",
+          }}
+        />
+
+        {/* Icon — floats forward on hover */}
+        <div
+          className="relative w-11 h-11 rounded-xl flex items-center justify-center text-white"
           style={{
             background: deep
               ? "linear-gradient(135deg, #C25A2E, #7A2E0B)"
               : "linear-gradient(135deg, #FFB07A, #C25A2E)",
+            boxShadow:
+              "0 10px 26px -8px rgba(232,134,74,0.6), inset 0 1px 0 rgba(255,255,255,0.22)",
+            transform: "translateZ(30px)",
           }}
         >
           {icon}
         </div>
-        <h3 className="mt-5 text-lg font-bold text-[#F5EFE7]">{title}</h3>
-        <p className="mt-2 text-sm text-[#A8B0BA] leading-relaxed">{body}</p>
+        <h3
+          className="relative mt-5 text-lg font-bold text-[#F5EFE7]"
+          style={{ transform: "translateZ(16px)" }}
+        >
+          {title}
+        </h3>
+        <p
+          className="relative mt-2 text-sm text-[#A8B0BA] leading-relaxed"
+          style={{ transform: "translateZ(8px)" }}
+        >
+          {body}
+        </p>
       </div>
-    </div>
+    </Tilt3D>
   );
 }
 
@@ -1208,7 +1399,7 @@ function Connection() {
   const reduce = useReducedMotion();
   return (
     <SectionShell>
-      <div className="max-w-5xl mx-auto px-5 sm:px-8 py-24 sm:py-32 text-center">
+      <div className="max-w-5xl mx-auto px-6 sm:px-10 py-24 sm:py-32 text-center">
         <StaggerSection>
           <FadeUp>
             <p className="portal-eyebrow text-[#FFB07A]">
@@ -1348,7 +1539,7 @@ function FinalCta({
 }) {
   return (
     <SectionShell surface="elev" withOrbs>
-      <div className="max-w-4xl mx-auto px-5 sm:px-8 py-24 sm:py-32 text-center relative">
+      <div className="max-w-4xl mx-auto px-6 sm:px-10 py-24 sm:py-32 text-center relative">
         <StaggerSection>
           <FadeUp>
             <div className="inline-flex items-center justify-center mb-6">
@@ -1398,9 +1589,9 @@ function Footer() {
   const year = new Date().getFullYear();
   return (
     <footer className="border-t border-white/5 bg-[#0A0E13]">
-      <div className="max-w-7xl mx-auto px-5 sm:px-8 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <BrandLogo size={36} />
+          <BrandLogo size={80} />
         </div>
         <p className="text-xs text-[#6B7480] text-center sm:text-right">
           © {year} Neighbourhood Care Finder. Serving California&rsquo;s
