@@ -141,13 +141,14 @@ describe("OperationsPaywall — status alerts", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("OperationsPaywall — pricing", () => {
-  it("displays the $99/month price prominently", () => {
+  it("displays the monthly price prominently", () => {
     render(<OperationsPaywall subscription={null} />);
     expect(screen.getByText(OPERATIONS_PRO_PRICE_LABEL)).toBeInTheDocument();
-    // Sanity check the label itself — guards against accidental drift if a
+    // Sanity check the label format — guards against accidental drift if a
     // future edit retypes the string somewhere instead of importing the
-    // constant.
-    expect(OPERATIONS_PRO_PRICE_LABEL).toMatch(/\$99/);
+    // constant. We assert shape (dollar amount + "month") not a specific
+    // number, so price changes don't break the test.
+    expect(OPERATIONS_PRO_PRICE_LABEL).toMatch(/\$\d+/);
     expect(OPERATIONS_PRO_PRICE_LABEL).toMatch(/month/i);
   });
 });

@@ -63,4 +63,4 @@ export function isOperationsActive(
  * surfaces (paywall card, billing settings, past-due banners).
  */
 export const OPERATIONS_PRO_PRICE_LABEL =
-  "$99 / month per facility account" as const;
+  "$10 / month per facility account" as const;
