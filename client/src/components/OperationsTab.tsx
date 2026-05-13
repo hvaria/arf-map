@@ -66,6 +66,7 @@ import { CrmContent } from "@/components/operations/CrmContent";
 import { BillingContent } from "@/components/operations/BillingContent";
 import { StaffContent } from "@/components/operations/StaffContent";
 import { ComplianceContent } from "@/components/operations/ComplianceContent";
+import { AuditReadinessContent } from "@/components/operations/AuditReadinessContent";
 import { TasksContent } from "@/components/operations/TasksContent";
 import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
 import OpsCalendar from "@/components/OpsCalendar";
@@ -169,6 +170,7 @@ type SubView =
   | "billing"
   | "staff"
   | "compliance"
+  | "audit_readiness"
   | "tracker"
   | "calendar";
 
@@ -183,6 +185,7 @@ const NAV_ITEMS: Array<{ key: SubView | null; label: string; icon: React.Element
   { key: "incidents",  label: "Incidents",   icon: AlertTriangle },
   { key: "tracker",    label: "Trackers",    icon: Activity },
   { key: "compliance", label: "Compliance",  icon: ShieldCheck },
+  { key: "audit_readiness", label: "Audit Readiness", icon: ShieldCheck },
   { key: "crm",        label: "CRM",         icon: UserPlus },
   { key: "billing",    label: "Billing",     icon: Receipt },
   { key: "staff",      label: "Staff",       icon: UserCog },
@@ -1800,6 +1803,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "audit_readiness" ? <AuditReadinessContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "calendar"   ? (
       <OpsCalendar
         facilityNumber={facilityNumber}
