@@ -1589,14 +1589,37 @@ function Footer() {
   const year = new Date().getFullYear();
   return (
     <footer className="border-t border-white/5 bg-[#0A0E13]">
-      <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <BrandLogo size={80} />
         </div>
-        <p className="text-xs text-[#6B7480] text-center sm:text-right">
-          © {year} Neighbourhood Care Finder. Serving California&rsquo;s
-          licensed adult residential care community.
-        </p>
+        <div className="text-xs text-[#6B7480] text-left sm:text-right space-y-1.5 leading-relaxed">
+          <p>
+            © {year} Neighbourhood Care Finder. Serving California&rsquo;s
+            licensed adult residential care community.
+          </p>
+          <p className="text-[#4A5560]">
+            Map tiles ©{" "}
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-[#A8B0BA] transition-colors underline-offset-2 hover:underline"
+            >
+              OpenStreetMap
+            </a>{" "}
+            contributors, ©{" "}
+            <a
+              href="https://carto.com/attributions"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-[#A8B0BA] transition-colors underline-offset-2 hover:underline"
+            >
+              CARTO
+            </a>
+            .
+          </p>
+        </div>
       </div>
     </footer>
   );
