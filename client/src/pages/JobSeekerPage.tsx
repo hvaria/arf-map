@@ -1010,7 +1010,7 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
           component used on /jobseeker/dashboard so the two surfaces stay
           consistent and per-job rows deep-link back to /#/jobs/:id. */}
       <div>
-        <h3 className="text-base font-semibold mb-3">My Applications</h3>
+        <h3 className="text-xl font-semibold mb-3" style={{ color: "#1E1B4B" }}>My Applications</h3>
         <MyInterestsTab />
       </div>
 

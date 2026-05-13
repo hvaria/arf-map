@@ -58,8 +58,10 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Top nav */}
-      <header style={{ background: "linear-gradient(135deg, #EEF2FF, #FFF0F6)", borderBottom: "1px solid #E0E7FF" }}>
+      {/* Top nav — neutral white shell matching Operations tab. The
+          previous indigo→pink gradient header has been dropped to unify
+          the visual language across seeker and operator surfaces. */}
+      <header className="border-b bg-white" style={{ borderColor: "var(--portal-border-subtle)" }}>
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
           {/* Brand mark — clickable, returns the user to the map (in-app home). */}
           <Link
@@ -70,13 +72,12 @@ export default function DashboardPage() {
             <BrandLogo size={44} />
           </Link>
           <div className="flex items-center gap-4">
-            <span className="hidden text-xs sm:block" style={{ color: "#6B7280" }}>
+            <span className="hidden text-xs text-muted-foreground sm:block">
               {user.email}
             </span>
             <button
               onClick={handleLogout}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors hover:opacity-80"
-              style={{ border: "1px solid #E0E7FF", background: "#F0F4FF", color: "#4F46E5" }}
+              className="rounded-md px-3 py-1.5 text-xs font-medium border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 transition-colors"
             >
               Sign out
             </button>
@@ -85,20 +86,18 @@ export default function DashboardPage() {
       </header>
 
       {/* Main content */}
-      <main className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
-        {/* Welcome banner */}
-        <div className="mb-8 rounded-xl px-6 py-5" style={{ background: "linear-gradient(120deg, #EEF2FF 0%, #FFF0F6 100%)", border: "1px solid #E0E7FF" }}>
-          <h1 className="text-lg font-semibold" style={{ color: "#1E1B4B" }}>
-            Welcome back
-          </h1>
-          <p className="mt-1 text-sm" style={{ color: "#6B7280" }}>
-            Signed in as <strong style={{ color: "#1E1B4B" }}>{user.email}</strong>. Your profile and
-            applications are ready to view.
-          </p>
-        </div>
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 space-y-4">
+        {/* Welcome heading — canonical operator page-title shape. */}
+        <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
+          Welcome back
+        </h1>
+        <p className="text-sm text-muted-foreground -mt-2">
+          Signed in as <strong className="font-medium" style={{ color: "#1E1B4B" }}>{user.email}</strong>. Your profile and applications are ready to view.
+        </p>
 
-        {/* Stat cards */}
-        <div className="grid gap-4 sm:grid-cols-3">
+        {/* Stat tiles — operator KPI tile pattern (rounded-lg p-3 + soft
+            indigo neutral; status tones reserved for actual status values). */}
+        <div className="grid gap-3 sm:grid-cols-3">
           {[
             { label: "Applications", value: String(interests.length), icon: "📋" },
             { label: "Saved Jobs", value: "—", icon: "🔖" },
@@ -106,32 +105,30 @@ export default function DashboardPage() {
           ].map(({ label, value, icon }) => (
             <div
               key={label}
-              className="rounded-xl px-5 py-4"
-              style={{ background: "#F0F4FF", border: "1px solid #E0E7FF", boxShadow: "0 2px 8px rgba(129,140,248,0.06)" }}
+              className="rounded-lg p-3 text-center"
+              style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}
             >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium uppercase tracking-wide" style={{ color: "#6B7280" }}>
-                  {label}
-                </span>
-                <span className="text-base" aria-hidden="true">{icon}</span>
-              </div>
-              <p className="mt-2 text-2xl font-semibold" style={{ color: "#1E1B4B" }}>
+              <p className="portal-eyebrow flex items-center justify-center gap-1">
+                <span aria-hidden="true">{icon}</span>
+                {label}
+              </p>
+              <p className="mt-1 text-xl font-bold portal-num" style={{ color: "#1E1B4B" }}>
                 {value}
               </p>
             </div>
           ))}
         </div>
 
-        {/* Submitted interests list */}
-        <div className="mt-8">
+        {/* My Applications list */}
+        <div className="pt-4">
           <h2 className="text-sm font-semibold mb-3" style={{ color: "#1E1B4B" }}>
-            My Facility Interests
+            My Applications
           </h2>
           <MyInterestsTab />
         </div>
 
         {/* Quick links */}
-        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+        <div className="pt-4 grid gap-4 sm:grid-cols-2">
           <a
             href="#/job-seeker"
             className="group flex items-start gap-4 rounded-xl p-5 transition-shadow hover:shadow-md"

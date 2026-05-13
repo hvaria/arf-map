@@ -2,10 +2,16 @@ import { cn } from "@/lib/utils";
 
 type InterestStatus = "pending" | "viewed" | "shortlisted";
 
+// Operator tone palette (EmarContent / ComplianceContent reference):
+//   blue    = pending / waiting on action
+//   slate   = info / neutral (viewed but no action yet)
+//   emerald = ok / positive outcome (shortlisted)
+// Class shape mirrors the canonical operator status badge:
+//   bg-{tone}-100 text-{tone}-700 border-{tone}-200
 const CONFIG: Record<InterestStatus, { label: string; className: string }> = {
-  pending:     { label: "Pending",     className: "bg-[#FEF9C3] text-[#92400E] border-[#FDE68A]"  },
-  viewed:      { label: "Viewed",      className: "bg-[#F0F4FF] text-[#4F46E5] border-[#E0E7FF]"  },
-  shortlisted: { label: "Shortlisted", className: "bg-[#D1FAE5] text-[#065F46] border-[#BBF7D0]"  },
+  pending:     { label: "Pending",     className: "bg-blue-100 text-blue-700 border-blue-200"          },
+  viewed:      { label: "Viewed",      className: "bg-slate-100 text-slate-700 border-slate-200"       },
+  shortlisted: { label: "Shortlisted", className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
 };
 
 interface Props {
