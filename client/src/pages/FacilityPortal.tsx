@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff, MapPin, Lock } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
 import OperationsTab from "@/components/OperationsTab";
@@ -1051,6 +1051,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const qc = useQueryClient();
   const { toast } = useToast();
   const { facilityByNumber } = useFacilities();
+  const [, navigate] = useLocation();
   const [editingDetails, setEditingDetails] = useState(false);
 
   // Controlled tab state — so the post-checkout / paywall-deeplink effects
@@ -1129,11 +1130,13 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const logoutMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/facility/logout"),
     // UI-05: clear auth cache synchronously so the UI transitions to the login
-    // form immediately — no async refetch race condition.
+    // form immediately — no async refetch race condition. After clearing, send
+    // the (now-anonymous) user to the map, which auto-opens the role picker.
     onSuccess: () => {
       qc.setQueryData(["/api/facility/me"], null);
       onLogout();
       toast({ title: "Logged out" });
+      navigate("/map");
     },
   });
 
@@ -1166,8 +1169,17 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
         <div className="px-4 lg:px-6 min-h-16 py-2 flex items-center gap-4">
           {/* DO NOT MODIFY - Brand Lock — render at default size so the
               constellation icon stays in proportion with the fixed
-              "Neighbourhood / Care / Finder" text labels. */}
-          <BrandLogo />
+              "Neighbourhood / Care / Finder" text labels. The brand mark is
+              wrapped in a Link so clicking it returns the user to the map
+              (the in-app "home"). The wrapper is display:flex so it doesn't
+              affect BrandLogo's intrinsic layout. */}
+          <Link
+            href="/map"
+            className="flex items-center hover:opacity-90 transition-opacity"
+            aria-label="Back to map"
+          >
+            <BrandLogo />
+          </Link>
 
           <Link href="/map" className="hidden md:block">
             <Button
@@ -1466,8 +1478,15 @@ export default function FacilityPortal() {
     <div className="min-h-screen bg-white">
       {/* Header */}
       <header className="border-b px-4 py-3 flex items-center gap-3" style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}>
-        {/* DO NOT MODIFY - Brand Lock */}
-        <BrandLogo />
+        {/* DO NOT MODIFY - Brand Lock — wrapped in a Link so clicking the
+            brand mark returns the user to the map (the in-app "home"). */}
+        <Link
+          href="/map"
+          className="flex items-center hover:opacity-90 transition-opacity"
+          aria-label="Back to map"
+        >
+          <BrandLogo />
+        </Link>
         <Separator orientation="vertical" className="h-8" />
         <Link href="/map">
           <Button variant="ghost" size="sm" className="-ml-2">

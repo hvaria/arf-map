@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { getQueryFn } from "@/lib/queryClient";
 import { MyInterestsTab, type SeekerInterest } from "@/components/MyInterestsTab"; // NEW: expression-of-interest
+import { BrandLogo } from "@/components/BrandLogo";
 
 /**
  * DashboardPage — protected route for authenticated job seekers.
@@ -49,7 +50,10 @@ export default function DashboardPage() {
 
   const handleLogout = async () => {
     await logout();
-    setLocation("/jobseeker/login");
+    // Send the (now-anonymous) user back to the map. The role-picker dialog
+    // there auto-opens for unauthenticated visitors, so sign-in is one click
+    // away if they want to come back.
+    setLocation("/map");
   };
 
   return (
@@ -57,22 +61,14 @@ export default function DashboardPage() {
       {/* Top nav */}
       <header style={{ background: "linear-gradient(135deg, #EEF2FF, #FFF0F6)", borderBottom: "1px solid #E0E7FF" }}>
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-          {/* DO NOT MODIFY - Brand Lock */}
-          <div className="flex items-center gap-2.5">
-            <div
-              className="flex h-7 w-7 items-center justify-center rounded-lg"
-              style={{ background: "linear-gradient(135deg, #818CF8, #F9A8D4)" }}
-              aria-hidden="true"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-4 w-4 text-white" aria-hidden="true">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                <path d="M9 12l2 2 4-4" />
-              </svg>
-            </div>
-            <span className="text-sm font-semibold" style={{ color: "#1E1B4B" }}>
-              ARF Care Portal
-            </span>
-          </div>
+          {/* Brand mark — clickable, returns the user to the map (in-app home). */}
+          <Link
+            href="/map"
+            className="flex items-center hover:opacity-90 transition-opacity"
+            aria-label="Back to map"
+          >
+            <BrandLogo size={44} />
+          </Link>
           <div className="flex items-center gap-4">
             <span className="hidden text-xs sm:block" style={{ color: "#6B7280" }}>
               {user.email}
