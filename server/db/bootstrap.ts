@@ -113,16 +113,30 @@ const MAIN_PG_SCHEMA_SQL = `
     id              SERIAL PRIMARY KEY,
     job_seeker_id   INTEGER NOT NULL,
     facility_number TEXT NOT NULL,
+    job_id          INTEGER,
     role_interest   TEXT,
     message         TEXT,
-    status          TEXT NOT NULL DEFAULT 'pending',
+    status          TEXT NOT NULL DEFAULT 'pending'
+,
     created_at      BIGINT NOT NULL,
-    updated_at      BIGINT NOT NULL,
-    CONSTRAINT applicant_interests_job_seeker_id_facility_number_unique
-      UNIQUE (job_seeker_id, facility_number)
+    updated_at      BIGINT NOT NULL
   );
+  -- Backfill: existing deployments may have the table without job_id; add it.
+  ALTER TABLE applicant_interests ADD COLUMN IF NOT EXISTS job_id INTEGER;
+  -- Drop the legacy single uniqueness constraint (jobSeekerId, facilityNumber)
+  -- if it's still around — it would block per-job rows from coexisting with a
+  -- facility-level row. The two partial indexes below enforce uniqueness now.
+  ALTER TABLE applicant_interests
+    DROP CONSTRAINT IF EXISTS applicant_interests_job_seeker_id_facility_number_unique;
   CREATE INDEX IF NOT EXISTS idx_interests_job_seeker ON applicant_interests(job_seeker_id);
   CREATE INDEX IF NOT EXISTS idx_interests_facility   ON applicant_interests(facility_number);
+  -- Per-job uniqueness: at most one row per (seeker, job).
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_interests_seeker_job
+    ON applicant_interests(job_seeker_id, job_id) WHERE job_id IS NOT NULL;
+  -- Facility-level uniqueness: at most one "general interest at this facility"
+  -- row per seeker. Per-job rows (job_id IS NOT NULL) are not constrained here.
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_interests_seeker_fac_general
+    ON applicant_interests(job_seeker_id, facility_number) WHERE job_id IS NULL;
 
   CREATE TABLE IF NOT EXISTS enrichment_runs (
     id               SERIAL PRIMARY KEY,

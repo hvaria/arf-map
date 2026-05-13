@@ -17,6 +17,9 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
 
 const submitSchema = z.object({
   facilityNumber: z.string().min(1, "Facility number is required"),
+  // When jobId is provided, the interest is scoped to one specific posting.
+  // Omit it to express facility-level interest (legacy behavior).
+  jobId: z.number().int().positive().optional(),
   roleInterest: z.string().optional(),
   message: z.string().max(500).optional(),
 });
@@ -34,11 +37,20 @@ interestsRouter.post("/jobseeker/interests", requireJobSeekerAuth, async (req, r
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
-    const { facilityNumber, roleInterest, message } = parsed.data;
+    const { facilityNumber, jobId, roleInterest, message } = parsed.data;
+    // When a jobId is supplied, double-check it actually belongs to the
+    // claimed facility — otherwise a client could create an interest row
+    // whose (jobId, facilityNumber) don't match.
+    if (jobId != null) {
+      const job = await storage.getJobPostingById(jobId);
+      if (!job || job.facilityNumber !== facilityNumber) {
+        return res.status(400).json({ message: "Job does not belong to this facility" });
+      }
+    }
     const interest = await storage.upsertApplicantInterest(
       req.session.jobSeekerId!,
       facilityNumber,
-      { roleInterest, message }
+      { jobId, roleInterest, message }
     );
     res.status(200).json(interest);
   } catch (err) {

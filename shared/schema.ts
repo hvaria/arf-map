@@ -147,6 +147,11 @@ export const applicantInterests = pgTable("applicant_interests", {
   id: serial("id").primaryKey(),
   jobSeekerId: integer("job_seeker_id").notNull(),
   facilityNumber: text("facility_number").notNull(),
+  // When jobId is set, the interest is scoped to one specific job posting
+  // (so a facility with multiple openings has independent interest rows per
+  // posting). When null, the interest is facility-level (the legacy shape).
+  // Uniqueness is enforced by two partial indexes — see bootstrap.ts.
+  jobId: integer("job_id"),
   roleInterest: text("role_interest"),
   message: text("message"),
   status: text("status").notNull().default("pending"),

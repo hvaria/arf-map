@@ -17,7 +17,7 @@ import {
   type JobSeekerProfile,
   type ApplicantInterest,
 } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db, pool } from "./db/index";
 
 export type { FacilityDbRow } from "@shared/etl-types";
@@ -80,7 +80,7 @@ export interface IStorage {
   upsertApplicantInterest(
     jobSeekerId: number,
     facilityNumber: string,
-    data: { roleInterest?: string; message?: string }
+    data: { jobId?: number | null; roleInterest?: string; message?: string }
   ): Promise<ApplicantInterest>;
   deleteApplicantInterest(id: number, jobSeekerId: number): Promise<boolean>;
   updateApplicantInterestStatus(id: number, facilityNumber: string, status: string): Promise<ApplicantInterest | undefined>;
@@ -269,24 +269,47 @@ export class DatabaseStorage implements IStorage {
   async upsertApplicantInterest(
     jobSeekerId: number,
     facilityNumber: string,
-    data: { roleInterest?: string; message?: string }
+    data: { jobId?: number | null; roleInterest?: string; message?: string }
   ): Promise<ApplicantInterest> {
     const now = Date.now();
+    const { jobId = null, roleInterest, message } = data;
+    // Scope the lookup so per-job and facility-level rows don't collide:
+    // - jobId set      → unique by (seeker, jobId)
+    // - jobId null     → unique by (seeker, facilityNumber) WHERE jobId IS NULL
     const existingRows = await db
       .select()
       .from(applicantInterests)
-      .where(and(eq(applicantInterests.jobSeekerId, jobSeekerId), eq(applicantInterests.facilityNumber, facilityNumber)));
+      .where(
+        jobId == null
+          ? and(
+              eq(applicantInterests.jobSeekerId, jobSeekerId),
+              eq(applicantInterests.facilityNumber, facilityNumber),
+              isNull(applicantInterests.jobId),
+            )
+          : and(
+              eq(applicantInterests.jobSeekerId, jobSeekerId),
+              eq(applicantInterests.jobId, jobId),
+            ),
+      );
     if (existingRows[0]) {
       const rows = await db
         .update(applicantInterests)
-        .set({ ...data, updatedAt: now })
+        .set({ roleInterest, message, updatedAt: now })
         .where(eq(applicantInterests.id, existingRows[0].id))
         .returning();
       return rows[0] as ApplicantInterest;
     }
     const rows = await db
       .insert(applicantInterests)
-      .values({ jobSeekerId, facilityNumber, ...data, createdAt: now, updatedAt: now })
+      .values({
+        jobSeekerId,
+        facilityNumber,
+        jobId,
+        roleInterest,
+        message,
+        createdAt: now,
+        updatedAt: now,
+      })
       .returning();
     return rows[0] as ApplicantInterest;
   }
@@ -328,6 +351,8 @@ export interface ApplicantInterestWithProfile {
   id: number;
   jobSeekerId: number;
   facilityNumber: string;
+  jobId: number | null;
+  jobTitle: string | null;
   roleInterest: string | null;
   message: string | null;
   status: string;
@@ -347,6 +372,8 @@ export interface ApplicantInterestWithFacility {
   id: number;
   facilityNumber: string;
   facilityName: string | null;
+  jobId: number | null;
+  jobTitle: string | null;
   roleInterest: string | null;
   message: string | null;
   status: string;
@@ -357,6 +384,8 @@ export async function getInterestsByFacilityAsync(facilityNumber: string): Promi
   const result = await pool.query<ApplicantInterestWithProfile>(
     `SELECT
       ai.id, ai.job_seeker_id as "jobSeekerId", ai.facility_number as "facilityNumber",
+      ai.job_id as "jobId",
+      jp.title as "jobTitle",
       ai.role_interest as "roleInterest", ai.message, ai.status,
       ai.created_at as "createdAt", ai.updated_at as "updatedAt",
       a.email,
@@ -366,6 +395,7 @@ export async function getInterestsByFacilityAsync(facilityNumber: string): Promi
     FROM applicant_interests ai
     JOIN job_seeker_accounts a ON a.id = ai.job_seeker_id
     LEFT JOIN job_seeker_profiles p ON p.account_id = ai.job_seeker_id
+    LEFT JOIN job_postings jp ON jp.id = ai.job_id
     WHERE ai.facility_number = $1
     ORDER BY ai.created_at DESC`,
     [facilityNumber]
@@ -378,10 +408,13 @@ export async function getInterestsBySeekerAsync(jobSeekerId: number): Promise<Ap
     `SELECT
       ai.id, ai.facility_number as "facilityNumber",
       f.name as "facilityName",
+      ai.job_id as "jobId",
+      jp.title as "jobTitle",
       ai.role_interest as "roleInterest", ai.message, ai.status,
       ai.created_at as "createdAt"
     FROM applicant_interests ai
     LEFT JOIN facilities f ON f.number = ai.facility_number
+    LEFT JOIN job_postings jp ON jp.id = ai.job_id
     WHERE ai.job_seeker_id = $1
     ORDER BY ai.created_at DESC`,
     [jobSeekerId]
