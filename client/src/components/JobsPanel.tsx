@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Briefcase, MapPin, DollarSign, Clock, ChevronRight, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -90,11 +90,34 @@ function isJunkJob(j: { title: string; description: string; salary: string }): b
   return [title, desc, salary].some((v) => PLACEHOLDER_REGEX.test(v));
 }
 
+// Handoff key written by the /#/jobs/:id redirector page when a seeker
+// arrives via a direct / shared link. JobsPanel reads it on mount and
+// opens the modal, so the URL becomes a way to *land here with that
+// job pre-opened* rather than rendering a separate page.
+const PENDING_JOB_MODAL_KEY = "pending_job_modal";
+
 export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber }: JobsPanelProps) {
   // Modal state — clicking a card opens the in-context job detail
-  // modal instead of navigating away to /#/jobs/:id. The route still
-  // exists for shared / deep-linked URLs.
+  // modal instead of navigating away. Direct /#/jobs/:id arrivals are
+  // funneled here via PENDING_JOB_MODAL_KEY (set by JobDetailPage's
+  // redirector) — see the useEffect below.
   const [modalJobId, setModalJobId] = useState<number | null>(null);
+
+  // Drain the redirector handoff exactly once on mount. Failing
+  // silently when sessionStorage is unavailable (private browsing)
+  // matches the pendingAction convention.
+  useEffect(() => {
+    try {
+      const pending = sessionStorage.getItem(PENDING_JOB_MODAL_KEY);
+      if (pending) {
+        const id = Number(pending);
+        if (Number.isInteger(id) && id > 0) setModalJobId(id);
+        sessionStorage.removeItem(PENDING_JOB_MODAL_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // DB jobs from the facility portal — single source of truth now that the
   // pin payload no longer carries embedded jobPostings. Facility metadata
