@@ -2662,6 +2662,7 @@ function isDomainError(e: unknown): e is Error {
   return (
     /not found/i.test(m) ||
     /already resolved/i.test(m) ||
+    /already closed/i.test(m) ||
     /not active/i.test(m) ||
     /not out of range/i.test(m) ||
     /required for non-anonymous/i.test(m) ||
@@ -2669,7 +2670,11 @@ function isDomainError(e: unknown): e is Error {
     /illegal/i.test(m) ||
     /must be resolved/i.test(m) ||
     /Cannot/i.test(m) ||
-    /open citations remain/i.test(m)
+    /open citations remain/i.test(m) ||
+    // Wave 2 W4 — incident lifecycle domain errors.
+    /closure note is required/i.test(m) ||
+    /reopen reason is required/i.test(m) ||
+    /at least 8 characters/i.test(m)
   );
 }
 
@@ -4079,6 +4084,145 @@ opsRouter.post(
         return res.status(400).json({ success: false, error: (e as Error).message });
       }
       console.error("[ops] credentials evaluate-shift failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module 3 — W4 Incident Lifecycle Closer (BA §5 W4, §6 state machine)
+//
+// Four routes added next to the existing /incidents endpoints. Permissions
+// are wired via requireOpsPermission against the OPS_RESOURCES.INCIDENT
+// resource (matrix in server/ops/permissions.ts). Zod schemas use .strict()
+// so an unexpected field surfaces as 400 rather than being silently dropped.
+// event_severity is NEVER accepted from the wire — derivation lives in the
+// storage layer via classifyIncidentSeverity().
+// ─────────────────────────────────────────────────────────────────────────────
+
+const incidentCloseSchema = z.object({
+  closureNote: z.string().trim().min(8, "Closure note must be at least 8 characters").max(4000),
+}).strict();
+
+const incidentReopenSchema = z.object({
+  reason: z.string().trim().min(8, "Reopen reason must be at least 8 characters").max(4000),
+}).strict();
+
+const incidentPastSlaQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(200).optional(),
+}).strict();
+
+// GET /incidents/:id/checklist
+opsRouter.get(
+  "/incidents/:id/checklist",
+  requireOpsPermission(OPS_RESOURCES.INCIDENT, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const data = await ops.evaluateIncidentChecklist(facilityNumber, id);
+      if (!data) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data });
+    } catch (e) {
+      console.error("[ops] incident checklist failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /incidents/:id/close
+opsRouter.post(
+  "/incidents/:id/close",
+  requireOpsPermission(OPS_RESOURCES.INCIDENT, "close"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = incidentCloseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ops.closeIncident(
+        id,
+        facilityNumber,
+        actor.id,
+        parsed.data.closureNote,
+        actor,
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] incident close failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /incidents/:id/reopen
+opsRouter.post(
+  "/incidents/:id/reopen",
+  requireOpsPermission(OPS_RESOURCES.INCIDENT, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = incidentReopenSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ops.reopenIncident(
+        id,
+        facilityNumber,
+        actor.id,
+        parsed.data.reason,
+        actor,
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] incident reopen failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/incidents/past-sla?limit=
+opsRouter.get(
+  "/facilities/:facilityNumber/incidents/past-sla",
+  requireOpsPermission(OPS_RESOURCES.INCIDENT, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = incidentPastSlaQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const data = await ops.listIncidentsPastSla(facilityNumber, {
+        limit: parsed.data.limit,
+      });
+      return res.json({ success: true, data });
+    } catch (e) {
+      console.error("[ops] incidents past-sla failed", e);
       return res.status(500).json({ success: false, error: "Internal error" });
     }
   },

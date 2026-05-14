@@ -90,8 +90,13 @@ import {
   type CredentialType,
   type CredentialStatus,
 } from "@shared/staff-credentials";
+import {
+  classifyIncidentSeverity,
+  type IncidentSeverity,
+} from "@shared/incident-types";
 import { recordAudit } from "./auditStorage";
 import { listEvidence } from "./evidenceStorage";
+import { getRegSetting } from "./regSettings";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap — create all ops_ tables in PostgreSQL on startup
@@ -751,16 +756,85 @@ export async function listIncidents(
   return { incidents: rows as OpsIncident[], total: countRows[0]?.count ?? 0 };
 }
 
+/**
+ * Wave 2 W4 — classify event severity from incident_type + flags. Pure
+ * pass-through to the shared catalogue so the server is the single source of
+ * truth (never accept event_severity from the wire). Returns 'serious' |
+ * 'non_emergent'.
+ */
+function deriveEventSeverity(
+  incidentType: string,
+  injuryInvolvedFlag?: number | null,
+  hospitalizationFlag?: number | null,
+): IncidentSeverity {
+  return classifyIncidentSeverity(incidentType, {
+    injuryInvolved: (injuryInvolvedFlag ?? 0) === 1,
+    hospitalizationRequired: (hospitalizationFlag ?? 0) === 1,
+  });
+}
+
 export async function createIncident(data: InsertOpsIncident): Promise<OpsIncident> {
   const now = Date.now();
-  const rows = await db.insert(opsIncidents).values({ ...data, createdAt: now, updatedAt: now }).returning();
+  // W4: derive event_severity server-side; never trust the client. The
+  // shared classifier is the only writer of this column.
+  const eventSeverity = deriveEventSeverity(
+    data.incidentType,
+    data.injuryInvolved as number | null | undefined,
+    data.hospitalizationRequired as number | null | undefined,
+  );
+  const rows = await db
+    .insert(opsIncidents)
+    .values({ ...data, eventSeverity, createdAt: now, updatedAt: now })
+    .returning();
   return rows[0] as OpsIncident;
 }
 
 export async function updateIncident(id: number, facilityNumber: string, data: Partial<InsertOpsIncident>): Promise<OpsIncident | undefined> {
   const now = Date.now();
   const cond = and(eq(opsIncidents.id, id), eq(opsIncidents.facilityNumber, facilityNumber));
-  const rows = await db.update(opsIncidents).set({ ...data, updatedAt: now }).where(cond).returning();
+
+  // W4: re-classify event_severity if any of the inputs to the classifier
+  // change. The set of triggering fields is (incident_type, injury_involved,
+  // hospitalization_required); narrow to a single SELECT only when needed.
+  const needsReclassify =
+    data.incidentType !== undefined ||
+    data.injuryInvolved !== undefined ||
+    data.hospitalizationRequired !== undefined;
+
+  // Strip any client-supplied event_severity — server-derived only.
+  const { eventSeverity: _ignored, ...safeData } = data as Partial<InsertOpsIncident> & {
+    eventSeverity?: unknown;
+  };
+
+  let nextEventSeverity: IncidentSeverity | undefined;
+  if (needsReclassify) {
+    const before = await pgFirst(
+      db
+        .select({
+          incidentType: opsIncidents.incidentType,
+          injuryInvolved: opsIncidents.injuryInvolved,
+          hospitalizationRequired: opsIncidents.hospitalizationRequired,
+        })
+        .from(opsIncidents)
+        .where(cond),
+    );
+    if (!before) return undefined;
+    nextEventSeverity = deriveEventSeverity(
+      data.incidentType ?? before.incidentType,
+      (data.injuryInvolved as number | null | undefined) ?? before.injuryInvolved,
+      (data.hospitalizationRequired as number | null | undefined) ?? before.hospitalizationRequired,
+    );
+  }
+
+  const rows = await db
+    .update(opsIncidents)
+    .set({
+      ...safeData,
+      ...(nextEventSeverity !== undefined ? { eventSeverity: nextEventSeverity } : {}),
+      updatedAt: now,
+    })
+    .where(cond)
+    .returning();
   return rows[0] as OpsIncident | undefined;
 }
 
@@ -3633,4 +3707,504 @@ export async function evaluateStaffCredentialsForShift(
   else worst = "ok";
 
   return { worst, missing, expired, warning, ok: okList };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module 3 — W4 Incident Lifecycle Closer
+//   BA §5 W4 acceptance criteria + §6 state machine for `incident`.
+//   Phase 3 §2.5 Implementation Contract:
+//     - tenant-scoped at the storage layer on every query
+//     - event_severity derived server-side via classifyIncidentSeverity()
+//     - reg-setting reads cached per evaluation (one batched Promise.all)
+//     - audit emitted via safeAudit (try/catch wrapped)
+//   The columns this module consumes are pre-existing on ops_incidents
+//   (per opsSchema.ts:678-695) — additive Wave 2 W4 schema only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MS_PER_HOUR = 60 * 60 * 1000;
+const MS_PER_DAY = 24 * MS_PER_HOUR;
+
+export type IncidentSlaSeverity = "ok" | "warning" | "overdue";
+
+export interface IncidentChecklist {
+  incidentId: number;
+  status: string;
+  eventSeverity: IncidentSeverity;
+  required: {
+    supervisor: boolean;
+    family: boolean;
+    physician: boolean;
+    ccldVerbal: boolean;
+    lic624: boolean;
+    soc341: boolean;
+    rootCause: boolean;
+    correctiveAction: boolean;
+    followUp: boolean;
+  };
+  done: {
+    supervisor: boolean;
+    family: boolean;
+    physician: boolean;
+    ccldVerbal: boolean;
+    lic624: boolean;
+    soc341: boolean;
+    rootCause: boolean;
+    correctiveAction: boolean;
+    followUp: boolean;
+  };
+  sla: {
+    ccldVerbalDueAt?: number;
+    ccldVerbalSeverity?: IncidentSlaSeverity;
+    lic624DueAt?: number;
+    lic624Severity?: IncidentSlaSeverity;
+    soc341DueAt?: number;
+    soc341Severity?: IncidentSlaSeverity;
+  };
+  canClose: boolean;
+  blockingReasons: string[];
+}
+
+// SLA severity rule (W4): three states based on the position of `now` in
+// the window [incidentDate, dueAt]:
+//   - if the obligation was satisfied (timestamp non-null) → ok
+//   - now >= dueAt                                          → overdue
+//   - dueAt - now <= 10% of the window                      → warning
+//   - else                                                  → ok
+function computeSlaSeverity(
+  incidentDateMs: number,
+  dueAtMs: number,
+  completedAtMs: number | null | undefined,
+  nowMs: number,
+): IncidentSlaSeverity {
+  if (completedAtMs && completedAtMs > 0) return "ok";
+  if (nowMs >= dueAtMs) return "overdue";
+  const windowMs = Math.max(1, dueAtMs - incidentDateMs);
+  const remainingMs = dueAtMs - nowMs;
+  if (remainingMs <= 0.1 * windowMs) return "warning";
+  return "ok";
+}
+
+// Per-evaluation reg-setting batch. Reading via Promise.all so the four
+// keys come back in one round-trip burst rather than four sequential awaits.
+async function readW4RegSettings(facilityNumber: string): Promise<{
+  seriousHours: number;
+  nonEmergentHours: number;
+  lic624Days: number;
+  soc341Hours: number;
+}> {
+  const [serious, nonEmergent, lic624, soc341] = await Promise.all([
+    getRegSetting(facilityNumber, "INCIDENT_VERBAL_SERIOUS_HOURS"),
+    getRegSetting(facilityNumber, "INCIDENT_VERBAL_NON_EMERGENT_HOURS"),
+    getRegSetting(facilityNumber, "LIC_624_WRITTEN_DAYS"),
+    getRegSetting(facilityNumber, "SOC_341_VERBAL_HOURS"),
+  ]);
+  const toPositiveNumber = (raw: string, fallback: number): number => {
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+  return {
+    seriousHours: toPositiveNumber(serious, 2),
+    nonEmergentHours: toPositiveNumber(nonEmergent, 24),
+    lic624Days: toPositiveNumber(lic624, 7),
+    soc341Hours: toPositiveNumber(soc341, 2),
+  };
+}
+
+/**
+ * One-shot backfill for legacy rows where `event_severity` was never set.
+ * Called from `evaluateIncidentChecklist` (read-side) when the row is
+ * missing the column. Single tenant-scoped UPDATE per row; the surrounding
+ * read still returns the freshly-derived value without a re-fetch.
+ */
+async function backfillIncidentSeverityForRow(
+  row: OpsIncident,
+): Promise<IncidentSeverity> {
+  const sev = deriveEventSeverity(
+    row.incidentType,
+    row.injuryInvolved,
+    row.hospitalizationRequired,
+  );
+  try {
+    await db
+      .update(opsIncidents)
+      .set({ eventSeverity: sev })
+      .where(
+        and(
+          eq(opsIncidents.id, row.id),
+          eq(opsIncidents.facilityNumber, row.facilityNumber),
+          // Defensive: only update when still NULL so a concurrent writer
+          // who already wrote a value doesn't get clobbered.
+          sql`event_severity IS NULL`,
+        ),
+      );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[ops] event_severity backfill failed", err);
+  }
+  return sev;
+}
+
+/**
+ * Evaluate the W4 checklist + SLA timers for one incident.
+ *
+ * Performance: 1 SELECT for the row + 1 batched Promise.all of 4 reg
+ * settings. No N+1; the rest is in-memory pure logic.
+ *
+ * Returns `undefined` when the incident doesn't exist for this tenant
+ * (so the route can map to 404). Soft-side-effect: writes `event_severity`
+ * on the row when null (one-shot backfill).
+ */
+export async function evaluateIncidentChecklist(
+  facilityNumber: string,
+  incidentId: number,
+  nowMs: number = Date.now(),
+): Promise<IncidentChecklist | undefined> {
+  const row = await pgFirst(
+    db
+      .select()
+      .from(opsIncidents)
+      .where(
+        and(
+          eq(opsIncidents.id, incidentId),
+          eq(opsIncidents.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!row) return undefined;
+
+  // Resolve event_severity: prefer persisted, fall back to backfill.
+  let eventSeverity: IncidentSeverity;
+  if (row.eventSeverity === "serious" || row.eventSeverity === "non_emergent") {
+    eventSeverity = row.eventSeverity;
+  } else {
+    eventSeverity = await backfillIncidentSeverityForRow(row);
+  }
+
+  const reg = await readW4RegSettings(facilityNumber);
+
+  // Required-step matrix per the W4 spec.
+  const required = {
+    supervisor: true,
+    family: true,
+    physician:
+      (row.injuryInvolved ?? 0) === 1 ||
+      (row.hospitalizationRequired ?? 0) === 1,
+    ccldVerbal: true,
+    lic624: (row.lic624Required ?? 0) === 1,
+    soc341: (row.soc341Required ?? 0) === 1,
+    rootCause: true,
+    correctiveAction: true,
+    followUp: row.followUpDate !== null && row.followUpDate !== undefined,
+  };
+
+  // Done-step matrix — read from the existing notification + submission
+  // timestamp columns. We treat presence of the timestamp as "done"; the
+  // boolean flag column is informational only.
+  const done = {
+    supervisor: !!row.supervisorNotifiedAt,
+    family: !!row.familyNotifiedAt,
+    physician: !!row.physicianNotifiedAt,
+    ccldVerbal: !!row.ccldVerbalNotifiedAt,
+    lic624: !!row.lic624SubmittedAt,
+    soc341: !!row.soc341SubmittedAt,
+    rootCause: typeof row.rootCause === "string" && row.rootCause.trim().length > 0,
+    correctiveAction:
+      typeof row.correctiveAction === "string" && row.correctiveAction.trim().length > 0,
+    followUp: (row.followUpCompleted ?? 0) === 1,
+  };
+
+  // SLA timers — only compute the ones whose obligation applies.
+  const sla: IncidentChecklist["sla"] = {};
+
+  // CCLD verbal: always required; window depends on severity.
+  const ccldWindowMs =
+    (eventSeverity === "serious" ? reg.seriousHours : reg.nonEmergentHours) *
+    MS_PER_HOUR;
+  const ccldDueAt = row.incidentDate + ccldWindowMs;
+  sla.ccldVerbalDueAt = ccldDueAt;
+  sla.ccldVerbalSeverity = computeSlaSeverity(
+    row.incidentDate,
+    ccldDueAt,
+    row.ccldVerbalNotifiedAt,
+    nowMs,
+  );
+
+  if (required.lic624) {
+    const lic624DueAt = row.incidentDate + reg.lic624Days * MS_PER_DAY;
+    sla.lic624DueAt = lic624DueAt;
+    sla.lic624Severity = computeSlaSeverity(
+      row.incidentDate,
+      lic624DueAt,
+      row.lic624SubmittedAt,
+      nowMs,
+    );
+  }
+
+  if (required.soc341) {
+    const soc341DueAt = row.incidentDate + reg.soc341Hours * MS_PER_HOUR;
+    sla.soc341DueAt = soc341DueAt;
+    sla.soc341Severity = computeSlaSeverity(
+      row.incidentDate,
+      soc341DueAt,
+      row.soc341SubmittedAt,
+      nowMs,
+    );
+  }
+
+  // Blocking-reason matrix. Order matches the UI surface order so the
+  // first item is the most visually obvious "next step."
+  const blockingReasons: string[] = [];
+  if (required.supervisor && !done.supervisor) blockingReasons.push("Supervisor not notified");
+  if (required.family && !done.family) blockingReasons.push("Family not notified");
+  if (required.physician && !done.physician) blockingReasons.push("Physician not notified");
+  if (required.ccldVerbal && !done.ccldVerbal) blockingReasons.push("CCLD verbal notification missing");
+  if (required.lic624 && !done.lic624) blockingReasons.push("LIC 624 not submitted");
+  if (required.soc341 && !done.soc341) blockingReasons.push("SOC 341 not submitted");
+  if (required.rootCause && !done.rootCause) blockingReasons.push("Root cause not documented");
+  if (required.correctiveAction && !done.correctiveAction) blockingReasons.push("Corrective action not documented");
+  if (required.followUp && !done.followUp) blockingReasons.push("Follow-up not completed");
+
+  return {
+    incidentId: row.id,
+    status: row.status,
+    eventSeverity,
+    required,
+    done,
+    sla,
+    canClose: blockingReasons.length === 0,
+    blockingReasons,
+  };
+}
+
+/**
+ * Close an incident. Gated on `evaluateIncidentChecklist` reporting
+ * canClose=true AND closureNote being non-empty (>= 8 chars). Writes
+ * status='closed', closed_at, closed_by, closure_note and emits an audit
+ * row with action='close'.
+ *
+ * Returns `undefined` when the incident doesn't exist for this tenant.
+ * Throws a domain Error on validation failure — the route maps to 400.
+ */
+export async function closeIncident(
+  id: number,
+  facilityNumber: string,
+  by: string,
+  closureNote: string,
+  actor: AuditActor,
+): Promise<OpsIncident | undefined> {
+  if (typeof closureNote !== "string" || closureNote.trim().length < 8) {
+    throw new Error("Closure note is required (at least 8 characters)");
+  }
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsIncidents)
+      .where(
+        and(
+          eq(opsIncidents.id, id),
+          eq(opsIncidents.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (before.status === "closed") {
+    throw new Error("Incident is already closed");
+  }
+
+  const checklist = await evaluateIncidentChecklist(facilityNumber, id);
+  if (!checklist) return undefined;
+  if (!checklist.canClose) {
+    // Surface the first blocking reason so the FE can show actionable copy.
+    throw new Error(`Cannot close incident: ${checklist.blockingReasons[0]}`);
+  }
+
+  const now = Date.now();
+  const rows = await db
+    .update(opsIncidents)
+    .set({
+      status: "closed",
+      closureNote: closureNote.trim(),
+      closedAt: now,
+      closedBy: by,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(opsIncidents.id, id),
+        eq(opsIncidents.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsIncident | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "close",
+      entityType: "ops_incident",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+/**
+ * Re-open a closed incident. Only valid on status='closed' — anything else
+ * throws a domain error. Sets status='under_review' and records
+ * reopened_at / reopened_by / reopen_reason. Prior closed_at / closed_by
+ * are preserved so the audit history shows the full close → reopen cycle.
+ *
+ * Returns `undefined` when the incident doesn't exist for this tenant.
+ */
+export async function reopenIncident(
+  id: number,
+  facilityNumber: string,
+  by: string,
+  reason: string,
+  actor: AuditActor,
+): Promise<OpsIncident | undefined> {
+  if (typeof reason !== "string" || reason.trim().length < 8) {
+    throw new Error("Reopen reason is required (at least 8 characters)");
+  }
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsIncidents)
+      .where(
+        and(
+          eq(opsIncidents.id, id),
+          eq(opsIncidents.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (before.status !== "closed") {
+    throw new Error(`Cannot reopen incident in status: ${before.status}`);
+  }
+
+  const now = Date.now();
+  const rows = await db
+    .update(opsIncidents)
+    .set({
+      status: "under_review",
+      reopenedAt: now,
+      reopenedBy: by,
+      reopenReason: reason.trim(),
+      // Preserve prior closed_at / closed_by — do NOT null them.
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(opsIncidents.id, id),
+        eq(opsIncidents.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsIncident | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "reopen",
+      entityType: "ops_incident",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+/**
+ * List incidents that are still open AND past at least one SLA rule.
+ * Designed for the Wave 3 daily triage screen. Tenant-scoped on every
+ * query. Cheap: pulls open rows with the partial index
+ * idx_ops_inc_status_severity, then evaluates SLA in-memory using the
+ * single batched reg-setting read.
+ *
+ * Returns each row enriched with `breachedRules` (string[]) — the human-
+ * readable names of the SLA timers currently in 'overdue' state.
+ */
+export async function listIncidentsPastSla(
+  facilityNumber: string,
+  opts: { limit?: number } = {},
+): Promise<Array<OpsIncident & { breachedRules: string[] }>> {
+  const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
+  const nowMs = Date.now();
+
+  // Pull all non-closed incidents for this facility, newest first. The
+  // 'open' / 'under_review' filter trims the SLA evaluation workload to
+  // incidents whose timers actually matter.
+  const candidates = await db
+    .select()
+    .from(opsIncidents)
+    .where(
+      and(
+        eq(opsIncidents.facilityNumber, facilityNumber),
+        or(
+          eq(opsIncidents.status, "open"),
+          eq(opsIncidents.status, "under_review"),
+        ),
+      ),
+    )
+    .orderBy(desc(opsIncidents.incidentDate))
+    .limit(limit * 4); // over-fetch since some won't breach
+
+  if (candidates.length === 0) return [];
+
+  // Single reg-setting batch shared across every row in this facility.
+  const reg = await readW4RegSettings(facilityNumber);
+
+  const out: Array<OpsIncident & { breachedRules: string[] }> = [];
+  for (const row of candidates) {
+    const sev: IncidentSeverity =
+      row.eventSeverity === "serious" || row.eventSeverity === "non_emergent"
+        ? row.eventSeverity
+        : deriveEventSeverity(
+            row.incidentType,
+            row.injuryInvolved,
+            row.hospitalizationRequired,
+          );
+
+    const breached: string[] = [];
+
+    // CCLD verbal always applies.
+    const ccldDueAt =
+      row.incidentDate +
+      (sev === "serious" ? reg.seriousHours : reg.nonEmergentHours) * MS_PER_HOUR;
+    if (
+      computeSlaSeverity(row.incidentDate, ccldDueAt, row.ccldVerbalNotifiedAt, nowMs) ===
+      "overdue"
+    ) {
+      breached.push("ccld_verbal");
+    }
+
+    if ((row.lic624Required ?? 0) === 1) {
+      const lic624DueAt = row.incidentDate + reg.lic624Days * MS_PER_DAY;
+      if (
+        computeSlaSeverity(row.incidentDate, lic624DueAt, row.lic624SubmittedAt, nowMs) ===
+        "overdue"
+      ) {
+        breached.push("lic_624");
+      }
+    }
+
+    if ((row.soc341Required ?? 0) === 1) {
+      const soc341DueAt = row.incidentDate + reg.soc341Hours * MS_PER_HOUR;
+      if (
+        computeSlaSeverity(row.incidentDate, soc341DueAt, row.soc341SubmittedAt, nowMs) ===
+        "overdue"
+      ) {
+        breached.push("soc_341");
+      }
+    }
+
+    if (breached.length > 0) {
+      out.push({ ...row, breachedRules: breached });
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
 }

@@ -54,6 +54,7 @@ export const OPS_RESOURCES = {
   CONTROLLED_SUB_COUNT: "ops_controlled_sub_count",
   // Wave 2 additions (Epic C)
   STAFF_CREDENTIAL: "ops_staff_credential",
+  INCIDENT: "ops_incident",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -110,6 +111,14 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.STAFF_CREDENTIAL,
     actions: ["read", "create", "update", "delete"],
   },
+  // Wave 2 — Incident lifecycle closer (W4). Admin can read/create/update
+  // every incident and close (terminal state with checklist gate) or
+  // re-open (closed → under_review). No 'delete' — incidents are
+  // forensic records and only soft-state transitions are exposed.
+  {
+    resource: OPS_RESOURCES.INCIDENT,
+    actions: ["read", "create", "update", "close"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
@@ -124,6 +133,7 @@ const AUDITOR_READ_ONLY: Permission[] = [
   { resource: OPS_RESOURCES.INSPECTION,          actions: ["read"] },
   { resource: OPS_RESOURCES.CONTROLLED_SUB_COUNT,actions: ["read"] },
   { resource: OPS_RESOURCES.STAFF_CREDENTIAL,    actions: ["read"] },
+  { resource: OPS_RESOURCES.INCIDENT,            actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

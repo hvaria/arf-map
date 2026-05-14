@@ -1,3 +1,33 @@
+/**
+ * IncidentsContent — Operations sub-view for ops_incidents.
+ *
+ * Wave 2 W4 (BA §5 W4, §6 state machine) extends the existing inline detail
+ * panel with a checklist + SLA timers + gated close/reopen. The list shell,
+ * filter chips, ReportIncidentDialog, and the per-row notification timestamp
+ * checkboxes pre-date W4 and are NOT modified.
+ *
+ * Pattern citations (Implementation Contract §2.5):
+ *   - Page heading style:                        ComplianceContent.tsx:281
+ *   - Loading skeleton row pattern:              ComplianceContent.tsx:311-313
+ *   - Empty-state dashed border:                 ComplianceContent.tsx:315-318
+ *   - <FormField> + onSubmitKey:                 components/operations/FormField.tsx
+ *   - <AuditTrailButton> in detail header:       components/operations/AuditTrailButton.tsx
+ *   - useMutation + invalidate + toast:          ComplianceContent.tsx:88-106
+ *   - Status badge tone palette:                 EmarContent.tsx:55-62
+ *   - Optimistic update + rollback pattern:      ComplaintDetail.tsx:141-163
+ *   - Dialog footer [Cancel] before primary:     IncidentsContent.tsx:279-284 (existing)
+ *
+ * API contract (W4, Phase 4):
+ *   GET    /api/ops/incidents/:id/checklist        — checklist + SLA + canClose
+ *   POST   /api/ops/incidents/:id/close            { closureNote: string (>=8) }
+ *   POST   /api/ops/incidents/:id/reopen           { reason: string (>=8) }
+ *   GET    /api/ops/facilities/:fn/incidents/past-sla?limit=  (Wave 3 tile)
+ *
+ * Field updates for individual checklist items (CCLD verbal, LIC 624, SOC 341,
+ * supervisor/family/physician notifications, root cause, corrective action,
+ * follow-up) reuse the EXISTING PUT /api/ops/incidents/:id endpoint — no
+ * parallel mutation endpoints introduced.
+ */
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
@@ -15,7 +45,18 @@ import { cn } from "@/lib/utils";
 import { toLocalEpochMs } from "@/lib/datetime";
 import { useResidents } from "@/hooks/useResidents";
 import { FormField, onSubmitKey } from "@/components/operations/FormField";
-import { Plus, AlertTriangle, ArrowLeft } from "lucide-react";
+import { AuditTrailButton } from "@/components/operations/AuditTrailButton";
+import {
+  Plus,
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Minus,
+  RotateCcw,
+  Lock,
+} from "lucide-react";
 
 interface Resident {
   id: number;
@@ -45,8 +86,24 @@ interface Incident {
   status: string;
   lic624Required: boolean;
   lic624Submitted: boolean;
+  lic624SubmittedAt?: number | null;
+  soc341Required?: boolean;
+  soc341Submitted?: boolean;
+  soc341SubmittedAt?: number | null;
+  ccldVerbalNotified?: boolean;
+  ccldVerbalNotifiedAt?: number | null;
+  ccldVerbalNotifiedBy?: string | null;
+  eventSeverity?: "serious" | "non_emergent" | null;
   rootCause?: string;
   correctiveAction?: string;
+  followUpDate?: number | null;
+  followUpCompleted?: boolean;
+  closureNote?: string | null;
+  closedAt?: number | null;
+  closedBy?: string | null;
+  reopenedAt?: number | null;
+  reopenedBy?: string | null;
+  reopenReason?: string | null;
 }
 
 const INCIDENT_TYPES = [
@@ -66,6 +123,48 @@ const STATUS_COLORS: Record<string, string> = {
   under_review: "bg-yellow-100 text-yellow-700",
   closed: "bg-green-100 text-green-700",
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W4 — Checklist API types
+// Pulled here so both this component and the test file share the same shape
+// (exported for the smoke-test fixture).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ChecklistKey =
+  | "supervisor"
+  | "family"
+  | "physician"
+  | "ccldVerbal"
+  | "lic624"
+  | "soc341"
+  | "rootCause"
+  | "correctiveAction"
+  | "followUp";
+
+export type SlaSeverity = "ok" | "warning" | "overdue";
+
+export interface IncidentChecklistData {
+  incidentId: number;
+  status: string;
+  eventSeverity: "serious" | "non_emergent";
+  required: Record<ChecklistKey, boolean>;
+  done: Record<ChecklistKey, boolean>;
+  sla: {
+    ccldVerbalDueAt?: number;
+    ccldVerbalSeverity?: SlaSeverity;
+    lic624DueAt?: number;
+    lic624Severity?: SlaSeverity;
+    soc341DueAt?: number;
+    soc341Severity?: SlaSeverity;
+  };
+  canClose: boolean;
+  blockingReasons: string[];
+}
+
+export interface IncidentChecklistEnvelope {
+  success: boolean;
+  data: IncidentChecklistData;
+}
 
 interface IncidentFormData {
   incidentType: string;
@@ -291,6 +390,677 @@ function ReportIncidentDialog({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// W4 helpers — SLA chip formatter + checklist line
+// `chevronEdgeTime` is named per the spec; renders relative SLA copy:
+//   • due in 1h 23m
+//   • overdue by 2d
+//   • due 2026-05-21
+// ─────────────────────────────────────────────────────────────────────────────
+
+function chevronEdgeTime(dueAt: number, severity: SlaSeverity | undefined, now = Date.now()): string {
+  const diff = dueAt - now;
+  const abs = Math.abs(diff);
+  const minutes = Math.round(abs / 60_000);
+  const hours = Math.round(abs / 3_600_000);
+  const days = Math.round(abs / 86_400_000);
+
+  if (severity === "overdue" || diff < 0) {
+    if (minutes < 60) return `overdue by ${minutes}m`;
+    if (hours < 24) return `overdue by ${hours}h`;
+    return `overdue by ${days}d`;
+  }
+
+  if (minutes < 60) return `due in ${minutes}m`;
+  if (hours < 24) {
+    const remMin = Math.max(0, Math.round((abs - hours * 3_600_000) / 60_000));
+    return remMin > 0 ? `due in ${hours}h ${remMin}m` : `due in ${hours}h`;
+  }
+  if (days < 7) return `due in ${days}d`;
+  return `due ${new Date(dueAt).toLocaleDateString()}`;
+}
+
+function fmtRelativeDone(ms: number, now = Date.now()): string {
+  const diff = now - ms;
+  if (diff < 0) return new Date(ms).toLocaleString();
+  const minutes = Math.round(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(ms).toLocaleDateString();
+}
+
+const SLA_CHIP_TONE: Record<SlaSeverity, string> = {
+  ok: "bg-emerald-100 text-emerald-700 border-emerald-200",
+  warning: "bg-amber-100 text-amber-700 border-amber-200",
+  overdue: "bg-red-100 text-red-700 border-red-200",
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W4 — ChecklistItem row.
+// One row per required checklist step. Renders icon + label + status detail,
+// inline action button when pending and actionable, optional SLA chip when
+// timed. Tones reuse the EmarContent palette.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ChecklistItemProps {
+  itemKey: ChecklistKey;
+  label: string;
+  required: boolean;
+  done: boolean;
+  doneAt?: number | null;
+  doneBy?: string | null;
+  sla?: { dueAt: number; severity: SlaSeverity };
+  /** If non-null, renders an inline "Mark …" action. */
+  onMark?: () => void;
+  marking?: boolean;
+  actionLabel?: string;
+}
+
+function ChecklistItem({
+  itemKey,
+  label,
+  required,
+  done,
+  doneAt,
+  doneBy,
+  sla,
+  onMark,
+  marking,
+  actionLabel,
+}: ChecklistItemProps) {
+  // Three visual states:
+  //   • done       — emerald check
+  //   • pending+sla — clock icon, chip indicates ok/warning/overdue
+  //   • pending+no sla — em-dash icon, slate
+  let icon = <Minus className="h-4 w-4 text-slate-400" />;
+  if (done) icon = <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+  else if (sla) {
+    if (sla.severity === "overdue") icon = <XCircle className="h-4 w-4 text-red-600" />;
+    else icon = <Clock className="h-4 w-4 text-amber-600" />;
+  }
+
+  return (
+    <li
+      className="flex items-start gap-2 py-2"
+      data-testid={`incident-checklist-${itemKey}`}
+      data-done={done ? "true" : "false"}
+    >
+      <span className="pt-0.5 shrink-0">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-medium">{label}</span>
+          {!required && (
+            <span className="text-[10px] text-muted-foreground">(not required)</span>
+          )}
+          {sla && !done && (
+            <span
+              className={cn(
+                "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] border",
+                SLA_CHIP_TONE[sla.severity],
+              )}
+            >
+              {chevronEdgeTime(sla.dueAt, sla.severity)}
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {done ? (
+            <>
+              {doneBy ? `${doneBy} · ` : ""}
+              {doneAt ? fmtRelativeDone(doneAt) : "done"}
+            </>
+          ) : sla ? (
+            <span>SLA timer running</span>
+          ) : (
+            <span>—</span>
+          )}
+        </p>
+        {!done && onMark && actionLabel && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-1.5 h-7 text-xs"
+            onClick={onMark}
+            disabled={marking}
+            data-testid={`incident-checklist-mark-${itemKey}`}
+          >
+            {marking ? "Marking…" : actionLabel}
+          </Button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W4 — Close / Reopen modals
+// Reuse Dialog + FormField + onSubmitKey + [Cancel][Primary] footer.
+// closureNote and reason are each required ≥ 8 characters (server also
+// enforces; we mirror client-side to provide inline error feedback).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CloseIncidentDialog({
+  open,
+  onOpenChange,
+  incidentId,
+  facilityNumber,
+  blockingReasons,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  incidentId: number;
+  facilityNumber: string;
+  blockingReasons: string[];
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [note, setNote] = useState("");
+  const [showError, setShowError] = useState(false);
+
+  const listKey = [`/api/ops/facilities/${facilityNumber}/incidents`] as const;
+  const detailKey = [`/api/ops/incidents/${incidentId}/checklist`] as const;
+
+  const closeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/ops/incidents/${incidentId}/close`, {
+        closureNote: note.trim(),
+      });
+      return res.json();
+    },
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: detailKey });
+      const prev = qc.getQueryData<IncidentChecklistEnvelope>(detailKey);
+      if (prev?.data) {
+        qc.setQueryData(detailKey, {
+          ...prev,
+          data: { ...prev.data, status: "closed" },
+        });
+      }
+      return { prev };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(detailKey, ctx.prev);
+      toast({ title: "Couldn't close", description: err.message, variant: "destructive" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: detailKey });
+      qc.invalidateQueries({ queryKey: listKey });
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/incidents/past-sla`],
+      });
+      toast({ title: "Incident closed" });
+      onOpenChange(false);
+      setNote("");
+      setShowError(false);
+    },
+  });
+
+  const isInvalid = note.trim().length < 8;
+  const submit = () => {
+    if (isInvalid || closeMutation.isPending) {
+      setShowError(true);
+      return;
+    }
+    closeMutation.mutate();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setShowError(false); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Close incident</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          {blockingReasons.length > 0 && (
+            <div
+              className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
+              role="alert"
+            >
+              <p className="font-medium mb-1">Blocked by:</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {blockingReasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <FormField
+            label="Closure note"
+            required
+            hint="At least 8 characters. Summarise the outcome and resolution."
+            error={showError && isInvalid ? "Closure note must be at least 8 characters." : undefined}
+          >
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="resize-none min-h-[80px]"
+              placeholder="Resolution summary, corrective action, follow-up plan…"
+              data-testid="incident-close-note"
+              aria-invalid={showError && isInvalid ? true : undefined}
+            />
+          </FormField>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button
+              variant="gradient"
+              onClick={submit}
+              disabled={closeMutation.isPending}
+              data-testid="incident-close-submit"
+            >
+              {closeMutation.isPending ? "Closing…" : "Close incident"}
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReopenIncidentDialog({
+  open,
+  onOpenChange,
+  incidentId,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  incidentId: number;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [reason, setReason] = useState("");
+  const [showError, setShowError] = useState(false);
+
+  const listKey = [`/api/ops/facilities/${facilityNumber}/incidents`] as const;
+  const detailKey = [`/api/ops/incidents/${incidentId}/checklist`] as const;
+
+  const reopenMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/ops/incidents/${incidentId}/reopen`, {
+        reason: reason.trim(),
+      });
+      return res.json();
+    },
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: detailKey });
+      const prev = qc.getQueryData<IncidentChecklistEnvelope>(detailKey);
+      if (prev?.data) {
+        qc.setQueryData(detailKey, {
+          ...prev,
+          data: { ...prev.data, status: "under_review" },
+        });
+      }
+      return { prev };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(detailKey, ctx.prev);
+      toast({ title: "Couldn't reopen", description: err.message, variant: "destructive" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: detailKey });
+      qc.invalidateQueries({ queryKey: listKey });
+      toast({ title: "Incident reopened — status set to under review" });
+      onOpenChange(false);
+      setReason("");
+      setShowError(false);
+    },
+  });
+
+  const isInvalid = reason.trim().length < 8;
+  const submit = () => {
+    if (isInvalid || reopenMutation.isPending) {
+      setShowError(true);
+      return;
+    }
+    reopenMutation.mutate();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setShowError(false); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reopen incident</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField
+            label="Reason"
+            required
+            hint="At least 8 characters. Why is this being reopened?"
+            error={showError && isInvalid ? "Reason must be at least 8 characters." : undefined}
+          >
+            <Textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="resize-none min-h-[80px]"
+              placeholder="New evidence surfaced; corrective action incomplete…"
+              data-testid="incident-reopen-reason"
+              aria-invalid={showError && isInvalid ? true : undefined}
+            />
+          </FormField>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button
+              variant="gradient"
+              onClick={submit}
+              disabled={reopenMutation.isPending}
+              data-testid="incident-reopen-submit"
+            >
+              {reopenMutation.isPending ? "Reopening…" : "Reopen incident"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W4 — Checklist panel
+// Reads `/checklist`, renders the 9-step checklist + inline mark actions +
+// Close / Reopen + closed-state banner.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CHECKLIST_ROWS: Array<{ key: ChecklistKey; label: string; actionLabel: string }> = [
+  { key: "supervisor",       label: "Supervisor notified",         actionLabel: "Mark supervisor notified" },
+  { key: "family",           label: "Family notified",             actionLabel: "Mark family notified" },
+  { key: "physician",        label: "Physician notified",          actionLabel: "Mark physician notified" },
+  { key: "ccldVerbal",       label: "CCLD verbal notification",    actionLabel: "Mark CCLD verbal notification given" },
+  { key: "lic624",           label: "LIC 624 written report",      actionLabel: "Mark LIC 624 submitted" },
+  { key: "soc341",           label: "SOC 341 abuse report",        actionLabel: "Mark SOC 341 submitted" },
+  { key: "rootCause",        label: "Root cause documented",       actionLabel: "Mark root cause documented" },
+  { key: "correctiveAction", label: "Corrective action documented",actionLabel: "Mark corrective action documented" },
+  { key: "followUp",         label: "Follow-up complete",          actionLabel: "Mark follow-up complete" },
+];
+
+function IncidentChecklistPanel({
+  incident,
+  facilityNumber,
+  rootCauseDraft,
+  correctiveActionDraft,
+}: {
+  incident: Incident;
+  facilityNumber: string;
+  rootCauseDraft: string;
+  correctiveActionDraft: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
+
+  const detailKey = [`/api/ops/incidents/${incident.id}/checklist`] as const;
+  const listKey = [`/api/ops/facilities/${facilityNumber}/incidents`] as const;
+
+  const { data, isLoading, error } = useQuery<IncidentChecklistEnvelope | null>({
+    queryKey: detailKey,
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: Number.isFinite(incident.id),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+
+  const cl = data?.data ?? null;
+
+  // Reuses the EXISTING PUT /api/ops/incidents/:id endpoint — no parallel
+  // mutation channels per the W4 spec.
+  const markMutation = useMutation<unknown, Error, { key: ChecklistKey }>({
+    mutationFn: async ({ key }) => {
+      const now = Date.now();
+      const body: Record<string, unknown> = {};
+      switch (key) {
+        case "supervisor":
+          body.supervisorNotified = true;
+          body.supervisorNotifiedAt = now;
+          break;
+        case "family":
+          body.familyNotified = true;
+          body.familyNotifiedAt = now;
+          break;
+        case "physician":
+          body.physicianNotified = true;
+          body.physicianNotifiedAt = now;
+          break;
+        case "ccldVerbal":
+          body.ccldVerbalNotified = true;
+          body.ccldVerbalNotifiedAt = now;
+          break;
+        case "lic624":
+          body.lic624Submitted = true;
+          body.lic624SubmittedAt = now;
+          break;
+        case "soc341":
+          body.soc341Submitted = true;
+          body.soc341SubmittedAt = now;
+          break;
+        case "rootCause":
+          // Persist whatever the parent form currently has in the
+          // rootCause textarea — the user already typed something or
+          // the inline action wouldn't make sense.
+          body.rootCause = rootCauseDraft.trim();
+          break;
+        case "correctiveAction":
+          body.correctiveAction = correctiveActionDraft.trim();
+          break;
+        case "followUp":
+          body.followUpCompleted = true;
+          break;
+      }
+      const res = await apiRequest("PUT", `/api/ops/incidents/${incident.id}`, body);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: detailKey });
+      qc.invalidateQueries({ queryKey: listKey });
+      toast({ title: "Step updated" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't mark step", description: err.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="rounded-lg border p-4 space-y-2" data-testid="incident-checklist-loading">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-10 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (error || !cl) {
+    return (
+      <div
+        className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive"
+        role="alert"
+      >
+        Couldn't load the action checklist.
+      </div>
+    );
+  }
+
+  const status = cl.status;
+  const isClosed = status === "closed";
+
+  // ── Done-detail lookup for each row.
+  const doneAtFor = (key: ChecklistKey): number | null | undefined => {
+    switch (key) {
+      case "supervisor":       return incident.supervisorNotifiedAt;
+      case "family":           return incident.familyNotifiedAt;
+      case "physician":        return incident.physicianNotifiedAt;
+      case "ccldVerbal":       return incident.ccldVerbalNotifiedAt;
+      case "lic624":           return incident.lic624SubmittedAt;
+      case "soc341":           return incident.soc341SubmittedAt;
+      case "followUp":         return incident.followUpDate;
+      default:                 return null;
+    }
+  };
+  const doneByFor = (key: ChecklistKey): string | null | undefined => {
+    if (key === "ccldVerbal") return incident.ccldVerbalNotifiedBy;
+    return null;
+  };
+  const slaFor = (key: ChecklistKey): { dueAt: number; severity: SlaSeverity } | undefined => {
+    if (key === "ccldVerbal" && cl.sla.ccldVerbalDueAt) {
+      return { dueAt: cl.sla.ccldVerbalDueAt, severity: cl.sla.ccldVerbalSeverity ?? "ok" };
+    }
+    if (key === "lic624" && cl.sla.lic624DueAt) {
+      return { dueAt: cl.sla.lic624DueAt, severity: cl.sla.lic624Severity ?? "ok" };
+    }
+    if (key === "soc341" && cl.sla.soc341DueAt) {
+      return { dueAt: cl.sla.soc341DueAt, severity: cl.sla.soc341Severity ?? "ok" };
+    }
+    return undefined;
+  };
+
+  // Show only rows that are required for THIS incident.
+  const rows = CHECKLIST_ROWS.filter((r) => cl.required[r.key]);
+
+  return (
+    <div className="space-y-3" data-testid="incident-checklist-panel">
+      {/* Severity badge */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-medium">Action checklist</span>
+        <span
+          className={cn(
+            "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] border capitalize",
+            cl.eventSeverity === "serious"
+              ? "bg-red-100 text-red-700 border-red-200"
+              : "bg-slate-100 text-slate-700 border-slate-200",
+          )}
+          data-testid="incident-severity-badge"
+        >
+          {cl.eventSeverity === "serious" ? "serious" : "non emergent"}
+        </span>
+      </div>
+
+      {/* Closed / reopened banner */}
+      {isClosed && incident.closedAt && (
+        <div
+          className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm"
+          data-testid="incident-closed-banner"
+        >
+          <p className="font-medium">
+            Closed
+            {incident.closedBy ? ` by ${incident.closedBy}` : ""}
+            {` on ${new Date(incident.closedAt).toLocaleString()}`}
+          </p>
+          {incident.closureNote && (
+            <p className="mt-1 whitespace-pre-wrap text-emerald-900">{incident.closureNote}</p>
+          )}
+        </div>
+      )}
+      {!isClosed && incident.reopenedAt && (
+        <div
+          className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm"
+          data-testid="incident-reopened-banner"
+        >
+          <p className="font-medium">
+            Reopened
+            {incident.reopenedBy ? ` by ${incident.reopenedBy}` : ""}
+            {` on ${new Date(incident.reopenedAt).toLocaleString()}`}
+          </p>
+          {incident.reopenReason && (
+            <p className="mt-1 whitespace-pre-wrap text-amber-900">{incident.reopenReason}</p>
+          )}
+        </div>
+      )}
+
+      {/* Checklist rows */}
+      <ul
+        className="rounded-lg border bg-white px-3 divide-y"
+        data-testid="incident-checklist-list"
+      >
+        {rows.map((r) => {
+          const done = cl.done[r.key];
+          // Only show inline mark actions for "simple" boolean steps. The
+          // rootCause / correctiveAction actions only make sense if the
+          // user has typed something; we surface them anyway and let the
+          // server reject empty values for an honest error.
+          const onMark = !done && !isClosed ? () => markMutation.mutate({ key: r.key }) : undefined;
+          return (
+            <ChecklistItem
+              key={r.key}
+              itemKey={r.key}
+              label={r.label}
+              required={cl.required[r.key]}
+              done={done}
+              doneAt={doneAtFor(r.key)}
+              doneBy={doneByFor(r.key)}
+              sla={slaFor(r.key)}
+              onMark={onMark}
+              marking={markMutation.isPending && markMutation.variables?.key === r.key}
+              actionLabel={r.actionLabel}
+            />
+          );
+        })}
+      </ul>
+
+      {/* Close / Reopen */}
+      <div className="flex flex-wrap items-start gap-2">
+        {!isClosed && (
+          <div className="flex flex-col gap-1">
+            <Button
+              variant="gradient"
+              size="sm"
+              onClick={() => setCloseOpen(true)}
+              disabled={!cl.canClose}
+              aria-disabled={!cl.canClose}
+              title={!cl.canClose ? cl.blockingReasons.join(" · ") : "Close incident"}
+              data-testid="incident-close-trigger"
+            >
+              <Lock className="h-3.5 w-3.5 mr-1" />
+              Close incident
+            </Button>
+            {!cl.canClose && cl.blockingReasons.length > 0 && (
+              <ul
+                className="text-[11px] text-muted-foreground list-disc pl-4 mt-1"
+                data-testid="incident-blocking-reasons"
+              >
+                {cl.blockingReasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {isClosed && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setReopenOpen(true)}
+            data-testid="incident-reopen-trigger"
+          >
+            <RotateCcw className="h-3.5 w-3.5 mr-1" />
+            Reopen incident
+          </Button>
+        )}
+      </div>
+
+      <CloseIncidentDialog
+        open={closeOpen}
+        onOpenChange={setCloseOpen}
+        incidentId={incident.id}
+        facilityNumber={facilityNumber}
+        blockingReasons={cl.blockingReasons}
+      />
+      <ReopenIncidentDialog
+        open={reopenOpen}
+        onOpenChange={setReopenOpen}
+        incidentId={incident.id}
+        facilityNumber={facilityNumber}
+      />
+    </div>
+  );
+}
+
 function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilityNumber: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -310,12 +1080,18 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/incidents/${incident.id}/checklist`] });
       toast({ title: "Incident updated" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  // Top-of-detail severity badge from the incident row itself (always shown).
+  // The checklist panel re-asserts this from the canonical /checklist
+  // response, but rendering it on the header avoids a flash during loading.
+  const headerSeverity = incident.eventSeverity ?? null;
 
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #E0E7FF' }}>
@@ -327,6 +1103,18 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-sm capitalize">{incident.incidentType?.replace(/_/g, " ")}</span>
+            {headerSeverity && (
+              <span
+                className={cn(
+                  "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] border capitalize",
+                  headerSeverity === "serious"
+                    ? "bg-red-100 text-red-700 border-red-200"
+                    : "bg-slate-100 text-slate-700 border-slate-200",
+                )}
+              >
+                {headerSeverity === "serious" ? "serious" : "non emergent"}
+              </span>
+            )}
             {incident.lic624Required && !incident.lic624Submitted && (
               <Badge className="bg-orange-100 text-orange-700 border-orange-300 text-xs">LIC 624 Required</Badge>
             )}
@@ -343,7 +1131,16 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
       </button>
 
       {expanded && (
-        <div className="border-t p-4 space-y-3 text-sm">
+        <div className="border-t p-4 space-y-4 text-sm">
+          <div className="flex items-center justify-end">
+            <AuditTrailButton
+              entityType="ops_incident"
+              entityId={incident.id}
+              facilityNumber={facilityNumber}
+              labelText="History"
+            />
+          </div>
+
           <div>
             <p className="text-muted-foreground text-xs mb-0.5">Location</p>
             <p>{incident.location}</p>
@@ -395,6 +1192,16 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
           >
             {updateMutation.isPending ? "Saving..." : "Save"}
           </Button>
+
+          {/* ── W4 — Action checklist + SLA + Close / Reopen ── */}
+          <div className="pt-2 mt-2 border-t">
+            <IncidentChecklistPanel
+              incident={incident}
+              facilityNumber={facilityNumber}
+              rootCauseDraft={rootCause}
+              correctiveActionDraft={correctiveAction}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -503,3 +1310,6 @@ export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: s
     </div>
   );
 }
+
+// Re-export the checklist panel and types for the smoke-test fixture.
+export { IncidentChecklistPanel };

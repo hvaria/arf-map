@@ -74,6 +74,10 @@ interface CredentialExpiringLite {
   credentialType: string;
   expiresAt: number | null;
 }
+// W4 — past-SLA shape is minimal; tile reads `.length`.
+interface IncidentPastSlaLite {
+  id: number;
+}
 
 // ── Overview tab ──────────────────────────────────────────────────────────────
 
@@ -166,6 +170,23 @@ function OverviewTab({
     enabled: !!facilityNumber,
     staleTime: 60_000,
   });
+  // W4 Wave 2 — open incidents past their SLA (CCLD verbal / LIC 624 / SOC 341).
+  // Tile is informational v0 — cross-sub-view nav still deferred to Wave 4.
+  const incidentsPastSlaQ = useQuery<{ success: boolean; data: IncidentPastSlaLite[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/incidents/past-sla?limit=50`],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/ops/facilities/${facilityNumber}/incidents/past-sla?limit=50`,
+        { credentials: "include" },
+      );
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
+  });
+
   // W3 Wave 2 — credentials expiring within 60 days (warning + expired).
   // includeExpired=true so the tile reflects any past-due credential too.
   const credentialsQ = useQuery<{ success: boolean; data: CredentialExpiringLite[] } | null>({
@@ -203,6 +224,12 @@ function OverviewTab({
     return q.year === currentQ.year && q.quarter === currentQ.quarter;
   }).length;
 
+  // W4 — incidents past SLA tile tone: emerald=0, amber=1+, red=3+.
+  const pastSlaRows = incidentsPastSlaQ.data?.data ?? [];
+  const pastSlaCount = pastSlaRows.length;
+  const pastSlaTone: "emerald" | "amber" | "red" =
+    pastSlaCount === 0 ? "emerald" : pastSlaCount >= 3 ? "red" : "amber";
+
   // Credentials tile: red if any are already expired, amber if any are
   // expiring within 60d, emerald otherwise.
   const credRows = credentialsQ.data?.data ?? [];
@@ -226,7 +253,7 @@ function OverviewTab({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="audit-overview-tiles">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" data-testid="audit-overview-tiles">
         <button
           onClick={() => onSwitchTab("complaints")}
           className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
@@ -292,6 +319,22 @@ function OverviewTab({
             tone={credentialsTone}
             loading={credentialsQ.isLoading}
             hint={credentialsExpired > 0 ? `${credentialsExpired} already expired` : undefined}
+          />
+        </div>
+        {/*
+          W4 — Open incidents past SLA. Informational-only for v0; same
+          rationale as the Credentials tile. Wave 4 will route to Operations →
+          Incidents filtered by past-SLA via OperationsTab's setActiveTab.
+        */}
+        <div
+          aria-label="Open incidents past SLA (informational)"
+          data-testid="audit-overview-incidents-past-sla-tile"
+        >
+          <Tile
+            label="Open incidents past SLA"
+            value={pastSlaCount}
+            tone={pastSlaTone}
+            loading={incidentsPastSlaQ.isLoading}
           />
         </div>
       </div>

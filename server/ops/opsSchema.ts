@@ -670,6 +670,29 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_staff_cred_staff    ON ops_staff_credentials(staff_id, credential_type);
   CREATE INDEX IF NOT EXISTS idx_ops_staff_cred_expiry   ON ops_staff_credentials(expires_at);
   CREATE INDEX IF NOT EXISTS idx_ops_staff_cred_active   ON ops_staff_credentials(deleted_at) WHERE deleted_at IS NULL;
+
+  -- ── Wave 2: W4 Incident Lifecycle Closer (BA §5 W4, §6 state machine)
+  --    Additive only — every ADD COLUMN is IF NOT EXISTS, nullable (or
+  --    INTEGER DEFAULT 0 for booleans), so existing rows keep working.
+  --    Postgres 12+ materializes these as metadata-only operations.
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS ccld_verbal_notified           INTEGER DEFAULT 0;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS ccld_verbal_notified_at        BIGINT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS ccld_verbal_notified_by        TEXT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS soc_341_submitted_at           BIGINT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS closure_note                   TEXT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS closed_at                      BIGINT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS closed_by                      TEXT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS reopened_at                    BIGINT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS reopened_by                    TEXT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS reopen_reason                  TEXT;
+  ALTER TABLE ops_incidents ADD COLUMN IF NOT EXISTS event_severity                 TEXT;
+  -- event_severity: 'serious' | 'non_emergent' | NULL. Drives which reg
+  -- setting (INCIDENT_VERBAL_SERIOUS_HOURS vs INCIDENT_VERBAL_NON_EMERGENT_HOURS)
+  -- the SLA evaluator applies. Any other value treated as non_emergent.
+  -- Categorization rule (incident_type → severity) lives in
+  -- shared/incident-types.ts and is applied by the backend at write time.
+
+  CREATE INDEX IF NOT EXISTS idx_ops_inc_status_severity ON ops_incidents(status, event_severity);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -905,11 +928,24 @@ export const opsIncidents = pgTable("ops_incidents", {
   lic624SubmittedAt:      ts("lic_624_submitted_at"),
   soc341Required:         integer("soc_341_required").default(0),
   soc341Submitted:        integer("soc_341_submitted").default(0),
+  // ── Wave 2 W4 additions (BA §5 W4, §6 state machine) ──
+  soc341SubmittedAt:      ts("soc_341_submitted_at"),
+  ccldVerbalNotified:     integer("ccld_verbal_notified").default(0),
+  ccldVerbalNotifiedAt:   ts("ccld_verbal_notified_at"),
+  ccldVerbalNotifiedBy:   text("ccld_verbal_notified_by"),
+  eventSeverity:          text("event_severity"),
   rootCause:              text("root_cause"),
   correctiveAction:       text("corrective_action"),
   followUpDate:           ts("follow_up_date"),
   followUpCompleted:      integer("follow_up_completed").default(0),
   status:                 text("status").notNull().default("open"),
+  // ── Wave 2 W4 closure / reopen audit (BA §6) ──
+  closureNote:            text("closure_note"),
+  closedAt:               ts("closed_at"),
+  closedBy:               text("closed_by"),
+  reopenedAt:             ts("reopened_at"),
+  reopenedBy:             text("reopened_by"),
+  reopenReason:           text("reopen_reason"),
   createdAt:              ts("created_at").notNull(),
   updatedAt:              ts("updated_at").notNull(),
 });
