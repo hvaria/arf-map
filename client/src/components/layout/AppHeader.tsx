@@ -4,7 +4,7 @@
 //   panels        = 40
 //   dialogs/sheets = 50
 import { type ReactNode } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -47,6 +47,11 @@ export function AppHeader({
 }: AppHeaderProps) {
   const auth = useAppHeaderAuth();
   const logoHome = logoHomeOverride ?? auth.homePath;
+  // Hide the "Find jobs" link when the seeker is already on the find-
+  // jobs surface — pointing a user at a link to the page they're on
+  // is just noise. Covers both the new /jobs alias and the legacy /map.
+  const [pathname] = useLocation();
+  const isOnJobsSurface = pathname === "/jobs" || pathname === "/map";
 
   return (
     <header
@@ -88,8 +93,10 @@ export function AppHeader({
                 FacilityPortal tab strip. Hidden on mobile (the link is
                 still reachable from the dashboard's Find jobs CTA + the
                 mobile sheet's brand logo Home target) so the header
-                stays compact on narrow viewports. */}
-            {auth.role === "jobseeker" && (
+                stays compact on narrow viewports. Also hidden when the
+                seeker is already on /jobs or /map — pointing at the
+                page you're on is noise. */}
+            {auth.role === "jobseeker" && !isOnJobsSurface && (
               <Button
                 asChild
                 variant="ghost"
