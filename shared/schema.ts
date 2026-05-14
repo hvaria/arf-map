@@ -159,6 +159,30 @@ export const applicantInterests = pgTable("applicant_interests", {
   updatedAt: ts("updated_at").notNull(),
 });
 
+// One row per credential (license/certification/clearance) held by a job
+// seeker. 1:many on job_seeker_accounts.id (no FK constraint — follows the
+// existing repo convention; cf. job_seeker_profiles.account_id).
+//
+// `kind` is constrained at the application layer via `credentialKindSchema`
+// (zod enum) rather than a Postgres CHECK constraint so the enum can evolve
+// without a migration. `label` is only required when kind = "OTHER" and that
+// is enforced in zod (superRefine), not SQL. `issued_at` / `expires_at` are
+// ISO date strings (YYYY-MM-DD) stored as TEXT to sidestep timezone drift on
+// expiry-tone calculations (a date with no time-of-day is not a moment in UTC).
+export const jobSeekerCredentials = pgTable("job_seeker_credentials", {
+  id: serial("id").primaryKey(),
+  accountId: integer("account_id").notNull(),
+  kind: text("kind").notNull(),
+  label: text("label"),
+  licenseNumber: text("license_number"),
+  issuingAuthority: text("issuing_authority"),
+  issuedAt: text("issued_at"),
+  expiresAt: text("expires_at"),
+  notes: text("notes"),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+});
+
 // ============ DRIZZLE TYPES ============
 
 export type User = typeof users.$inferSelect;
@@ -177,6 +201,63 @@ export type ApplicantInterest = typeof applicantInterests.$inferSelect;
 export type InsertApplicantInterest = typeof applicantInterests.$inferInsert;
 export const interestStatusSchema = z.enum(["pending", "viewed", "shortlisted"]);
 export type InterestStatus = z.infer<typeof interestStatusSchema>;
+
+// ── Job seeker credentials ───────────────────────────────────────────────────
+// Drizzle types + zod input schema for the job_seeker_credentials table.
+// Server-managed columns (id, accountId, createdAt, updatedAt) are NOT part of
+// the input schema — the caller supplies only editable fields.
+export type JobSeekerCredential = typeof jobSeekerCredentials.$inferSelect;
+export type InsertJobSeekerCredential = typeof jobSeekerCredentials.$inferInsert;
+
+export const credentialKindSchema = z.enum([
+  "CNA",
+  "LVN",
+  "RN",
+  "RCFE_ADMIN",
+  "ARF_ADMIN",
+  "DSP_YEAR_1",
+  "DSP_YEAR_2",
+  "MED_TECH",
+  "MANDATED_REPORTER",
+  "RCFE_40_HOUR",
+  "LIVE_SCAN",
+  "TB",
+  "CPR",
+  "FIRST_AID",
+  "OTHER",
+]);
+export type CredentialKind = z.infer<typeof credentialKindSchema>;
+
+// ISO date in YYYY-MM-DD form. We deliberately keep this as a string (rather
+// than z.coerce.date()) so the value round-trips losslessly to the TEXT column
+// and the client can render expiry tones from the raw string without
+// reintroducing timezone drift.
+const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "must be ISO date YYYY-MM-DD");
+
+export const credentialInputSchema = z
+  .object({
+    kind: credentialKindSchema,
+    label: z.string().trim().min(1).max(120).optional(),
+    licenseNumber: z.string().trim().max(64).optional(),
+    issuingAuthority: z.string().trim().max(120).optional(),
+    issuedAt: isoDateSchema.optional(),
+    expiresAt: isoDateSchema.optional(),
+    notes: z.string().max(500).optional(),
+  })
+  .superRefine((val, ctx) => {
+    // `label` is free-form and required only when kind = "OTHER" — otherwise
+    // the canonical kind string is the display name.
+    if (val.kind === "OTHER" && (!val.label || val.label.trim() === "")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["label"],
+        message: 'label is required when kind = "OTHER"',
+      });
+    }
+  });
+export type CredentialInput = z.infer<typeof credentialInputSchema>;
 
 // ── Operations paywall subscription types (Phase 0) ──────────────────────────
 export type FacilitySubscription = typeof facilitySubscriptions.$inferSelect;

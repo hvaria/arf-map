@@ -11,6 +11,7 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { adminEtlRouter } from "./routes/adminEtl";
 import { interestsRouter } from "./routes/interests"; // NEW: expression-of-interest
+import { credentialsRouter } from "./routes/credentials";
 import { billingRouter } from "./routes/billing";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 import {
@@ -124,6 +125,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.use("/api/jobseeker", jobseekerAuthRouter);
   app.use("/api/admin/etl", adminEtlRouter);
   app.use("/api", interestsRouter); // NEW: expression-of-interest
+  app.use("/api", credentialsRouter);
   app.use("/api/billing", billingRouter);
 
   app.get("/api/health", (_req, res) => {

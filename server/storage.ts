@@ -8,6 +8,7 @@ import {
   jobSeekerAccounts,
   jobSeekerProfiles,
   applicantInterests,
+  jobSeekerCredentials,
   type FacilityAccount,
   type InsertFacilityAccount,
   type FacilityOverride,
@@ -16,8 +17,10 @@ import {
   type InsertJobSeekerAccount,
   type JobSeekerProfile,
   type ApplicantInterest,
+  type JobSeekerCredential,
+  type CredentialInput,
 } from "@shared/schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, desc } from "drizzle-orm";
 import { db, pool } from "./db/index";
 
 export type { FacilityDbRow } from "@shared/etl-types";
@@ -84,6 +87,11 @@ export interface IStorage {
   ): Promise<ApplicantInterest>;
   deleteApplicantInterest(id: number, jobSeekerId: number): Promise<boolean>;
   updateApplicantInterestStatus(id: number, facilityNumber: string, status: string): Promise<ApplicantInterest | undefined>;
+
+  listJobSeekerCredentials(accountId: number): Promise<JobSeekerCredential[]>;
+  createJobSeekerCredential(accountId: number, input: CredentialInput): Promise<JobSeekerCredential>;
+  updateJobSeekerCredential(id: number, accountId: number, input: CredentialInput): Promise<JobSeekerCredential | undefined>;
+  deleteJobSeekerCredential(id: number, accountId: number): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -340,6 +348,74 @@ export class DatabaseStorage implements IStorage {
       .where(eq(applicantInterests.id, id))
       .returning();
     return rows[0] as ApplicantInterest | undefined;
+  }
+
+  async listJobSeekerCredentials(accountId: number): Promise<JobSeekerCredential[]> {
+    return db
+      .select()
+      .from(jobSeekerCredentials)
+      .where(eq(jobSeekerCredentials.accountId, accountId))
+      .orderBy(desc(jobSeekerCredentials.createdAt));
+  }
+
+  async createJobSeekerCredential(
+    accountId: number,
+    input: CredentialInput
+  ): Promise<JobSeekerCredential> {
+    const now = Date.now();
+    const rows = await db
+      .insert(jobSeekerCredentials)
+      .values({
+        accountId,
+        kind: input.kind,
+        label: input.label,
+        licenseNumber: input.licenseNumber,
+        issuingAuthority: input.issuingAuthority,
+        issuedAt: input.issuedAt,
+        expiresAt: input.expiresAt,
+        notes: input.notes,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    return rows[0] as JobSeekerCredential;
+  }
+
+  async updateJobSeekerCredential(
+    id: number,
+    accountId: number,
+    input: CredentialInput
+  ): Promise<JobSeekerCredential | undefined> {
+    const existingRows = await db
+      .select()
+      .from(jobSeekerCredentials)
+      .where(and(eq(jobSeekerCredentials.id, id), eq(jobSeekerCredentials.accountId, accountId)));
+    if (!existingRows[0]) return undefined;
+    const rows = await db
+      .update(jobSeekerCredentials)
+      .set({
+        kind: input.kind,
+        label: input.label,
+        licenseNumber: input.licenseNumber,
+        issuingAuthority: input.issuingAuthority,
+        issuedAt: input.issuedAt,
+        expiresAt: input.expiresAt,
+        notes: input.notes,
+        updatedAt: Date.now(),
+      })
+      .where(eq(jobSeekerCredentials.id, id))
+      .returning();
+    return rows[0] as JobSeekerCredential | undefined;
+  }
+
+  async deleteJobSeekerCredential(id: number, accountId: number): Promise<boolean> {
+    const existingRows = await db
+      .select()
+      .from(jobSeekerCredentials)
+      .where(and(eq(jobSeekerCredentials.id, id), eq(jobSeekerCredentials.accountId, accountId)));
+    if (!existingRows[0]) return false;
+    await db.delete(jobSeekerCredentials).where(eq(jobSeekerCredentials.id, id));
+    return true;
   }
 }
 

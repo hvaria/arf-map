@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { getQueryFn } from "@/lib/queryClient";
 import { MyInterestsTab, type SeekerInterest } from "@/components/MyInterestsTab"; // NEW: expression-of-interest
 import { BrandLogo } from "@/components/BrandLogo";
+import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
 
 /**
  * DashboardPage — protected route for authenticated job seekers.
@@ -26,6 +27,11 @@ export default function DashboardPage() {
     enabled: !!user,
     staleTime: 30000,
   });
+
+  // Credentials chip strip — same shared cache the ProfileEditor
+  // section writes to, so additions show up here without a refetch.
+  const { data: credentials } = useCredentials({ enabled: !!user });
+  const credentialList = credentials ?? [];
 
   // Guard: redirect unauthenticated visitors to the login page.
   useEffect(() => {
@@ -117,6 +123,30 @@ export default function DashboardPage() {
               </p>
             </div>
           ))}
+        </div>
+
+        {/* Credentials — chip strip of saved credentials/clearances.
+            Sourced from the same React Query cache the ProfileEditor
+            CredentialsSection writes to; empty state nudges the user
+            to the profile page rather than embedding the editor here. */}
+        <div className="pt-4">
+          <h2 className="text-sm font-semibold mb-2" style={{ color: "#1E1B4B" }}>
+            Credentials
+          </h2>
+          {credentialList.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {credentialList.map((c) => (
+                <CredentialBadge key={c.id} credential={c} />
+              ))}
+            </div>
+          ) : (
+            <a
+              href="#/job-seeker"
+              className="inline-flex items-center text-xs font-medium text-indigo-700 hover:underline"
+            >
+              Add credentials to your profile →
+            </a>
+          )}
         </div>
 
         {/* My Applications list */}

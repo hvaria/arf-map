@@ -21,6 +21,8 @@ import { useToast } from "@/hooks/use-toast";
 import type { Facility } from "@shared/schema";
 import { getPendingAction, clearPendingAction } from "@/lib/pendingAction"; // NEW: expression-of-interest
 import { MyInterestsTab } from "@/components/MyInterestsTab";
+import { CredentialsSection } from "@/components/CredentialsSection";
+import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
 
 // All job types relevant to Adult Residential Facilities
 const JOB_TYPE_OPTIONS = [
@@ -834,6 +836,11 @@ function ProfileEditor({
         />
       </div>
 
+      {/* Credentials — managed via /api/jobseeker/credentials. Lives
+          inside the editor (not the read-only card) so the seeker
+          edits everything in one place. */}
+      <CredentialsSection />
+
       {/* Job types */}
       <div>
         <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">
@@ -887,6 +894,12 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
     queryKey: ["/api/jobseeker/profile"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  // Credentials chip strip — shared cache with the editor section
+  // and ExpressInterestButton preview. Hidden when zero credentials
+  // so the read-only card stays compact for new users.
+  const { data: credentials } = useCredentials({ enabled: !!account });
+  const credentialList = credentials ?? [];
 
   // Auto-open the profile editor for first-time users who have no saved profile.
   // Once opened (or once a profile exists), never auto-open again this session.
@@ -986,6 +999,17 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
                   <div className="flex flex-wrap gap-1.5">
                     {profile.jobTypes.map((t) => (
                       <Badge key={t} variant="outline" className="text-xs">{t}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {credentialList.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs text-muted-foreground mb-1.5">Credentials:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {credentialList.map((c) => (
+                      <CredentialBadge key={c.id} credential={c} />
                     ))}
                   </div>
                 </div>

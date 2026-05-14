@@ -21,6 +21,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { setPendingAction } from "@/lib/pendingAction";
+import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
 
 const ROLE_OPTIONS = [
   "General Interest",
@@ -336,6 +337,11 @@ function ProfilePreview({
   profile: JobSeekerProfileLite | null;
   email: string;
 }) {
+  // Credentials preview — only fetched once the dialog has opened
+  // (parent gates `profile` on `dialogOpen`), so the dropdown payload
+  // is not paid for on the FacilityPanel mount path.
+  const { data: credentials } = useCredentials({ enabled: !!profile });
+  const credentialList = credentials ?? [];
   if (!profile) {
     return (
       <p className="mt-1.5 text-stone-500">
@@ -362,13 +368,22 @@ function ProfilePreview({
     ...(years ? [{ icon: Briefcase, text: years }] : []),
   ];
   return (
-    <ul className="mt-1.5 space-y-0.5 text-stone-700">
-      {items.map((it, i) => (
-        <li key={i} className="flex items-center gap-1.5">
-          <it.icon className="h-3 w-3 text-stone-400 shrink-0" />
-          <span className="truncate">{it.text}</span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="mt-1.5 space-y-0.5 text-stone-700">
+        {items.map((it, i) => (
+          <li key={i} className="flex items-center gap-1.5">
+            <it.icon className="h-3 w-3 text-stone-400 shrink-0" />
+            <span className="truncate">{it.text}</span>
+          </li>
+        ))}
+      </ul>
+      {credentialList.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {credentialList.map((c) => (
+            <CredentialBadge key={c.id} credential={c} />
+          ))}
+        </div>
+      )}
+    </>
   );
 }

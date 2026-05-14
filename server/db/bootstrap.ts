@@ -138,6 +138,34 @@ const MAIN_PG_SCHEMA_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS uniq_interests_seeker_fac_general
     ON applicant_interests(job_seeker_id, facility_number) WHERE job_id IS NULL;
 
+  -- ── Job seeker credentials ────────────────────────────────────────────────
+  -- One row per credential held by a seeker (1:many on job_seeker_accounts.id).
+  -- The kind column is constrained at the app layer via credentialKindSchema;
+  -- no CHECK constraint here so the enum can evolve without a migration.
+  -- issued_at / expires_at are ISO YYYY-MM-DD text values (not bigint) to
+  -- avoid timezone drift when rendering expiry tones.
+  CREATE TABLE IF NOT EXISTS job_seeker_credentials (
+    id                  SERIAL PRIMARY KEY,
+    account_id          INTEGER NOT NULL,
+    kind                TEXT NOT NULL,
+    label               TEXT,
+    license_number      TEXT,
+    issuing_authority   TEXT,
+    issued_at           TEXT,
+    expires_at          TEXT,
+    notes               TEXT,
+    created_at          BIGINT NOT NULL,
+    updated_at          BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_credentials_account
+    ON job_seeker_credentials(account_id);
+  -- Prevent accidental duplicate license numbers per seeker, but still allow
+  -- multiple rows for kinds that have no number (e.g. several CPR renewals
+  -- with NULL license_number, or multiple "OTHER" entries).
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_credentials_account_kind_license
+    ON job_seeker_credentials(account_id, kind, license_number)
+    WHERE license_number IS NOT NULL;
+
   CREATE TABLE IF NOT EXISTS enrichment_runs (
     id               SERIAL PRIMARY KEY,
     started_at       BIGINT NOT NULL,
