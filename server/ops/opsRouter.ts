@@ -42,6 +42,13 @@ import {
   softDeleteEvidence,
 } from "./evidenceStorage";
 import { listAuditForFacility } from "./auditStorage";
+import * as obligations from "./obligationsStorage";
+import {
+  OBLIGATION_STATUSES,
+  OBLIGATION_SEVERITIES,
+  OBLIGATION_TARGETS,
+  OBLIGATION_TYPES,
+} from "@shared/obligations";
 import {
   getChartCompletenessForResident,
   listChartCompleteness,
@@ -2085,19 +2092,53 @@ opsRouter.put("/shifts/:id", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy /compliance shim (Wave 2 finale)
+//
+// The historic endpoints read/wrote `ops_compliance_calendar`. Phase 3
+// (03-product-ia-and-flows §8.1) requires a backward-compatible API
+// contract while the data migrates to `ops_obligations`.
+//
+// Shim contract:
+//   - GET  /compliance              — backfills any unbackfilled legacy
+//                                     rows for this facility, then reads
+//                                     from `ops_obligations` projected
+//                                     down to the legacy shape.
+//   - POST /compliance              — writes a NEW row to
+//                                     `ops_obligations` (target_type=
+//                                     'facility', severity='medium').
+//                                     Legacy table is read-only.
+//   - PUT  /compliance/:id          — closes an obligation, with a
+//                                     fallback lookup by legacy
+//                                     source_entity_id for any row that
+//                                     hadn't been backfilled yet.
+//   - GET  /compliance/overdue      — projected from obligations.
+//
+// Response shapes + zod schemas unchanged so `ComplianceContent.tsx`
+// keeps working without a frontend release.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // GET /facilities/:facilityNumber/compliance
 opsRouter.get("/facilities/:facilityNumber/compliance", async (req, res) => {
   try {
     const { facilityNumber } = req.params;
     const status = req.query.status ? String(req.query.status) : undefined;
-    const items = await ops.listComplianceItems(facilityNumber, status);
+    // Best-effort backfill so any legacy row written by an older client
+    // is visible through the obligation table. Wrapped in try/catch so a
+    // backfill failure doesn't break the read.
+    try {
+      await obligations.backfillLegacyComplianceItems(facilityNumber, getActor(req));
+    } catch (err) {
+      console.error("[ops] legacy compliance backfill failed", err);
+    }
+    const items = await obligations.listObligationsAsLegacyCompliance(facilityNumber, status);
     res.json({ success: true, data: items });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
 });
 
-// POST /compliance
+// POST /compliance — writes to ops_obligations
 opsRouter.post("/compliance", async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
@@ -2105,18 +2146,25 @@ opsRouter.post("/compliance", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const item = await ops.createComplianceItem({
-      ...parsed.data,
-      facilityNumber,
-      createdAt: Date.now(),
-    });
+    const item = await obligations.createObligationFromLegacyShape(
+      {
+        facilityNumber,
+        itemType: parsed.data.itemType,
+        description: parsed.data.description,
+        dueDate: parsed.data.dueDate,
+        assignedTo: parsed.data.assignedTo,
+        status: parsed.data.status,
+        reminderDaysBefore: parsed.data.reminderDaysBefore,
+      },
+      getActor(req),
+    );
     res.status(201).json({ success: true, data: item });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
   }
 });
 
-// PUT /compliance/:id
+// PUT /compliance/:id — completes the matching obligation
 opsRouter.put("/compliance/:id", async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
@@ -2126,7 +2174,12 @@ opsRouter.put("/compliance/:id", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const ok = await ops.completeComplianceItem(id, facilityNumber, parsed.data.completedDate);
+    const ok = await obligations.completeObligationFromLegacyShape(
+      id,
+      facilityNumber,
+      parsed.data.completedDate,
+      getActor(req),
+    );
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
@@ -2138,7 +2191,12 @@ opsRouter.put("/compliance/:id", async (req, res) => {
 opsRouter.get("/facilities/:facilityNumber/compliance/overdue", async (req, res) => {
   try {
     const { facilityNumber } = req.params;
-    const items = await ops.getOverdueCompliance(facilityNumber);
+    try {
+      await obligations.backfillLegacyComplianceItems(facilityNumber, getActor(req));
+    } catch (err) {
+      console.error("[ops] legacy compliance backfill failed", err);
+    }
+    const items = await obligations.listOverdueObligationsAsLegacy(facilityNumber);
     res.json({ success: true, data: items });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -4311,6 +4369,357 @@ opsRouter.get(
       return res.json({ success: true, data });
     } catch (e) {
       console.error("[ops] incidents past-sla failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 2 finale — Obligation engine (BA §4.3, §6, §9 G3)
+//
+// Routes are permission-gated against OPS_RESOURCES.OBLIGATION. The state
+// machine is enforced inside obligationsStorage.transitionObligation —
+// illegal transitions throw `Cannot transition from <from> to <to>` and
+// surface here as 400 via isDomainError.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const obligationCreateSchema = z.object({
+  obligationType: z.enum(OBLIGATION_TYPES),
+  targetType: z.enum(OBLIGATION_TARGETS).optional(),
+  targetId: z.number().int().positive().nullable().optional(),
+  title: z.string().min(1, "Title is required").max(200),
+  description: z.string().max(4000).optional(),
+  dueAt: z.number().int({ message: "dueAt required" }),
+  assignedTo: z.string().max(200).optional(),
+  severity: z.enum(OBLIGATION_SEVERITIES).optional(),
+  status: z.enum(OBLIGATION_STATUSES).optional(),
+  evidenceRequired: z.number().int().min(0).max(1).optional(),
+  // Constrained at zod-level so the recurrence rule grammar is enforced
+  // up front. Storage just trusts the validated string.
+  recurrenceRule: z
+    .union([
+      z.literal("annual"),
+      z.literal("quarterly"),
+      z.literal("monthly"),
+      z.string().regex(/^every_n_days:\d+$/),
+    ])
+    .nullable()
+    .optional(),
+  reminderDaysBefore: z.number().int().nonnegative().max(365).optional(),
+  sourceEntityType: z.string().max(64).nullable().optional(),
+  sourceEntityId: z.number().int().nullable().optional(),
+  notes: z.string().max(8000).optional(),
+}).strict();
+
+const obligationUpdateSchema = z.object({
+  obligationType: z.enum(OBLIGATION_TYPES).optional(),
+  targetType: z.enum(OBLIGATION_TARGETS).optional(),
+  targetId: z.number().int().nullable().optional(),
+  title: z.string().min(1).max(200).optional(),
+  description: z.string().max(4000).nullable().optional(),
+  dueAt: z.number().int().optional(),
+  assignedTo: z.string().max(200).nullable().optional(),
+  severity: z.enum(OBLIGATION_SEVERITIES).optional(),
+  evidenceRequired: z.number().int().min(0).max(1).optional(),
+  recurrenceRule: z
+    .union([
+      z.literal("annual"),
+      z.literal("quarterly"),
+      z.literal("monthly"),
+      z.string().regex(/^every_n_days:\d+$/),
+    ])
+    .nullable()
+    .optional(),
+  reminderDaysBefore: z.number().int().nonnegative().max(365).optional(),
+  notes: z.string().max(8000).nullable().optional(),
+}).strict();
+
+const obligationTransitionSchema = z.object({
+  status: z.enum(OBLIGATION_STATUSES),
+  note: z.string().max(2000).optional(),
+  completedBy: z.string().max(200).optional(),
+}).strict();
+
+const obligationCompleteSchema = z.object({
+  by: z.string().min(1, "by is required").max(200),
+  note: z.string().max(2000).optional(),
+}).strict();
+
+const obligationListQuerySchema = z.object({
+  status: z.enum(OBLIGATION_STATUSES).optional(),
+  obligationType: z.enum(OBLIGATION_TYPES).optional(),
+  targetType: z.enum(OBLIGATION_TARGETS).optional(),
+  targetId: z.coerce.number().int().positive().optional(),
+  severity: z.enum(OBLIGATION_SEVERITIES).optional(),
+  assignedTo: z.string().max(200).optional(),
+  dueWithinDays: z.coerce.number().int().nonnegative().max(3650).optional(),
+  overdueOnly: queryStringBool.optional(),
+  sourceEntityType: z.string().max(64).optional(),
+  sourceEntityId: z.coerce.number().int().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  includeDeleted: queryStringBool.optional(),
+}).strict();
+
+// GET /facilities/:facilityNumber/obligations
+opsRouter.get(
+  "/facilities/:facilityNumber/obligations",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = obligationListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await obligations.listObligations(facilityNumber, {
+        status: parsed.data.status,
+        obligationType: parsed.data.obligationType,
+        targetType: parsed.data.targetType,
+        targetId: parsed.data.targetId,
+        severity: parsed.data.severity,
+        assignedTo: parsed.data.assignedTo,
+        dueWithinDays: parsed.data.dueWithinDays,
+        overdueOnly: parsed.data.overdueOnly,
+        sourceEntityType: parsed.data.sourceEntityType,
+        sourceEntityId: parsed.data.sourceEntityId,
+        page: parsed.data.page ?? page,
+        limit: parsed.data.limit ?? limit,
+        includeDeleted: parsed.data.includeDeleted,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: {
+          total: result.total,
+          page: parsed.data.page ?? page,
+          limit: parsed.data.limit ?? limit,
+        },
+      });
+    } catch (e) {
+      console.error("[ops] obligation list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /obligations/:id
+opsRouter.get(
+  "/obligations/:id",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const row = await obligations.getObligation(id, facilityNumber);
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] obligation get failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /obligations
+opsRouter.post(
+  "/obligations",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = obligationCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const now = Date.now();
+      const row = await obligations.createObligation(
+        {
+          facilityNumber,
+          obligationType: parsed.data.obligationType,
+          targetType: parsed.data.targetType ?? "facility",
+          targetId: parsed.data.targetId ?? null,
+          title: parsed.data.title,
+          description: parsed.data.description ?? null,
+          dueAt: parsed.data.dueAt,
+          completedAt: null,
+          completedBy: null,
+          assignedTo: parsed.data.assignedTo ?? null,
+          severity: parsed.data.severity ?? "medium",
+          status: parsed.data.status ?? "pending",
+          evidenceRequired: parsed.data.evidenceRequired ?? 0,
+          recurrenceRule: parsed.data.recurrenceRule ?? null,
+          reminderDaysBefore: parsed.data.reminderDaysBefore ?? 30,
+          sourceEntityType: parsed.data.sourceEntityType ?? null,
+          sourceEntityId: parsed.data.sourceEntityId ?? null,
+          notes: parsed.data.notes ?? null,
+          createdBy: actor.id,
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] obligation create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// PUT /obligations/:id
+opsRouter.put(
+  "/obligations/:id",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = obligationUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await obligations.updateObligation(
+        id,
+        facilityNumber,
+        parsed.data,
+        getActor(req),
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] obligation update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /obligations/:id/transition
+opsRouter.post(
+  "/obligations/:id/transition",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = obligationTransitionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await obligations.transitionObligation(
+        id,
+        facilityNumber,
+        parsed.data.status,
+        getActor(req),
+        { note: parsed.data.note, completedBy: parsed.data.completedBy },
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] obligation transition failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /obligations/:id/complete
+opsRouter.post(
+  "/obligations/:id/complete",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = obligationCompleteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const result = await obligations.completeObligation(
+        id,
+        facilityNumber,
+        parsed.data.by,
+        getActor(req),
+        parsed.data.note,
+      );
+      if (!result) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: result });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] obligation complete failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// DELETE /obligations/:id — soft delete
+opsRouter.delete(
+  "/obligations/:id",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "delete"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const ok = await obligations.softDeleteObligation(id, facilityNumber, getActor(req));
+      if (!ok) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: { id, deleted: true } });
+    } catch (e) {
+      console.error("[ops] obligation delete failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /facilities/:facilityNumber/obligations/backfill-legacy
+opsRouter.post(
+  "/facilities/:facilityNumber/obligations/backfill-legacy",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const result = await obligations.backfillLegacyComplianceItems(
+        facilityNumber,
+        getActor(req),
+      );
+      return res.json({ success: true, data: result });
+    } catch (e) {
+      console.error("[ops] obligation backfill failed", e);
       return res.status(500).json({ success: false, error: "Internal error" });
     }
   },

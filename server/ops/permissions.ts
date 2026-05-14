@@ -61,6 +61,11 @@ export const OPS_RESOURCES = {
   // permission scaffold; the existing un-gated residents CRUD remains
   // facility-auth-only for now.
   RESIDENT: "ops_resident",
+  // Wave 2 finale — generic obligation engine (BA §4.3, §6, §9 G3).
+  // Supersedes the legacy `ops_compliance_calendar` resource on read +
+  // write paths via a transparent shim in `opsRouter.ts`. Admin gets full
+  // CRUD; auditor is read-only (consistent with W3/W4 patterns).
+  OBLIGATION: "ops_obligation",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -132,6 +137,14 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.RESIDENT,
     actions: ["read"],
   },
+  // Wave 2 finale — obligation engine. Admin can read/create/update/delete
+  // (soft). `delete` gates the soft-delete path; the state machine itself
+  // is enforced inside `obligationsStorage.transitionObligation` so admin
+  // role + correct transition are both required for terminal moves.
+  {
+    resource: OPS_RESOURCES.OBLIGATION,
+    actions: ["read", "create", "update", "delete"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
@@ -148,6 +161,7 @@ const AUDITOR_READ_ONLY: Permission[] = [
   { resource: OPS_RESOURCES.STAFF_CREDENTIAL,    actions: ["read"] },
   { resource: OPS_RESOURCES.INCIDENT,            actions: ["read"] },
   { resource: OPS_RESOURCES.RESIDENT,            actions: ["read"] },
+  { resource: OPS_RESOURCES.OBLIGATION,          actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

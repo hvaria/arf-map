@@ -27,6 +27,12 @@
  *   - New "Audit trail" tab next to Reg Settings (⚙) renders the W15
  *     <AuditTrailViewer> facility-wide filter explorer.
  *
+ * Wave 2 finale (obligation engine):
+ *   - 8th Overview tile "Overdue obligations" — reads
+ *     /api/ops/facilities/:fn/obligations?overdueOnly=true&limit=1 and
+ *     consumes `meta.total` for the count. Tone: emerald=0, amber=1-4,
+ *     red=5+. Informational v0 (cross-sub-view nav deferred to Wave 4).
+ *
  * Reg Settings (⚙) tab stays intact — Wave 0 A11.
  */
 import { useMemo, useState } from "react";
@@ -219,6 +225,30 @@ function OverviewTab({
     staleTime: 60_000,
   });
 
+  // Wave 2 finale — overdue obligations. We only need the count; the
+  // list endpoint exposes `meta.total` independent of `limit`, so we
+  // pass limit=1 to keep payload tiny.
+  const overdueObligationsQ = useQuery<{
+    success: boolean;
+    data: unknown[];
+    meta?: { total: number };
+  } | null>({
+    queryKey: [
+      `/api/ops/facilities/${facilityNumber}/obligations?overdueOnly=true&limit=1`,
+    ],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/ops/facilities/${facilityNumber}/obligations?overdueOnly=true&limit=1`,
+        { credentials: "include" },
+      );
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!facilityNumber,
+    staleTime: 30_000,
+  });
+
   // W3 Wave 2 — credentials expiring within 60 days (warning + expired).
   // includeExpired=true so the tile reflects any past-due credential too.
   const credentialsQ = useQuery<{ success: boolean; data: CredentialExpiringLite[] } | null>({
@@ -267,6 +297,17 @@ function OverviewTab({
   const chartsIncompleteTone: "emerald" | "amber" =
     chartsIncompleteCount === 0 ? "emerald" : "amber";
 
+  // Wave 2 finale — overdue obligations tile tone: emerald=0, amber=1-4,
+  // red=5+. The list endpoint guarantees a `meta.total` even when the
+  // `data` array is capped by `limit`.
+  const overdueObligationsCount = overdueObligationsQ.data?.meta?.total ?? 0;
+  const overdueObligationsTone: "emerald" | "amber" | "red" =
+    overdueObligationsCount === 0
+      ? "emerald"
+      : overdueObligationsCount >= 5
+      ? "red"
+      : "amber";
+
   // Credentials tile: red if any are already expired, amber if any are
   // expiring within 60d, emerald otherwise.
   const credRows = credentialsQ.data?.data ?? [];
@@ -290,7 +331,7 @@ function OverviewTab({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3" data-testid="audit-overview-tiles">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3" data-testid="audit-overview-tiles">
         <button
           onClick={() => onSwitchTab("complaints")}
           className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
@@ -389,6 +430,23 @@ function OverviewTab({
             value={chartsIncompleteCount}
             tone={chartsIncompleteTone}
             loading={chartsIncompleteQ.isLoading}
+          />
+        </div>
+        {/*
+          Wave 2 finale — Overdue obligations. Reads the obligation engine's
+          list endpoint with overdueOnly=true&limit=1 and consumes
+          `meta.total`. Informational-only v0; Wave 4 will route the tile
+          to Operations → Compliance via OperationsTab's setActiveTab.
+        */}
+        <div
+          aria-label="Overdue obligations (informational)"
+          data-testid="audit-overview-overdue-obligations-tile"
+        >
+          <Tile
+            label="Overdue obligations"
+            value={overdueObligationsCount}
+            tone={overdueObligationsTone}
+            loading={overdueObligationsQ.isLoading}
           />
         </div>
       </div>

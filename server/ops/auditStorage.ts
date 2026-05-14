@@ -38,6 +38,17 @@ export type AuditAction =
   | "close"
   | "reopen";
 
+/**
+ * Identity of the caller that produced an auditable mutation. Storage
+ * modules accept this from the route layer (`getActor(req)`) and pass it
+ * to `recordAudit`. Kept as a stable export so feature modules don't each
+ * re-declare a private copy.
+ */
+export interface AuditActor {
+  id: string;
+  role: string;
+}
+
 export interface AuditEvent {
   facilityNumber: string;
   actorId: string;

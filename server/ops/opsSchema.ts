@@ -693,6 +693,42 @@ export const OPS_PG_SCHEMA_SQL = `
   -- shared/incident-types.ts and is applied by the backend at write time.
 
   CREATE INDEX IF NOT EXISTS idx_ops_inc_status_severity ON ops_incidents(status, event_severity);
+
+  -- ── Wave 2 finale: Obligation engine (BA §4.3, §6 state machine, §9 G3)
+  --    Supersedes the legacy degenerate ops_compliance_calendar on
+  --    read/write paths. The legacy table is left UNTOUCHED — backfill
+  --    copies rows with source_entity_type='legacy_compliance'. Recurrence
+  --    rule grammar + state-machine enum live in shared/obligations.ts.
+  CREATE TABLE IF NOT EXISTS ops_obligations (
+    id                   BIGSERIAL PRIMARY KEY,
+    facility_number      TEXT NOT NULL,
+    obligation_type      TEXT NOT NULL,
+    target_type          TEXT NOT NULL DEFAULT 'facility',
+    target_id            BIGINT,
+    title                TEXT NOT NULL,
+    description          TEXT,
+    due_at               BIGINT NOT NULL,
+    completed_at         BIGINT,
+    completed_by         TEXT,
+    assigned_to          TEXT,
+    severity             TEXT NOT NULL DEFAULT 'medium',
+    status               TEXT NOT NULL DEFAULT 'pending',
+    evidence_required    INTEGER DEFAULT 0,
+    recurrence_rule      TEXT,
+    reminder_days_before INTEGER DEFAULT 30,
+    source_entity_type   TEXT,
+    source_entity_id     BIGINT,
+    notes                TEXT,
+    created_by           TEXT NOT NULL,
+    created_at           BIGINT NOT NULL,
+    updated_at           BIGINT NOT NULL,
+    deleted_at           BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_obligations_facility   ON ops_obligations(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_obligations_status_due ON ops_obligations(status, due_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_obligations_target     ON ops_obligations(target_type, target_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_obligations_due_active ON ops_obligations(due_at) WHERE deleted_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_ops_obligations_source     ON ops_obligations(source_entity_type, source_entity_id);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1334,6 +1370,48 @@ export const opsStaffCredentials = pgTable("ops_staff_credentials", {
   deletedAt:      ts("deleted_at"),
 });
 
+// ── Wave 2 finale: Obligation engine ──────────────────────────────────────
+//
+// First-class supersession of the legacy `ops_compliance_calendar`. One
+// row per discrete, due-dated, status-bearing obligation (compliance
+// task, credential renewal, citation remediation, temperature follow-up,
+// vendor COI renewal, complaint follow-up, etc.).  `obligation_type`,
+// `target_type`, `severity`, `status`, and `recurrence_rule` are
+// enum-by-convention — single source of truth lives in
+// `shared/obligations.ts` (imported by both client and server).
+//
+// `source_entity_type` + `source_entity_id` track auto-generated
+// obligations (e.g. a temperature follow-up obligation sourced from
+// `ops_temperature_log`, or a credential renewal obligation sourced
+// from `ops_staff_credential`).  Backfilled rows from the legacy table
+// use `source_entity_type='legacy_compliance'`.
+
+export const opsObligations = pgTable("ops_obligations", {
+  id:                 serial("id").primaryKey(),
+  facilityNumber:     text("facility_number").notNull(),
+  obligationType:     text("obligation_type").notNull(),
+  targetType:         text("target_type").notNull().default("facility"),
+  targetId:           bigint("target_id", { mode: "number" }),
+  title:              text("title").notNull(),
+  description:        text("description"),
+  dueAt:              ts("due_at").notNull(),
+  completedAt:        ts("completed_at"),
+  completedBy:        text("completed_by"),
+  assignedTo:         text("assigned_to"),
+  severity:           text("severity").notNull().default("medium"),
+  status:             text("status").notNull().default("pending"),
+  evidenceRequired:   integer("evidence_required").default(0),
+  recurrenceRule:     text("recurrence_rule"),
+  reminderDaysBefore: integer("reminder_days_before").default(30),
+  sourceEntityType:   text("source_entity_type"),
+  sourceEntityId:     bigint("source_entity_id", { mode: "number" }),
+  notes:              text("notes"),
+  createdBy:          text("created_by").notNull(),
+  createdAt:          ts("created_at").notNull(),
+  updatedAt:          ts("updated_at").notNull(),
+  deletedAt:          ts("deleted_at"),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1427,3 +1505,6 @@ export type InsertOpsInspectionCitation = typeof opsInspectionCitations.$inferIn
 
 export type OpsStaffCredential          = typeof opsStaffCredentials.$inferSelect;
 export type InsertOpsStaffCredential    = typeof opsStaffCredentials.$inferInsert;
+
+export type OpsObligation               = typeof opsObligations.$inferSelect;
+export type InsertOpsObligation         = typeof opsObligations.$inferInsert;
