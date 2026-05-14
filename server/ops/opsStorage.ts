@@ -1,4 +1,4 @@
-import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
+import { eq, and, gte, lte, desc, sql, or } from "drizzle-orm";
 import { db, pool } from "../db/index";
 import { OPS_PG_SCHEMA_SQL } from "./opsSchema";
 import {
@@ -20,6 +20,14 @@ import {
   opsStaff,
   opsShifts,
   opsComplianceCalendar,
+  opsTemperatureFixtures,
+  opsTemperatureLogs,
+  opsDrillLogs,
+  opsVendors,
+  opsComplaints,
+  opsComplaintInvestigationNotes,
+  opsInspections,
+  opsInspectionCitations,
   type OpsResident,
   type InsertOpsResident,
   type OpsResidentAssessment,
@@ -56,7 +64,23 @@ import {
   type InsertOpsShift,
   type OpsComplianceItem,
   type InsertOpsComplianceItem,
+  type OpsTemperatureFixture,
+  type InsertOpsTemperatureFixture,
+  type OpsTemperatureLog,
+  type InsertOpsTemperatureLog,
+  type OpsDrillLog,
+  type InsertOpsDrillLog,
+  type OpsVendor,
+  type InsertOpsVendor,
+  type OpsComplaint,
+  type InsertOpsComplaint,
+  type OpsComplaintInvestigationNote,
+  type OpsInspection,
+  type InsertOpsInspection,
+  type OpsInspectionCitation,
 } from "./opsSchema";
+import { recordAudit } from "./auditStorage";
+import { listEvidence } from "./evidenceStorage";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap — create all ops_ tables in PostgreSQL on startup
@@ -1607,4 +1631,1622 @@ export async function seedFacilityDemoData(facilityNumber: string): Promise<Demo
     medPassesGenerated: generated.rows.length,
     medPassesUpdated: updated,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module 7 — Audit Readiness (Wave 1, Epic B)
+//
+// Pattern reused from Modules 1–6: module-level async functions, shared `db`
+// + `pool` from server/db/index, Drizzle for typed CRUD, raw SQL only where a
+// JOIN buys us a single round-trip (controlled-sub list).
+//
+// Every mutation calls `recordAudit({...})` wrapped in try/catch so an audit
+// emit failure does not roll back the user-visible mutation. The entity_type
+// tag must match the resource string in `permissions.ts` so a Wave-2 audit
+// viewer can filter by resource directly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface AuditActor {
+  id: string;
+  role: string;
+}
+
+async function safeAudit(args: {
+  facilityNumber: string;
+  actor: AuditActor;
+  action: "create" | "update" | "delete" | "resolve" | "close" | "reopen";
+  entityType: string;
+  entityId: number;
+  before?: unknown;
+  after?: unknown;
+}): Promise<void> {
+  try {
+    await recordAudit({
+      facilityNumber: args.facilityNumber,
+      actorId: args.actor.id,
+      actorRole: args.actor.role,
+      action: args.action,
+      entityType: args.entityType,
+      entityId: args.entityId,
+      before: args.before,
+      after: args.after,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[ops] audit emit failed for ${args.entityType}#${args.entityId}`, err);
+  }
+}
+
+// JSON column helpers — write side stringifies, read side parses with a
+// try/catch fallback to [] so a malformed legacy row never crashes a list
+// response.
+function jsonArrayToText(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  return JSON.stringify(Array.isArray(v) ? v : []);
+}
+
+function parseJsonArray<T = unknown>(text: string | null | undefined): T[] {
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// ── W7 Temperature fixtures ──────────────────────────────────────────────────
+
+export async function listTemperatureFixtures(
+  facilityNumber: string,
+  opts: { includeInactive?: boolean } = {},
+): Promise<OpsTemperatureFixture[]> {
+  const cond = opts.includeInactive
+    ? eq(opsTemperatureFixtures.facilityNumber, facilityNumber)
+    : and(
+        eq(opsTemperatureFixtures.facilityNumber, facilityNumber),
+        eq(opsTemperatureFixtures.status, "active"),
+      );
+  return db
+    .select()
+    .from(opsTemperatureFixtures)
+    .where(cond)
+    .orderBy(desc(opsTemperatureFixtures.createdAt));
+}
+
+export async function getTemperatureFixture(
+  id: number,
+  facilityNumber: string,
+): Promise<OpsTemperatureFixture | undefined> {
+  return pgFirst(
+    db
+      .select()
+      .from(opsTemperatureFixtures)
+      .where(
+        and(
+          eq(opsTemperatureFixtures.id, id),
+          eq(opsTemperatureFixtures.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+}
+
+export async function createTemperatureFixture(
+  data: InsertOpsTemperatureFixture,
+  actor: AuditActor,
+): Promise<OpsTemperatureFixture> {
+  const now = Date.now();
+  const rows = await db
+    .insert(opsTemperatureFixtures)
+    .values({ ...data, createdAt: now, updatedAt: now })
+    .returning();
+  const row = rows[0] as OpsTemperatureFixture;
+  await safeAudit({
+    facilityNumber: row.facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_temperature_fixture",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function updateTemperatureFixture(
+  id: number,
+  facilityNumber: string,
+  data: Partial<InsertOpsTemperatureFixture>,
+  actor: AuditActor,
+): Promise<OpsTemperatureFixture | undefined> {
+  const before = await getTemperatureFixture(id, facilityNumber);
+  if (!before) return undefined;
+  const now = Date.now();
+  const rows = await db
+    .update(opsTemperatureFixtures)
+    .set({ ...data, updatedAt: now })
+    .where(
+      and(
+        eq(opsTemperatureFixtures.id, id),
+        eq(opsTemperatureFixtures.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsTemperatureFixture | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_temperature_fixture",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+export async function softInactivateTemperatureFixture(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+): Promise<boolean> {
+  const before = await getTemperatureFixture(id, facilityNumber);
+  if (!before) return false;
+  const now = Date.now();
+  const rows = await db
+    .update(opsTemperatureFixtures)
+    .set({ status: "inactive", updatedAt: now })
+    .where(
+      and(
+        eq(opsTemperatureFixtures.id, id),
+        eq(opsTemperatureFixtures.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning({ id: opsTemperatureFixtures.id });
+  if (rows.length > 0) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "delete",
+      entityType: "ops_temperature_fixture",
+      entityId: id,
+      before,
+      after: { ...before, status: "inactive" },
+    });
+  }
+  return rows.length > 0;
+}
+
+// ── W7 Temperature logs ─────────────────────────────────────────────────────
+
+const TEMP_FOLLOW_UP_MS = 24 * 60 * 60 * 1000;
+
+function isOutOfRange(reading: number, min: number | null, max: number | null): boolean {
+  if (min !== null && reading < min) return true;
+  if (max !== null && reading > max) return true;
+  return false;
+}
+
+export async function listTemperatureLogs(
+  facilityNumber: string,
+  opts: {
+    fixtureKey?: string;
+    sinceMs?: number;
+    outOfRangeOnly?: boolean;
+    page: number;
+    limit: number;
+  },
+): Promise<{ logs: OpsTemperatureLog[]; total: number }> {
+  const conds = [eq(opsTemperatureLogs.facilityNumber, facilityNumber)];
+  if (opts.fixtureKey) {
+    conds.push(eq(opsTemperatureLogs.fixtureKey, opts.fixtureKey));
+  }
+  if (typeof opts.sinceMs === "number") {
+    conds.push(gte(opsTemperatureLogs.readingAt, opts.sinceMs));
+  }
+  if (opts.outOfRangeOnly) {
+    conds.push(eq(opsTemperatureLogs.outOfRange, 1));
+  }
+  const where = and(...conds);
+  const offset = (opts.page - 1) * opts.limit;
+  const [logs, countRows] = await Promise.all([
+    db
+      .select()
+      .from(opsTemperatureLogs)
+      .where(where)
+      .orderBy(desc(opsTemperatureLogs.readingAt), desc(opsTemperatureLogs.id))
+      .limit(opts.limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(opsTemperatureLogs)
+      .where(where),
+  ]);
+  return { logs, total: countRows[0]?.count ?? 0 };
+}
+
+export async function getTemperatureLog(
+  id: number,
+  facilityNumber: string,
+): Promise<OpsTemperatureLog | undefined> {
+  return pgFirst(
+    db
+      .select()
+      .from(opsTemperatureLogs)
+      .where(
+        and(
+          eq(opsTemperatureLogs.id, id),
+          eq(opsTemperatureLogs.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+}
+
+/**
+ * Create a temperature reading. Implements the §9 out-of-range hook:
+ *  - Reads the fixture, copies requiredMin/Max into the log row as
+ *    threshold_min/max for evidentiary stability (a future threshold
+ *    edit must not retroactively change what was "out of range" when
+ *    this reading was taken).
+ *  - Sets out_of_range=1 + follow_up_due_at = now + 24h on violation.
+ *  - Emits a `create` audit event.
+ *
+ * `recordedBy` is free-text (Phase 5 §6.A.1): kitchen staff log temps
+ * before they have logins. Trimmed and capped by the route's zod schema.
+ */
+export async function createTemperatureLog(
+  input: {
+    facilityNumber: string;
+    fixtureId: number;
+    readingValue: number;
+    readingAt: number;
+    recordedBy: string;
+    note?: string | null;
+  },
+  actor: AuditActor,
+): Promise<OpsTemperatureLog> {
+  const fixture = await getTemperatureFixture(input.fixtureId, input.facilityNumber);
+  if (!fixture) {
+    throw new Error("Fixture not found");
+  }
+  if (fixture.status !== "active") {
+    throw new Error("Fixture is not active");
+  }
+  const oor = isOutOfRange(
+    input.readingValue,
+    fixture.requiredMin ?? null,
+    fixture.requiredMax ?? null,
+  );
+  const now = Date.now();
+  const rows = await db
+    .insert(opsTemperatureLogs)
+    .values({
+      facilityNumber: input.facilityNumber,
+      fixtureId: fixture.id,
+      fixtureKey: fixture.fixtureKey,
+      readingValue: input.readingValue,
+      unit: fixture.unit,
+      thresholdMin: fixture.requiredMin ?? null,
+      thresholdMax: fixture.requiredMax ?? null,
+      outOfRange: oor ? 1 : 0,
+      readingAt: input.readingAt,
+      recordedBy: input.recordedBy,
+      note: input.note ?? null,
+      followUpDueAt: oor ? now + TEMP_FOLLOW_UP_MS : null,
+      createdAt: now,
+    })
+    .returning();
+  const row = rows[0] as OpsTemperatureLog;
+  await safeAudit({
+    facilityNumber: row.facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_temperature_log",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function resolveTemperatureFollowUp(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+  note: string,
+): Promise<OpsTemperatureLog | undefined> {
+  const before = await getTemperatureLog(id, facilityNumber);
+  if (!before) return undefined;
+  if (!before.outOfRange) {
+    throw new Error("Log is not out of range");
+  }
+  if (before.followUpResolvedAt) {
+    throw new Error("Follow-up already resolved");
+  }
+  const now = Date.now();
+  const rows = await db
+    .update(opsTemperatureLogs)
+    .set({
+      followUpResolvedAt: now,
+      followUpResolvedBy: actor.id,
+      followUpResolutionNote: note,
+    })
+    .where(
+      and(
+        eq(opsTemperatureLogs.id, id),
+        eq(opsTemperatureLogs.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsTemperatureLog | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "resolve",
+      entityType: "ops_temperature_log",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+// ── W5 Drill logs ────────────────────────────────────────────────────────────
+
+// Soft-delete approach: we use `status='deleted'` and a list-filter that
+// hides deleted rows by default. This matches `ops_vendors.status='archived'`
+// and avoids adding a deleted_at column to ops_drill_logs. List filters
+// also accept an `includeDeleted` opt for audit/admin recovery views.
+
+function rowToDrillLog(row: OpsDrillLog): OpsDrillLog & {
+  participants: string[];
+  residentsInvolved: string[];
+  correctiveActions: string[];
+} {
+  return {
+    ...row,
+    participants: parseJsonArray<string>(row.participantsJson),
+    residentsInvolved: parseJsonArray<string>(row.residentsInvolvedJson),
+    correctiveActions: parseJsonArray<string>(row.correctiveActionsJson),
+  };
+}
+
+export async function listDrillLogs(
+  facilityNumber: string,
+  opts: {
+    kind?: string;
+    sinceMs?: number;
+    includeDeleted?: boolean;
+    page: number;
+    limit: number;
+  },
+): Promise<{ logs: OpsDrillLog[]; total: number }> {
+  const conds = [eq(opsDrillLogs.facilityNumber, facilityNumber)];
+  if (opts.kind) {
+    conds.push(eq(opsDrillLogs.drillKind, opts.kind));
+  }
+  if (typeof opts.sinceMs === "number") {
+    conds.push(gte(opsDrillLogs.executedAt, opts.sinceMs));
+  }
+  if (!opts.includeDeleted) {
+    // sql.notEq across nullable status — defensive: any non-'deleted' value
+    conds.push(sql`${opsDrillLogs.status} <> 'deleted'`);
+  }
+  const where = and(...conds);
+  const offset = (opts.page - 1) * opts.limit;
+  const [rows, countRows] = await Promise.all([
+    db
+      .select()
+      .from(opsDrillLogs)
+      .where(where)
+      .orderBy(desc(opsDrillLogs.executedAt), desc(opsDrillLogs.id))
+      .limit(opts.limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(opsDrillLogs)
+      .where(where),
+  ]);
+  return { logs: rows as OpsDrillLog[], total: countRows[0]?.count ?? 0 };
+}
+
+export async function getDrillLog(
+  id: number,
+  facilityNumber: string,
+): Promise<OpsDrillLog | undefined> {
+  return pgFirst(
+    db
+      .select()
+      .from(opsDrillLogs)
+      .where(
+        and(
+          eq(opsDrillLogs.id, id),
+          eq(opsDrillLogs.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+}
+
+// Helper exported for FE-side decoding parity tests.
+export function decodeDrillLog(row: OpsDrillLog) {
+  return rowToDrillLog(row);
+}
+
+export async function createDrillLog(
+  input: {
+    facilityNumber: string;
+    drillKind: string;
+    scenario?: string | null;
+    shift?: string | null;
+    executedAt: number;
+    leader?: string | null;
+    participants?: unknown[];
+    residentsInvolved?: unknown[];
+    evacuationSeconds?: number | null;
+    debriefNotes?: string | null;
+    correctiveActions?: unknown[];
+    status?: string;
+    createdBy: string;
+  },
+  actor: AuditActor,
+): Promise<OpsDrillLog> {
+  const now = Date.now();
+  const rows = await db
+    .insert(opsDrillLogs)
+    .values({
+      facilityNumber: input.facilityNumber,
+      drillKind: input.drillKind,
+      scenario: input.scenario ?? null,
+      shift: input.shift ?? null,
+      executedAt: input.executedAt,
+      leader: input.leader ?? null,
+      participantsJson: jsonArrayToText(input.participants),
+      residentsInvolvedJson: jsonArrayToText(input.residentsInvolved),
+      evacuationSeconds: input.evacuationSeconds ?? null,
+      debriefNotes: input.debriefNotes ?? null,
+      correctiveActionsJson: jsonArrayToText(input.correctiveActions),
+      status: input.status ?? "executed",
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+  const row = rows[0] as OpsDrillLog;
+  await safeAudit({
+    facilityNumber: row.facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_drill_log",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function updateDrillLog(
+  id: number,
+  facilityNumber: string,
+  data: Partial<{
+    drillKind: string;
+    scenario: string | null;
+    shift: string | null;
+    executedAt: number;
+    leader: string | null;
+    participants: unknown[];
+    residentsInvolved: unknown[];
+    evacuationSeconds: number | null;
+    debriefNotes: string | null;
+    correctiveActions: unknown[];
+    status: string;
+  }>,
+  actor: AuditActor,
+): Promise<OpsDrillLog | undefined> {
+  const before = await getDrillLog(id, facilityNumber);
+  if (!before) return undefined;
+  if (before.status === "deleted") {
+    throw new Error("Drill log is deleted");
+  }
+  // Storage-layer status transition validation. The only legal transitions
+  // for drills are executed → completed (debrief filed) or executed/completed
+  // → deleted (handled by softDeleteDrillLog). Reject anything else so a
+  // misbehaving route can't put the row into a junk state.
+  if (data.status !== undefined) {
+    const allowed = new Set(["executed", "completed", "deleted"]);
+    if (!allowed.has(data.status)) {
+      throw new Error(`Invalid drill status: ${data.status}`);
+    }
+  }
+  const now = Date.now();
+  const updateSet: Record<string, unknown> = { updatedAt: now };
+  if (data.drillKind !== undefined) updateSet.drillKind = data.drillKind;
+  if (data.scenario !== undefined) updateSet.scenario = data.scenario;
+  if (data.shift !== undefined) updateSet.shift = data.shift;
+  if (data.executedAt !== undefined) updateSet.executedAt = data.executedAt;
+  if (data.leader !== undefined) updateSet.leader = data.leader;
+  if (data.participants !== undefined) updateSet.participantsJson = jsonArrayToText(data.participants);
+  if (data.residentsInvolved !== undefined) updateSet.residentsInvolvedJson = jsonArrayToText(data.residentsInvolved);
+  if (data.evacuationSeconds !== undefined) updateSet.evacuationSeconds = data.evacuationSeconds;
+  if (data.debriefNotes !== undefined) updateSet.debriefNotes = data.debriefNotes;
+  if (data.correctiveActions !== undefined) updateSet.correctiveActionsJson = jsonArrayToText(data.correctiveActions);
+  if (data.status !== undefined) updateSet.status = data.status;
+
+  const rows = await db
+    .update(opsDrillLogs)
+    .set(updateSet)
+    .where(
+      and(
+        eq(opsDrillLogs.id, id),
+        eq(opsDrillLogs.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsDrillLog | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_drill_log",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+export async function softDeleteDrillLog(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+): Promise<boolean> {
+  const before = await getDrillLog(id, facilityNumber);
+  if (!before) return false;
+  if (before.status === "deleted") return false;
+  const now = Date.now();
+  const rows = await db
+    .update(opsDrillLogs)
+    .set({ status: "deleted", updatedAt: now })
+    .where(
+      and(
+        eq(opsDrillLogs.id, id),
+        eq(opsDrillLogs.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning({ id: opsDrillLogs.id });
+  if (rows.length > 0) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "delete",
+      entityType: "ops_drill_log",
+      entityId: id,
+      before,
+      after: { ...before, status: "deleted" },
+    });
+  }
+  return rows.length > 0;
+}
+
+// ── W9 Vendors ───────────────────────────────────────────────────────────────
+
+export async function listVendors(
+  facilityNumber: string,
+  opts: {
+    expiringWithinDays?: number;
+    vendorType?: string;
+    status?: string;
+    page: number;
+    limit: number;
+  },
+): Promise<{ vendors: OpsVendor[]; total: number }> {
+  const conds = [eq(opsVendors.facilityNumber, facilityNumber)];
+  if (opts.vendorType) conds.push(eq(opsVendors.vendorType, opts.vendorType));
+  if (opts.status) {
+    conds.push(eq(opsVendors.status, opts.status));
+  } else {
+    // Default list view hides archived rows; pass status=archived explicitly
+    // to surface them.
+    conds.push(sql`${opsVendors.status} <> 'archived'`);
+  }
+  if (typeof opts.expiringWithinDays === "number" && opts.expiringWithinDays > 0) {
+    const cutoff = Date.now() + opts.expiringWithinDays * 24 * 60 * 60 * 1000;
+    // Filter applies to EITHER coi_expires_at OR license_expires_at falling
+    // on/before the cutoff. Whichever is earliest qualifies the vendor.
+    const expiryCond = or(
+      and(
+        sql`${opsVendors.coiExpiresAt} IS NOT NULL`,
+        lte(opsVendors.coiExpiresAt, cutoff),
+      ),
+      and(
+        sql`${opsVendors.licenseExpiresAt} IS NOT NULL`,
+        lte(opsVendors.licenseExpiresAt, cutoff),
+      ),
+    );
+    if (expiryCond) conds.push(expiryCond);
+  }
+  const where = and(...conds);
+  const offset = (opts.page - 1) * opts.limit;
+  const [vendors, countRows] = await Promise.all([
+    db
+      .select()
+      .from(opsVendors)
+      .where(where)
+      .orderBy(opsVendors.vendorName)
+      .limit(opts.limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(opsVendors)
+      .where(where),
+  ]);
+  return { vendors, total: countRows[0]?.count ?? 0 };
+}
+
+export async function getVendor(
+  id: number,
+  facilityNumber: string,
+): Promise<OpsVendor | undefined> {
+  return pgFirst(
+    db
+      .select()
+      .from(opsVendors)
+      .where(
+        and(eq(opsVendors.id, id), eq(opsVendors.facilityNumber, facilityNumber)),
+      ),
+  );
+}
+
+export async function createVendor(
+  data: InsertOpsVendor,
+  actor: AuditActor,
+): Promise<OpsVendor> {
+  const now = Date.now();
+  const rows = await db
+    .insert(opsVendors)
+    .values({ ...data, createdAt: now, updatedAt: now })
+    .returning();
+  const row = rows[0] as OpsVendor;
+  await safeAudit({
+    facilityNumber: row.facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_vendor",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function updateVendor(
+  id: number,
+  facilityNumber: string,
+  data: Partial<InsertOpsVendor>,
+  actor: AuditActor,
+): Promise<OpsVendor | undefined> {
+  const before = await getVendor(id, facilityNumber);
+  if (!before) return undefined;
+  if (data.status !== undefined) {
+    const allowed = new Set(["active", "archived"]);
+    if (!allowed.has(data.status)) {
+      throw new Error(`Invalid vendor status: ${data.status}`);
+    }
+  }
+  const now = Date.now();
+  const rows = await db
+    .update(opsVendors)
+    .set({ ...data, updatedAt: now })
+    .where(
+      and(eq(opsVendors.id, id), eq(opsVendors.facilityNumber, facilityNumber)),
+    )
+    .returning();
+  const after = rows[0] as OpsVendor | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_vendor",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+export async function archiveVendor(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+): Promise<OpsVendor | undefined> {
+  const before = await getVendor(id, facilityNumber);
+  if (!before) return undefined;
+  if (before.status === "archived") return before;
+  const now = Date.now();
+  const rows = await db
+    .update(opsVendors)
+    .set({ status: "archived", updatedAt: now })
+    .where(
+      and(eq(opsVendors.id, id), eq(opsVendors.facilityNumber, facilityNumber)),
+    )
+    .returning();
+  const after = rows[0] as OpsVendor | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "delete",
+      entityType: "ops_vendor",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+// ── W10 Complaints ───────────────────────────────────────────────────────────
+
+const COMPLAINT_STATUSES = new Set(["open", "investigating", "resolved", "closed"]);
+
+// Status transition map. Resolved + close are terminal except for a single
+// "reopen" from investigating → open (clerical correction). Reverse moves
+// from resolved/closed are blocked at the storage layer so a misbehaving
+// route can't silently corrupt the audit trail.
+const COMPLAINT_TRANSITIONS: Record<string, Set<string>> = {
+  open:          new Set(["investigating", "resolved", "closed"]),
+  investigating: new Set(["open", "resolved", "closed"]),
+  resolved:      new Set(["closed"]),
+  closed:        new Set(),
+};
+
+function assertComplaintTransition(from: string, to: string): void {
+  if (from === to) return;
+  if (!COMPLAINT_STATUSES.has(to)) {
+    throw new Error(`Invalid complaint status: ${to}`);
+  }
+  const allowed = COMPLAINT_TRANSITIONS[from];
+  if (!allowed || !allowed.has(to)) {
+    throw new Error(`Illegal complaint transition: ${from} -> ${to}`);
+  }
+}
+
+export async function listComplaints(
+  facilityNumber: string,
+  opts: { status?: string; page: number; limit: number },
+): Promise<{ complaints: OpsComplaint[]; total: number }> {
+  const conds = [eq(opsComplaints.facilityNumber, facilityNumber)];
+  if (opts.status) conds.push(eq(opsComplaints.status, opts.status));
+  const where = and(...conds);
+  const offset = (opts.page - 1) * opts.limit;
+  const [complaints, countRows] = await Promise.all([
+    db
+      .select()
+      .from(opsComplaints)
+      .where(where)
+      .orderBy(desc(opsComplaints.receivedAt), desc(opsComplaints.id))
+      .limit(opts.limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(opsComplaints)
+      .where(where),
+  ]);
+  return { complaints, total: countRows[0]?.count ?? 0 };
+}
+
+export async function getComplaint(
+  id: number,
+  facilityNumber: string,
+): Promise<
+  | {
+      complaint: OpsComplaint;
+      investigationNotes: OpsComplaintInvestigationNote[];
+      evidence: Awaited<ReturnType<typeof listEvidence>>;
+    }
+  | undefined
+> {
+  const complaint = await pgFirst(
+    db
+      .select()
+      .from(opsComplaints)
+      .where(
+        and(
+          eq(opsComplaints.id, id),
+          eq(opsComplaints.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!complaint) return undefined;
+  const [investigationNotes, evidence] = await Promise.all([
+    db
+      .select()
+      .from(opsComplaintInvestigationNotes)
+      .where(
+        and(
+          eq(opsComplaintInvestigationNotes.complaintId, complaint.id),
+          eq(opsComplaintInvestigationNotes.facilityNumber, facilityNumber),
+        ),
+      )
+      .orderBy(opsComplaintInvestigationNotes.notedAt),
+    listEvidence(facilityNumber, "ops_complaint", complaint.id),
+  ]);
+  return { complaint, investigationNotes, evidence };
+}
+
+export async function createComplaint(
+  data: InsertOpsComplaint,
+  actor: AuditActor,
+): Promise<OpsComplaint> {
+  // Anonymous handling (Phase 5 §6.A.3): blank/null complainant fields are
+  // legal when complainant_type='anonymous'. We do NOT force a placeholder
+  // name on intake — the UI renders an em-dash. For any other type, name
+  // must be non-empty.
+  const type = data.complainantType;
+  if (type !== "anonymous") {
+    if (!data.complainantName || data.complainantName.trim() === "") {
+      throw new Error("complainantName is required for non-anonymous complaints");
+    }
+  }
+  if (!COMPLAINT_STATUSES.has(data.status ?? "open")) {
+    throw new Error(`Invalid complaint status: ${data.status}`);
+  }
+  const now = Date.now();
+  const rows = await db
+    .insert(opsComplaints)
+    .values({
+      ...data,
+      complainantName: data.complainantName?.trim() || null,
+      complainantRelation: data.complainantRelation?.trim() || null,
+      status: data.status ?? "open",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+  const row = rows[0] as OpsComplaint;
+  await safeAudit({
+    facilityNumber: row.facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_complaint",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function updateComplaint(
+  id: number,
+  facilityNumber: string,
+  data: Partial<InsertOpsComplaint>,
+  actor: AuditActor,
+): Promise<OpsComplaint | undefined> {
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsComplaints)
+      .where(
+        and(
+          eq(opsComplaints.id, id),
+          eq(opsComplaints.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (data.status !== undefined && data.status !== before.status) {
+    assertComplaintTransition(before.status, data.status);
+  }
+  const now = Date.now();
+  const rows = await db
+    .update(opsComplaints)
+    .set({ ...data, updatedAt: now })
+    .where(
+      and(
+        eq(opsComplaints.id, id),
+        eq(opsComplaints.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsComplaint | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_complaint",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+export async function addInvestigationNote(
+  complaintId: number,
+  facilityNumber: string,
+  actor: AuditActor,
+  note: string,
+): Promise<OpsComplaintInvestigationNote | undefined> {
+  const complaint = await pgFirst(
+    db
+      .select({ id: opsComplaints.id })
+      .from(opsComplaints)
+      .where(
+        and(
+          eq(opsComplaints.id, complaintId),
+          eq(opsComplaints.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!complaint) return undefined;
+  const now = Date.now();
+  const rows = await db
+    .insert(opsComplaintInvestigationNotes)
+    .values({
+      complaintId,
+      facilityNumber,
+      notedAt: now,
+      notedBy: actor.id,
+      note,
+    })
+    .returning();
+  const row = rows[0] as OpsComplaintInvestigationNote;
+  await safeAudit({
+    facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_complaint_investigation_note",
+    entityId: row.id,
+    after: row,
+  });
+  // Bump the parent complaint's updatedAt so list ordering / cache invalidation
+  // reflects the most recent activity. Wrapped so any failure here doesn't
+  // shadow the successful note insert.
+  try {
+    await db
+      .update(opsComplaints)
+      .set({ updatedAt: now })
+      .where(eq(opsComplaints.id, complaintId));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[ops] complaint updatedAt bump failed", err);
+  }
+  return row;
+}
+
+export async function resolveComplaint(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+  resolutionNote: string,
+): Promise<OpsComplaint | undefined> {
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsComplaints)
+      .where(
+        and(
+          eq(opsComplaints.id, id),
+          eq(opsComplaints.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (before.status === "resolved" || before.status === "closed") {
+    throw new Error(`Cannot resolve complaint in status: ${before.status}`);
+  }
+  assertComplaintTransition(before.status, "resolved");
+  const now = Date.now();
+  const rows = await db
+    .update(opsComplaints)
+    .set({
+      status: "resolved",
+      resolutionNote,
+      resolvedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(opsComplaints.id, id),
+        eq(opsComplaints.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsComplaint | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "resolve",
+      entityType: "ops_complaint",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+export async function closeComplaint(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+): Promise<OpsComplaint | undefined> {
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsComplaints)
+      .where(
+        and(
+          eq(opsComplaints.id, id),
+          eq(opsComplaints.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (before.status !== "resolved") {
+    throw new Error("Complaint must be resolved before it can be closed");
+  }
+  const now = Date.now();
+  const rows = await db
+    .update(opsComplaints)
+    .set({ status: "closed", closedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(opsComplaints.id, id),
+        eq(opsComplaints.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsComplaint | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "close",
+      entityType: "ops_complaint",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+// ── W13 Inspections + citations ──────────────────────────────────────────────
+
+export async function listInspections(
+  facilityNumber: string,
+  opts: { page: number; limit: number; sinceMs?: number },
+): Promise<{ inspections: OpsInspection[]; total: number }> {
+  const conds = [eq(opsInspections.facilityNumber, facilityNumber)];
+  if (typeof opts.sinceMs === "number") {
+    conds.push(gte(opsInspections.visitAt, opts.sinceMs));
+  }
+  const where = and(...conds);
+  const offset = (opts.page - 1) * opts.limit;
+  const [inspections, countRows] = await Promise.all([
+    db
+      .select()
+      .from(opsInspections)
+      .where(where)
+      .orderBy(desc(opsInspections.visitAt), desc(opsInspections.id))
+      .limit(opts.limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(opsInspections)
+      .where(where),
+  ]);
+  return { inspections, total: countRows[0]?.count ?? 0 };
+}
+
+export async function getInspection(
+  id: number,
+  facilityNumber: string,
+): Promise<
+  | {
+      inspection: OpsInspection;
+      citations: OpsInspectionCitation[];
+      evidence: Awaited<ReturnType<typeof listEvidence>>;
+    }
+  | undefined
+> {
+  const inspection = await pgFirst(
+    db
+      .select()
+      .from(opsInspections)
+      .where(
+        and(
+          eq(opsInspections.id, id),
+          eq(opsInspections.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!inspection) return undefined;
+  const [citations, evidence] = await Promise.all([
+    db
+      .select()
+      .from(opsInspectionCitations)
+      .where(
+        and(
+          eq(opsInspectionCitations.inspectionId, inspection.id),
+          eq(opsInspectionCitations.facilityNumber, facilityNumber),
+        ),
+      )
+      .orderBy(opsInspectionCitations.createdAt),
+    listEvidence(facilityNumber, "ops_inspection", inspection.id),
+  ]);
+  return { inspection, citations, evidence };
+}
+
+export async function createInspection(
+  data: InsertOpsInspection,
+  actor: AuditActor,
+): Promise<OpsInspection> {
+  const now = Date.now();
+  const rows = await db
+    .insert(opsInspections)
+    .values({ ...data, createdAt: now, updatedAt: now })
+    .returning();
+  const row = rows[0] as OpsInspection;
+  await safeAudit({
+    facilityNumber: row.facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_inspection",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function updateInspection(
+  id: number,
+  facilityNumber: string,
+  data: Partial<InsertOpsInspection>,
+  actor: AuditActor,
+): Promise<OpsInspection | undefined> {
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsInspections)
+      .where(
+        and(
+          eq(opsInspections.id, id),
+          eq(opsInspections.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (data.status !== undefined) {
+    const allowed = new Set(["open", "closed"]);
+    if (!allowed.has(data.status)) {
+      throw new Error(`Invalid inspection status: ${data.status}`);
+    }
+  }
+  const now = Date.now();
+  const rows = await db
+    .update(opsInspections)
+    .set({ ...data, updatedAt: now })
+    .where(
+      and(
+        eq(opsInspections.id, id),
+        eq(opsInspections.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsInspection | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_inspection",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+/**
+ * Close an inspection. Gated on every linked citation being closed — this is
+ * the Phase 4 §12 test plan acceptance criterion ("cannot close inspection
+ * while any citation is open"). Returns undefined if the inspection doesn't
+ * exist; throws if there are open citations so the route can surface a 400.
+ */
+export async function closeInspection(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+): Promise<OpsInspection | undefined> {
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsInspections)
+      .where(
+        and(
+          eq(opsInspections.id, id),
+          eq(opsInspections.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (before.status === "closed") return before;
+
+  const openCitations = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(opsInspectionCitations)
+    .where(
+      and(
+        eq(opsInspectionCitations.inspectionId, id),
+        eq(opsInspectionCitations.facilityNumber, facilityNumber),
+        eq(opsInspectionCitations.status, "open"),
+      ),
+    );
+  const openCount = openCitations[0]?.count ?? 0;
+  if (openCount > 0) {
+    throw new Error("Cannot close inspection — open citations remain");
+  }
+  const now = Date.now();
+  const rows = await db
+    .update(opsInspections)
+    .set({ status: "closed", closedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(opsInspections.id, id),
+        eq(opsInspections.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsInspection | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "close",
+      entityType: "ops_inspection",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+export async function addCitation(
+  inspectionId: number,
+  facilityNumber: string,
+  data: {
+    citationTitle: string;
+    detail?: string | null;
+    dueAt?: number | null;
+  },
+  actor: AuditActor,
+): Promise<OpsInspectionCitation | undefined> {
+  // Validate the parent inspection exists and is in this tenant. Otherwise
+  // we'd happily orphan a citation under a foreign inspection_id.
+  const inspection = await pgFirst(
+    db
+      .select({ id: opsInspections.id, status: opsInspections.status })
+      .from(opsInspections)
+      .where(
+        and(
+          eq(opsInspections.id, inspectionId),
+          eq(opsInspections.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!inspection) return undefined;
+  if (inspection.status === "closed") {
+    throw new Error("Cannot add citation to a closed inspection");
+  }
+  const now = Date.now();
+  const rows = await db
+    .insert(opsInspectionCitations)
+    .values({
+      inspectionId,
+      facilityNumber,
+      citationTitle: data.citationTitle,
+      detail: data.detail ?? null,
+      dueAt: data.dueAt ?? null,
+      status: "open",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+  const row = rows[0] as OpsInspectionCitation;
+  await safeAudit({
+    facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_inspection_citation",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function closeCitation(
+  citationId: number,
+  facilityNumber: string,
+  actor: AuditActor,
+  closureNote: string,
+): Promise<OpsInspectionCitation | undefined> {
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsInspectionCitations)
+      .where(
+        and(
+          eq(opsInspectionCitations.id, citationId),
+          eq(opsInspectionCitations.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (before.status === "closed") return before;
+  const now = Date.now();
+  const rows = await db
+    .update(opsInspectionCitations)
+    .set({
+      status: "closed",
+      closedAt: now,
+      closedBy: actor.id,
+      closureNote,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(opsInspectionCitations.id, citationId),
+        eq(opsInspectionCitations.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsInspectionCitation | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "close",
+      entityType: "ops_inspection_citation",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+// ── W11 Controlled-sub reconciliation ────────────────────────────────────────
+
+export interface ControlledSubDiscrepancyRow {
+  id: number;
+  facilityNumber: string;
+  medicationId: number;
+  drugName: string | null;
+  residentId: number | null;
+  residentFirstName: string | null;
+  residentLastName: string | null;
+  countDate: number;
+  shift: string;
+  countedBy: string;
+  witnessedBy: string;
+  openingCount: number;
+  closingCount: number;
+  administeredCount: number;
+  wastedCount: number;
+  discrepancy: number | null;
+  discrepancyNotes: string | null;
+  resolved: number | null;
+  ageMs: number;
+}
+
+/**
+ * List controlled-sub counts that recorded a non-zero discrepancy, joined
+ * with the medication + resident so the FE can render "Lorazepam — for
+ * Margaret Chen" without a second round-trip. Tenant-scoped on `c.facility_number`
+ * AT the SQL layer (defence in depth — Drizzle helps but a raw join lets us
+ * avoid N+1).
+ *
+ * The `resolved` filter is the W11 list's primary UX axis: discrepancies
+ * default to unresolved (the work the DON cares about); a separate query
+ * with `resolved: true` powers the "resolved history" accordion.
+ *
+ * Indexes hit: idx_ops_csc_count_date for the ORDER BY, idx_ops_csc_medication
+ * for the FK join. EXPLAIN reviewed for the 100-user / ~1k-rows-per-facility
+ * scale — single hash join + index scan, no full-table scan.
+ */
+export async function listControlledSubDiscrepancies(
+  facilityNumber: string,
+  opts: { resolved?: boolean; page: number; limit: number },
+): Promise<{ rows: ControlledSubDiscrepancyRow[]; total: number }> {
+  const offset = (opts.page - 1) * opts.limit;
+  const now = Date.now();
+  const resolvedClause =
+    opts.resolved === undefined
+      ? ""
+      : opts.resolved
+        ? "AND COALESCE(c.resolved, 0) = 1"
+        : "AND COALESCE(c.resolved, 0) = 0";
+
+  // We deliberately list explicit columns rather than SELECT * — projecting
+  // through the join expands shape (resident may be null on legacy rows
+  // where the medication was deleted) and the explicit list documents what
+  // the FE sees.
+  const dataSql = `
+    SELECT
+      c.id,
+      c.facility_number,
+      c.medication_id,
+      m.drug_name,
+      m.resident_id,
+      r.first_name AS resident_first_name,
+      r.last_name  AS resident_last_name,
+      c.count_date,
+      c.shift,
+      c.counted_by,
+      c.witnessed_by,
+      c.opening_count,
+      c.closing_count,
+      c.administered_count,
+      c.wasted_count,
+      c.discrepancy,
+      c.discrepancy_notes,
+      c.resolved
+    FROM ops_controlled_sub_counts c
+    LEFT JOIN ops_medications m ON c.medication_id = m.id
+    LEFT JOIN ops_residents   r ON m.resident_id   = r.id
+    WHERE c.facility_number = $1
+      AND COALESCE(c.discrepancy, 0) <> 0
+      ${resolvedClause}
+    ORDER BY c.count_date DESC, c.id DESC
+    LIMIT $2 OFFSET $3
+  `;
+  const countSql = `
+    SELECT COUNT(*)::int AS c
+    FROM ops_controlled_sub_counts c
+    WHERE c.facility_number = $1
+      AND COALESCE(c.discrepancy, 0) <> 0
+      ${resolvedClause}
+  `;
+  const [dataRes, countRes] = await Promise.all([
+    pool.query(dataSql, [facilityNumber, opts.limit, offset]),
+    pool.query<{ c: number }>(countSql, [facilityNumber]),
+  ]);
+  const rows: ControlledSubDiscrepancyRow[] = dataRes.rows.map((row) => ({
+    id: Number(row.id),
+    facilityNumber: row.facility_number,
+    medicationId: Number(row.medication_id),
+    drugName: row.drug_name ?? null,
+    residentId: row.resident_id !== null ? Number(row.resident_id) : null,
+    residentFirstName: row.resident_first_name ?? null,
+    residentLastName: row.resident_last_name ?? null,
+    countDate: Number(row.count_date),
+    shift: row.shift,
+    countedBy: row.counted_by,
+    witnessedBy: row.witnessed_by,
+    openingCount: Number(row.opening_count),
+    closingCount: Number(row.closing_count),
+    administeredCount: Number(row.administered_count),
+    wastedCount: Number(row.wasted_count),
+    discrepancy: row.discrepancy !== null ? Number(row.discrepancy) : null,
+    discrepancyNotes: row.discrepancy_notes,
+    resolved: row.resolved !== null ? Number(row.resolved) : 0,
+    ageMs: now - Number(row.count_date),
+  }));
+  return { rows, total: Number(countRes.rows[0]?.c ?? 0) };
+}
+
+/**
+ * Resolve one controlled-sub discrepancy. Appends the resolution note to the
+ * existing `discrepancy_notes` (does not overwrite — auditors need the
+ * intake note + the resolution note both present). Optional `witnessedBy`
+ * captures the second-signature required by Title 22 for controlled-sub
+ * reconciliation.
+ *
+ * Evidence attachment (e.g. photo of the count log) is done by the FE via
+ * the existing POST /api/ops/evidence with entityType='ops_controlled_sub_count'
+ * — no separate endpoint here.
+ */
+export async function resolveControlledSubDiscrepancy(
+  countId: number,
+  facilityNumber: string,
+  actor: AuditActor,
+  args: { note: string; witnessedBy: string },
+): Promise<OpsControlledSubCount | undefined> {
+  const before = await pgFirst(
+    db
+      .select()
+      .from(opsControlledSubCounts)
+      .where(
+        and(
+          eq(opsControlledSubCounts.id, countId),
+          eq(opsControlledSubCounts.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!before) return undefined;
+  if (before.resolved) {
+    throw new Error("Discrepancy is already resolved");
+  }
+  const nowIso = new Date().toISOString();
+  const trailer = `\n[resolved by ${actor.id} on ${nowIso} witnessed by ${args.witnessedBy}]: ${args.note}`;
+  const newNotes = (before.discrepancyNotes ?? "") + trailer;
+
+  const rows = await db
+    .update(opsControlledSubCounts)
+    .set({ resolved: 1, discrepancyNotes: newNotes })
+    .where(
+      and(
+        eq(opsControlledSubCounts.id, countId),
+        eq(opsControlledSubCounts.facilityNumber, facilityNumber),
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsControlledSubCount | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "resolve",
+      entityType: "ops_controlled_sub_count",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+/**
+ * Recent destructions accordion (Phase 5 §6.B.1). Reads `ops_med_destruction`
+ * joined with `ops_medications` so the FE can render "Lorazepam — destroyed
+ * 2 days ago" without N+1. Surfaces alongside the W11 discrepancy list.
+ */
+export async function listRecentDestructions(
+  facilityNumber: string,
+  opts: { sinceMs?: number; limit?: number } = {},
+): Promise<
+  Array<OpsMedDestruction & { drugName: string | null }>
+> {
+  const limit = Math.min(100, Math.max(1, opts.limit ?? 25));
+  const params: unknown[] = [facilityNumber];
+  let sinceClause = "";
+  if (typeof opts.sinceMs === "number") {
+    params.push(opts.sinceMs);
+    sinceClause = `AND d.destruction_date >= $${params.length}`;
+  }
+  params.push(limit);
+  const limitParamIdx = params.length;
+  const res = await pool.query(
+    `SELECT d.*, m.drug_name
+     FROM ops_med_destruction d
+     LEFT JOIN ops_medications m ON d.medication_id = m.id
+     WHERE d.facility_number = $1
+       ${sinceClause}
+     ORDER BY d.destruction_date DESC, d.id DESC
+     LIMIT $${limitParamIdx}`,
+    params,
+  );
+  return res.rows.map((row) => ({
+    id: Number(row.id),
+    medicationId: Number(row.medication_id),
+    facilityNumber: row.facility_number,
+    quantity: Number(row.quantity),
+    unit: row.unit,
+    destructionMethod: row.destruction_method,
+    destroyedBy: row.destroyed_by,
+    witnessedBy: row.witnessed_by,
+    destructionDate: Number(row.destruction_date),
+    reason: row.reason,
+    createdAt: Number(row.created_at),
+    drugName: row.drug_name ?? null,
+  })) as Array<OpsMedDestruction & { drugName: string | null }>;
 }

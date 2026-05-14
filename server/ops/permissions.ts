@@ -44,6 +44,14 @@ export const OPS_RESOURCES = {
   REG_SETTING: "ops_reg_setting",
   EVIDENCE: "ops_evidence",
   AUDIT_TRAIL: "ops_audit_trail",
+  // Wave 1 additions (Epic B)
+  TEMPERATURE_FIXTURE: "ops_temperature_fixture",
+  TEMPERATURE_LOG: "ops_temperature_log",
+  DRILL_LOG: "ops_drill_log",
+  VENDOR: "ops_vendor",
+  COMPLAINT: "ops_complaint",
+  INSPECTION: "ops_inspection",
+  CONTROLLED_SUB_COUNT: "ops_controlled_sub_count",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -60,12 +68,52 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.AUDIT_TRAIL,
     actions: ["read"],
   },
+  // Wave 1 additions — admin has full grant on every new resource.
+  // `close` and `resolve` are domain-specific terminal actions
+  // (e.g., resolve a complaint / out-of-range follow-up; close an
+  // inspection or citation). Listing them explicitly keeps the matrix
+  // greppable and forces tests to opt in per action.
+  {
+    resource: OPS_RESOURCES.TEMPERATURE_FIXTURE,
+    actions: ["read", "create", "update", "delete"],
+  },
+  {
+    resource: OPS_RESOURCES.TEMPERATURE_LOG,
+    actions: ["read", "create", "update", "resolve"],
+  },
+  {
+    resource: OPS_RESOURCES.DRILL_LOG,
+    actions: ["read", "create", "update", "delete"],
+  },
+  {
+    resource: OPS_RESOURCES.VENDOR,
+    actions: ["read", "create", "update", "delete"],
+  },
+  {
+    resource: OPS_RESOURCES.COMPLAINT,
+    actions: ["read", "create", "update", "resolve", "close"],
+  },
+  {
+    resource: OPS_RESOURCES.INSPECTION,
+    actions: ["read", "create", "update", "close"],
+  },
+  {
+    resource: OPS_RESOURCES.CONTROLLED_SUB_COUNT,
+    actions: ["read", "resolve"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
-  { resource: OPS_RESOURCES.REG_SETTING, actions: ["read"] },
-  { resource: OPS_RESOURCES.EVIDENCE, actions: ["read"] },
-  { resource: OPS_RESOURCES.AUDIT_TRAIL, actions: ["read"] },
+  { resource: OPS_RESOURCES.REG_SETTING,         actions: ["read"] },
+  { resource: OPS_RESOURCES.EVIDENCE,            actions: ["read"] },
+  { resource: OPS_RESOURCES.AUDIT_TRAIL,         actions: ["read"] },
+  { resource: OPS_RESOURCES.TEMPERATURE_FIXTURE, actions: ["read"] },
+  { resource: OPS_RESOURCES.TEMPERATURE_LOG,     actions: ["read"] },
+  { resource: OPS_RESOURCES.DRILL_LOG,           actions: ["read"] },
+  { resource: OPS_RESOURCES.VENDOR,              actions: ["read"] },
+  { resource: OPS_RESOURCES.COMPLAINT,           actions: ["read"] },
+  { resource: OPS_RESOURCES.INSPECTION,          actions: ["read"] },
+  { resource: OPS_RESOURCES.CONTROLLED_SUB_COUNT,actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

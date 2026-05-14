@@ -1,13 +1,35 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { FormField, onSubmitKey } from "@/components/operations/FormField";
+import { AttachEvidence } from "@/components/operations/AttachEvidence";
 import {
   RefreshCw, ArrowLeft, AlertTriangle, CheckCircle2, Clock,
   XCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
@@ -599,6 +621,469 @@ function DayHeader({ date, isToday, onPrev, onNext, onToday, onBack }: {
   );
 }
 
+// ── Controlled-Substance Reconciliation (W11) ─────────────────────────────────
+
+// Phase 3 §4.1 wireframe + Phase 4 §7.9 contract + Phase 5 §6.B.1 (recent
+// destructions accordion). Reuses STATUS_CFG tone palette and existing
+// formatters. No new design tokens.
+
+interface ControlledSubCount {
+  id: number;
+  facilityNumber: string;
+  drugName: string;
+  residentName: string | null;
+  residentId: number | null;
+  countDate: number;
+  countedBy: string | null;
+  witnessedBy: string | null;
+  openingCount: number | null;
+  administered: number | null;
+  closingCount: number | null;
+  expectedCount: number | null;
+  discrepancy: number | boolean;
+  discrepancyDelta: number | null;
+  discrepancyNotes: string | null;
+  resolved: number | boolean;
+  resolvedAt: number | null;
+  createdAt: number;
+}
+
+interface MedDestruction {
+  id: number;
+  facilityNumber: string;
+  drugName: string;
+  residentName: string | null;
+  destroyedAt: number;
+  destroyedBy: string | null;
+  witnessedBy: string | null;
+  quantity: string | null;
+  method: string | null;
+  notes: string | null;
+}
+
+interface StaffLite {
+  id: number;
+  firstName: string;
+  lastName: string;
+  status?: string;
+}
+
+function discrepancyAge(countDate: number): { label: string; cls: string } | null {
+  const days = Math.floor((Date.now() - countDate) / (24 * 60 * 60 * 1000));
+  if (days > 30) {
+    return { label: "Overdue review", cls: "bg-red-100 text-red-700 border-red-200" };
+  }
+  if (days > 7) {
+    return { label: "Aging", cls: "bg-amber-100 text-amber-700 border-amber-200" };
+  }
+  return null;
+}
+
+function ResolveCountDialog({
+  open,
+  onOpenChange,
+  count,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  count: ControlledSubCount | null;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [note, setNote] = useState("");
+  const [witnessedBy, setWitnessedBy] = useState("");
+  const [showErrors, setShowErrors] = useState(false);
+
+  const { data: staffEnv } = useQuery<{ success: boolean; data: StaffLite[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/staff`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: open && !!facilityNumber,
+    staleTime: 60_000,
+  });
+  const activeStaff = (staffEnv?.data ?? []).filter(
+    (s) => !s.status || s.status === "active",
+  );
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (!count) throw new Error("No count selected");
+      const res = await apiRequest(
+        "POST",
+        `/api/ops/controlled-sub/counts/${count.id}/resolve`,
+        { note: note.trim(), witnessedBy: witnessedBy || null },
+      );
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/controlled-sub/discrepancies`],
+      });
+      toast({ title: "Discrepancy resolved" });
+      onOpenChange(false);
+      setNote("");
+      setWitnessedBy("");
+      setShowErrors(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't resolve", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const errors = {
+    note: !note.trim() ? "Closing note is required" : undefined,
+  };
+  const submit = () => {
+    if (errors.note || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            Resolve discrepancy{count ? ` — ${count.drugName}` : ""}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Closing note" required error={showErrors ? errors.note : undefined}>
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="resize-none min-h-[72px]"
+              placeholder="What was reconciled, and how?"
+              data-testid="controlled-resolve-note"
+            />
+          </FormField>
+          <FormField label="Witnessed by">
+            <Select
+              value={witnessedBy || "__none__"}
+              onValueChange={(v) => setWitnessedBy(v === "__none__" ? "" : v)}
+            >
+              <SelectTrigger data-testid="controlled-resolve-witness">
+                <SelectValue placeholder="Select staff…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— None</SelectItem>
+                {activeStaff.map((s) => {
+                  const name = `${s.firstName} ${s.lastName}`.trim();
+                  return (
+                    <SelectItem key={s.id} value={name}>
+                      {name}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </FormField>
+          {count && (
+            <FormField label="Evidence">
+              <AttachEvidence
+                entityType="ops_controlled_sub_count"
+                entityId={count.id}
+                facilityNumber={facilityNumber}
+              />
+            </FormField>
+          )}
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={submit} disabled={mutation.isPending} data-testid="controlled-resolve-save">
+              {mutation.isPending ? "Saving…" : "Save & resolve"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ControlledSubsTab({ facilityNumber }: { facilityNumber: string }) {
+  const [resolveTarget, setResolveTarget] = useState<ControlledSubCount | null>(null);
+
+  // Backend (W11) bundles recent destructions into the discrepancies
+  // response when `?includeDestructions=true` is set, exposed at
+  // `meta.recentDestructions`. We piggyback on the unresolved fetch so the
+  // W11 surface is one network call, not three.
+  const unresolvedKey = [
+    `/api/ops/facilities/${facilityNumber}/controlled-sub/discrepancies?resolved=false&includeDestructions=true`,
+  ] as const;
+  const resolvedKey = [
+    `/api/ops/facilities/${facilityNumber}/controlled-sub/discrepancies?resolved=true`,
+  ] as const;
+
+  const unresolvedQ = useQuery<{ success: boolean; data: ControlledSubCount[]; meta?: { recentDestructions?: MedDestruction[] } } | null>({
+    queryKey: unresolvedKey,
+    queryFn: async () => {
+      const res = await fetch(unresolvedKey[0], { credentials: "include" });
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
+  });
+
+  const resolvedQ = useQuery<{ success: boolean; data: ControlledSubCount[] } | null>({
+    queryKey: resolvedKey,
+    queryFn: async () => {
+      const res = await fetch(resolvedKey[0], { credentials: "include" });
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
+  });
+
+  const unresolved = unresolvedQ.data?.data ?? [];
+  const resolved30d = useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return (resolvedQ.data?.data ?? []).filter(
+      (c) => c.resolvedAt && c.resolvedAt >= cutoff,
+    );
+  }, [resolvedQ.data]);
+  const destructions = unresolvedQ.data?.meta?.recentDestructions ?? [];
+
+  // Group unresolved by drug
+  const byDrug = useMemo(() => {
+    const m: Record<string, ControlledSubCount[]> = {};
+    for (const c of unresolved) {
+      (m[c.drugName] ??= []).push(c);
+    }
+    return m;
+  }, [unresolved]);
+
+  const error = unresolvedQ.error || resolvedQ.error;
+  const isLoading = unresolvedQ.isLoading;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold" style={{ color: "#1E1B4B" }}>
+          Controlled Substances
+        </h2>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div
+          className={cn(
+            "rounded-lg p-3 text-center border",
+            unresolved.length > 0
+              ? "border-red-200 bg-red-50"
+              : "border-emerald-200 bg-emerald-50",
+          )}
+        >
+          <p
+            className={cn(
+              "text-xl font-bold portal-num",
+              unresolved.length > 0 ? "text-red-700" : "text-emerald-700",
+            )}
+          >
+            {unresolved.length}
+          </p>
+          <p
+            className={cn(
+              "text-xs",
+              unresolved.length > 0 ? "text-red-700" : "text-emerald-700",
+            )}
+          >
+            Open discrepancies
+          </p>
+        </div>
+        <div className="rounded-lg p-3 text-center border bg-stone-50 border-stone-200">
+          <p className="text-xl font-bold portal-num">{resolved30d.length}</p>
+          <p className="text-xs text-muted-foreground">Resolved this month</p>
+        </div>
+      </div>
+
+      {error && (
+        <div
+          className="rounded-md bg-destructive/10 border border-destructive/30 p-4 text-sm text-destructive"
+          role="alert"
+        >
+          Failed to load controlled-substance counts.
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full rounded-lg" />
+          ))}
+        </div>
+      )}
+
+      {!isLoading && unresolved.length === 0 && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center" data-testid="controlled-empty">
+          <CheckCircle2 className="h-8 w-8 mx-auto text-emerald-600 mb-2" />
+          <p className="text-sm font-medium text-emerald-800">
+            No controlled-substance discrepancies. Counts are reconciled.
+          </p>
+        </div>
+      )}
+
+      {!isLoading && unresolved.length > 0 && (
+        <div className="space-y-4" data-testid="controlled-unresolved">
+          <h3 className="text-sm font-medium text-muted-foreground">
+            Unresolved ({unresolved.length})
+          </h3>
+          {Object.entries(byDrug).map(([drug, rows]) => (
+            <div key={drug} className="space-y-2">
+              <h4 className="text-xs font-semibold text-gray-700">{drug}</h4>
+              {rows.map((c) => {
+                const age = discrepancyAge(c.countDate);
+                const delta =
+                  c.discrepancyDelta !== null && c.discrepancyDelta !== undefined
+                    ? c.discrepancyDelta
+                    : c.closingCount !== null && c.expectedCount !== null
+                      ? c.closingCount - c.expectedCount
+                      : null;
+                return (
+                  <div
+                    key={c.id}
+                    className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-1.5"
+                  >
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <p className="text-sm font-medium">
+                        {drug}
+                        {c.residentName ? ` · Resident: ${c.residentName}` : ""}
+                      </p>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {age && (
+                          <span
+                            className={cn(
+                              "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] border capitalize",
+                              age.cls,
+                            )}
+                          >
+                            {age.label}
+                          </span>
+                        )}
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-700 border-red-200 border capitalize">
+                          Unresolved
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Count {new Date(c.countDate).toLocaleDateString()}
+                      {c.countedBy ? ` · counted: ${c.countedBy}` : ""}
+                      {c.witnessedBy ? ` · witness: ${c.witnessedBy}` : ""}
+                    </p>
+                    <p className="text-xs portal-num">
+                      Opening {c.openingCount ?? "—"} · Administered {c.administered ?? "—"} · Closing {c.closingCount ?? "—"} · Expected {c.expectedCount ?? "—"}
+                    </p>
+                    {delta !== null && (
+                      <p className="text-xs font-semibold text-red-700 portal-num">
+                        Discrepancy: {delta > 0 ? "+" : ""}{delta}
+                      </p>
+                    )}
+                    <div className="flex justify-end pt-1">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => setResolveTarget(c)}
+                        data-testid={`controlled-resolve-${c.id}`}
+                      >
+                        Resolve
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Resolved (30d) accordion */}
+      {resolved30d.length > 0 && (
+        <Accordion type="single" collapsible className="border rounded-lg">
+          <AccordionItem value="resolved" className="border-b-0">
+            <AccordionTrigger className="px-4 py-2 text-sm font-medium">
+              Resolved (last 30 days) · {resolved30d.length}
+            </AccordionTrigger>
+            <AccordionContent className="px-4">
+              <ul className="space-y-2">
+                {resolved30d.map((c) => (
+                  <li
+                    key={c.id}
+                    className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm"
+                  >
+                    <p className="font-medium">
+                      {c.drugName}
+                      {c.residentName ? ` · ${c.residentName}` : ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Resolved{" "}
+                      {c.resolvedAt
+                        ? new Date(c.resolvedAt).toLocaleDateString()
+                        : "—"}
+                    </p>
+                    {c.discrepancyNotes && (
+                      <p className="text-xs mt-0.5 whitespace-pre-wrap">
+                        {c.discrepancyNotes}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      )}
+
+      {/* Recent destructions (Phase 5 §6.B.1) */}
+      {destructions.length > 0 && (
+        <Accordion type="single" collapsible className="border rounded-lg" data-testid="controlled-destructions">
+          <AccordionItem value="destructions" className="border-b-0">
+            <AccordionTrigger className="px-4 py-2 text-sm font-medium">
+              Recent destructions · {destructions.length}
+            </AccordionTrigger>
+            <AccordionContent className="px-4">
+              <ul className="space-y-2">
+                {destructions.map((d) => (
+                  <li
+                    key={d.id}
+                    className="rounded-md border bg-white p-3 text-sm"
+                  >
+                    <p className="font-medium">
+                      {d.drugName}
+                      {d.residentName ? ` · ${d.residentName}` : ""}
+                      {d.quantity ? ` · ${d.quantity}` : ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Destroyed {new Date(d.destroyedAt).toLocaleDateString()}
+                      {d.destroyedBy ? ` · by ${d.destroyedBy}` : ""}
+                      {d.witnessedBy ? ` · witness ${d.witnessedBy}` : ""}
+                      {d.method ? ` · ${d.method}` : ""}
+                    </p>
+                    {d.notes && (
+                      <p className="text-xs mt-0.5 whitespace-pre-wrap">{d.notes}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      )}
+
+      <ResolveCountDialog
+        open={!!resolveTarget}
+        onOpenChange={(o) => !o && setResolveTarget(null)}
+        count={resolveTarget}
+        facilityNumber={facilityNumber}
+      />
+    </div>
+  );
+}
+
 // ── EmarContent ───────────────────────────────────────────────────────────────
 
 export function EmarContent({ facilityNumber, onBack, initialDate }: {
@@ -609,6 +1094,7 @@ export function EmarContent({ facilityNumber, onBack, initialDate }: {
 }) {
   const today = isoDate(new Date());
   const [selectedDate, setSelectedDate] = useState(initialDate ?? today);
+  const [tab, setTab] = useState<"day" | "controlled">("day");
 
   const {
     data: dayEnvelope, isLoading: dayLoading, error: dayError,
@@ -627,7 +1113,7 @@ export function EmarContent({ facilityNumber, onBack, initialDate }: {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    enabled: !!facilityNumber,
+    enabled: !!facilityNumber && tab === "day",
     // 30 s — fresher than the global Infinity default, so navigating away
     // and back doesn't render long-stale chart state.
     staleTime: 30_000,
@@ -638,23 +1124,42 @@ export function EmarContent({ facilityNumber, onBack, initialDate }: {
 
   return (
     <div className="max-w-5xl mx-auto">
-      <DayHeader
-        date={selectedDate}
-        isToday={selectedDate === today}
-        onPrev={() => setSelectedDate((d) => addDays(d, -1))}
-        onNext={() => setSelectedDate((d) => addDays(d, 1))}
-        onToday={() => setSelectedDate(today)}
-        onBack={onBack}
-      />
-      <DayView
-        facilityNumber={facilityNumber}
-        dateKey={selectedDate}
-        medPass={medPass}
-        isLoading={dayLoading}
-        error={dayError as Error | null}
-        isFetching={dayFetching}
-        onRefetch={() => dayRefetch()}
-      />
+      <div className="portal-tabs">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "day" | "controlled")}>
+          <TabsList className="w-full">
+            <TabsTrigger value="day" className="flex-1">
+              Day view
+            </TabsTrigger>
+            <TabsTrigger value="controlled" className="flex-1" data-testid="emar-tab-controlled">
+              Controlled Subs
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="day" className="mt-4">
+            <DayHeader
+              date={selectedDate}
+              isToday={selectedDate === today}
+              onPrev={() => setSelectedDate((d) => addDays(d, -1))}
+              onNext={() => setSelectedDate((d) => addDays(d, 1))}
+              onToday={() => setSelectedDate(today)}
+              onBack={onBack}
+            />
+            <DayView
+              facilityNumber={facilityNumber}
+              dateKey={selectedDate}
+              medPass={medPass}
+              isLoading={dayLoading}
+              error={dayError as Error | null}
+              isFetching={dayFetching}
+              onRefetch={() => dayRefetch()}
+            />
+          </TabsContent>
+
+          <TabsContent value="controlled" className="mt-4">
+            <ControlledSubsTab facilityNumber={facilityNumber} />
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 }

@@ -2625,3 +2625,1151 @@ opsRouter.get(
     }
   },
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 1 — Epic B Audit-Readiness routes
+//
+// Pattern mirrors the Wave 0 routes above:
+//   - `.strict()` zod schemas so unknown fields surface as 400
+//   - `requireOpsPermission(resource, action)` after the auth + subscription
+//     middleware already mounted on opsRouter
+//   - `getFacilityNumber(req)` for body-only routes; `:facilityNumber` URL
+//     form for list routes (the existing opsRouter.param guard covers IDOR)
+//   - Envelope `{ success, data }`; errors `{ success: false, error }`
+//   - Storage layer emits audit rows; routes never call recordAudit directly
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Helper: extract id param ────────────────────────────────────────────────
+
+function parseIdParam(raw: unknown): number | null {
+  const n = parseInt(String(raw), 10);
+  if (Number.isNaN(n) || n <= 0) return null;
+  return n;
+}
+
+// Map a thrown Error to the correct HTTP envelope. We treat domain errors
+// (status transition violations, "fixture not found", "follow-up already
+// resolved") as 400; the calling route falls through to its catch and
+// returns 500 only on unexpected throws.
+function isDomainError(e: unknown): e is Error {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return (
+    /not found/i.test(m) ||
+    /already resolved/i.test(m) ||
+    /not active/i.test(m) ||
+    /not out of range/i.test(m) ||
+    /required for non-anonymous/i.test(m) ||
+    /invalid/i.test(m) ||
+    /illegal/i.test(m) ||
+    /must be resolved/i.test(m) ||
+    /Cannot/i.test(m) ||
+    /open citations remain/i.test(m)
+  );
+}
+
+// ── Shared: string-aware boolean coercer for query strings ──────────────────
+// `z.coerce.boolean()` treats any non-empty string (including "false") as
+// `true`. We accept literal "true" / "false" instead.
+const queryStringBool = z
+  .union([z.literal("true"), z.literal("false")])
+  .transform((v) => v === "true");
+
+// ── W7 Temperature fixtures + logs ──────────────────────────────────────────
+
+const tempFixtureCreateSchema = z.object({
+  fixtureKey: z.string().min(1).max(64),
+  fixtureLabel: z.string().min(1).max(120),
+  kind: z.string().min(1).max(40),
+  requiredMin: z.number().finite().optional(),
+  requiredMax: z.number().finite().optional(),
+  unit: z.string().max(8).optional(),
+}).strict();
+
+const tempFixtureUpdateSchema = z.object({
+  fixtureLabel: z.string().min(1).max(120).optional(),
+  kind: z.string().min(1).max(40).optional(),
+  requiredMin: z.number().finite().nullable().optional(),
+  requiredMax: z.number().finite().nullable().optional(),
+  unit: z.string().max(8).optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+}).strict();
+
+const tempLogCreateSchema = z.object({
+  fixtureId: z.number().int().positive(),
+  readingValue: z.number().finite(),
+  readingAt: z.number().int().positive(),
+  // Phase 5 §6.A.1 — free-text, defaults to session user if blank.
+  recordedBy: z.string().trim().max(120).optional(),
+  note: z.string().max(2000).optional(),
+}).strict();
+
+const tempLogResolveSchema = z.object({
+  note: z.string().trim().min(1, "Resolution note required").max(2000),
+}).strict();
+
+const tempLogListQuerySchema = z.object({
+  fixtureKey: z.string().optional(),
+  sinceMs: z.coerce.number().int().nonnegative().optional(),
+  outOfRangeOnly: queryStringBool.optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+// GET /facilities/:facilityNumber/temp-fixtures
+opsRouter.get(
+  "/facilities/:facilityNumber/temp-fixtures",
+  requireOpsPermission(OPS_RESOURCES.TEMPERATURE_FIXTURE, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const includeInactive = String(req.query.includeInactive ?? "") === "true";
+      const data = await ops.listTemperatureFixtures(facilityNumber, { includeInactive });
+      return res.json({ success: true, data });
+    } catch (e) {
+      console.error("[ops] temp-fixtures list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /temp-fixtures
+opsRouter.post(
+  "/temp-fixtures",
+  requireOpsPermission(OPS_RESOURCES.TEMPERATURE_FIXTURE, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = tempFixtureCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ops.createTemperatureFixture(
+        {
+          facilityNumber,
+          fixtureKey: parsed.data.fixtureKey,
+          fixtureLabel: parsed.data.fixtureLabel,
+          kind: parsed.data.kind,
+          requiredMin: parsed.data.requiredMin ?? null,
+          requiredMax: parsed.data.requiredMax ?? null,
+          unit: parsed.data.unit ?? "F",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] temp-fixture create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// PUT /temp-fixtures/:id
+opsRouter.put(
+  "/temp-fixtures/:id",
+  requireOpsPermission(OPS_RESOURCES.TEMPERATURE_FIXTURE, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = tempFixtureUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.updateTemperatureFixture(id, facilityNumber, parsed.data, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] temp-fixture update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// DELETE /temp-fixtures/:id — soft inactivate
+opsRouter.delete(
+  "/temp-fixtures/:id",
+  requireOpsPermission(OPS_RESOURCES.TEMPERATURE_FIXTURE, "delete"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const ok = await ops.softInactivateTemperatureFixture(id, facilityNumber, getActor(req));
+      if (!ok) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: { id } });
+    } catch (e) {
+      console.error("[ops] temp-fixture delete failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/temp-logs
+opsRouter.get(
+  "/facilities/:facilityNumber/temp-logs",
+  requireOpsPermission(OPS_RESOURCES.TEMPERATURE_LOG, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = tempLogListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await ops.listTemperatureLogs(facilityNumber, {
+        fixtureKey: parsed.data.fixtureKey,
+        sinceMs: parsed.data.sinceMs,
+        outOfRangeOnly: parsed.data.outOfRangeOnly,
+        page,
+        limit,
+      });
+      return res.json({ success: true, data: result.logs, meta: { total: result.total, page, limit } });
+    } catch (e) {
+      console.error("[ops] temp-logs list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /temp-logs — §9 out-of-range hook fires here
+opsRouter.post(
+  "/temp-logs",
+  requireOpsPermission(OPS_RESOURCES.TEMPERATURE_LOG, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = tempLogCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const recordedBy = parsed.data.recordedBy?.trim() || actor.id;
+      const row = await ops.createTemperatureLog(
+        {
+          facilityNumber,
+          fixtureId: parsed.data.fixtureId,
+          readingValue: parsed.data.readingValue,
+          readingAt: parsed.data.readingAt,
+          recordedBy,
+          note: parsed.data.note ?? null,
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        const msg = (e as Error).message;
+        const status = /not found/i.test(msg) ? 404 : 400;
+        return res.status(status).json({ success: false, error: msg });
+      }
+      console.error("[ops] temp-log create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /temp-logs/:id/resolve
+opsRouter.post(
+  "/temp-logs/:id/resolve",
+  requireOpsPermission(OPS_RESOURCES.TEMPERATURE_LOG, "resolve"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = tempLogResolveSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.resolveTemperatureFollowUp(
+        id,
+        facilityNumber,
+        getActor(req),
+        parsed.data.note,
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] temp-log resolve failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── W5 Drill logs ────────────────────────────────────────────────────────────
+
+const drillCreateSchema = z.object({
+  drillKind: z.string().min(1).max(40),
+  scenario: z.string().max(500).optional(),
+  shift: z.string().max(40).optional(),
+  executedAt: z.number().int().positive(),
+  leader: z.string().max(120).optional(),
+  participants: z.array(z.string().max(200)).max(200).optional(),
+  residentsInvolved: z.array(z.string().max(200)).max(200).optional(),
+  // Phase 5 §6.A.2 — FE converts mm:ss to integer seconds before POST.
+  evacuationSeconds: z.number().int().nonnegative().max(86400).optional(),
+  debriefNotes: z.string().max(4000).optional(),
+  correctiveActions: z.array(z.string().max(500)).max(50).optional(),
+  status: z.enum(["executed", "completed"]).optional(),
+}).strict();
+
+const drillUpdateSchema = drillCreateSchema.partial().strict();
+
+const drillListQuerySchema = z.object({
+  kind: z.string().optional(),
+  sinceMs: z.coerce.number().int().nonnegative().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+opsRouter.get(
+  "/facilities/:facilityNumber/drills",
+  requireOpsPermission(OPS_RESOURCES.DRILL_LOG, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = drillListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await ops.listDrillLogs(facilityNumber, {
+        kind: parsed.data.kind,
+        sinceMs: parsed.data.sinceMs,
+        page,
+        limit,
+      });
+      // Decode JSON columns so clients see arrays, not stringified text.
+      const decoded = result.logs.map((r) => ops.decodeDrillLog(r));
+      return res.json({ success: true, data: decoded, meta: { total: result.total, page, limit } });
+    } catch (e) {
+      console.error("[ops] drills list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/drills",
+  requireOpsPermission(OPS_RESOURCES.DRILL_LOG, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = drillCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ops.createDrillLog(
+        {
+          facilityNumber,
+          drillKind: parsed.data.drillKind,
+          scenario: parsed.data.scenario ?? null,
+          shift: parsed.data.shift ?? null,
+          executedAt: parsed.data.executedAt,
+          leader: parsed.data.leader ?? null,
+          participants: parsed.data.participants ?? [],
+          residentsInvolved: parsed.data.residentsInvolved ?? [],
+          evacuationSeconds: parsed.data.evacuationSeconds ?? null,
+          debriefNotes: parsed.data.debriefNotes ?? null,
+          correctiveActions: parsed.data.correctiveActions ?? [],
+          status: parsed.data.status,
+          createdBy: actor.id,
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: ops.decodeDrillLog(row) });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] drill create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.put(
+  "/drills/:id",
+  requireOpsPermission(OPS_RESOURCES.DRILL_LOG, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = drillUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.updateDrillLog(id, facilityNumber, parsed.data, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: ops.decodeDrillLog(row) });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] drill update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.delete(
+  "/drills/:id",
+  requireOpsPermission(OPS_RESOURCES.DRILL_LOG, "delete"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const ok = await ops.softDeleteDrillLog(id, facilityNumber, getActor(req));
+      if (!ok) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: { id } });
+    } catch (e) {
+      console.error("[ops] drill delete failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── W9 Vendors ───────────────────────────────────────────────────────────────
+
+const vendorCreateSchema = z.object({
+  vendorName: z.string().min(1).max(200),
+  vendorType: z.string().min(1).max(60),
+  contactName: z.string().max(200).optional(),
+  contactPhone: z.string().max(40).optional(),
+  contactEmail: z.string().email().max(200).optional().or(z.literal("")),
+  coiExpiresAt: z.number().int().nonnegative().nullable().optional(),
+  licenseExpiresAt: z.number().int().nonnegative().nullable().optional(),
+  notes: z.string().max(2000).optional(),
+}).strict();
+
+const vendorUpdateSchema = z.object({
+  vendorName: z.string().min(1).max(200).optional(),
+  vendorType: z.string().min(1).max(60).optional(),
+  contactName: z.string().max(200).nullable().optional(),
+  contactPhone: z.string().max(40).nullable().optional(),
+  contactEmail: z.string().email().max(200).nullable().optional().or(z.literal("")),
+  coiExpiresAt: z.number().int().nonnegative().nullable().optional(),
+  licenseExpiresAt: z.number().int().nonnegative().nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+  status: z.enum(["active", "archived"]).optional(),
+}).strict();
+
+const vendorListQuerySchema = z.object({
+  expiringWithinDays: z.coerce.number().int().positive().max(3650).optional(),
+  vendorType: z.string().optional(),
+  status: z.enum(["active", "archived"]).optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+opsRouter.get(
+  "/facilities/:facilityNumber/vendors",
+  requireOpsPermission(OPS_RESOURCES.VENDOR, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = vendorListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await ops.listVendors(facilityNumber, {
+        expiringWithinDays: parsed.data.expiringWithinDays,
+        vendorType: parsed.data.vendorType,
+        status: parsed.data.status,
+        page,
+        limit,
+      });
+      return res.json({ success: true, data: result.vendors, meta: { total: result.total, page, limit } });
+    } catch (e) {
+      console.error("[ops] vendors list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/vendors",
+  requireOpsPermission(OPS_RESOURCES.VENDOR, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = vendorCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ops.createVendor(
+        {
+          facilityNumber,
+          vendorName: parsed.data.vendorName,
+          vendorType: parsed.data.vendorType,
+          contactName: parsed.data.contactName ?? null,
+          contactPhone: parsed.data.contactPhone ?? null,
+          contactEmail: parsed.data.contactEmail || null,
+          coiExpiresAt: parsed.data.coiExpiresAt ?? null,
+          licenseExpiresAt: parsed.data.licenseExpiresAt ?? null,
+          notes: parsed.data.notes ?? null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] vendor create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.put(
+  "/vendors/:id",
+  requireOpsPermission(OPS_RESOURCES.VENDOR, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = vendorUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.updateVendor(id, facilityNumber, parsed.data, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] vendor update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/vendors/:id/archive",
+  requireOpsPermission(OPS_RESOURCES.VENDOR, "delete"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const row = await ops.archiveVendor(id, facilityNumber, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] vendor archive failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── W10 Complaints ───────────────────────────────────────────────────────────
+
+const COMPLAINANT_TYPES = ["resident", "family", "staff", "anonymous", "external"] as const;
+
+const complaintCreateSchema = z.object({
+  receivedAt: z.number().int().positive(),
+  complainantType: z.enum(COMPLAINANT_TYPES),
+  // Anonymous handling (Phase 5 §6.A.3) — these may be empty strings or
+  // omitted entirely when complainantType === "anonymous".
+  complainantName: z.string().trim().max(200).optional(),
+  complainantRelation: z.string().trim().max(120).optional(),
+  nature: z.string().min(1).max(2000),
+  intakeNotes: z.string().max(4000).optional(),
+  assignedTo: z.string().max(120).optional(),
+  // §6.B.2 — free-text external reference (ombudsman / regulator / internal #).
+  externalRef: z.string().max(500).optional(),
+}).strict();
+
+const complaintUpdateSchema = z.object({
+  nature: z.string().min(1).max(2000).optional(),
+  intakeNotes: z.string().max(4000).nullable().optional(),
+  assignedTo: z.string().max(120).nullable().optional(),
+  externalRef: z.string().max(500).nullable().optional(),
+  status: z.enum(["open", "investigating", "resolved", "closed"]).optional(),
+}).strict();
+
+const complaintListQuerySchema = z.object({
+  status: z.enum(["open", "investigating", "resolved", "closed"]).optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+const complaintNoteSchema = z.object({
+  note: z.string().trim().min(1).max(4000),
+}).strict();
+
+const complaintResolveSchema = z.object({
+  resolutionNote: z.string().trim().min(1).max(4000),
+}).strict();
+
+opsRouter.get(
+  "/facilities/:facilityNumber/complaints",
+  requireOpsPermission(OPS_RESOURCES.COMPLAINT, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = complaintListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await ops.listComplaints(facilityNumber, {
+        status: parsed.data.status,
+        page,
+        limit,
+      });
+      return res.json({ success: true, data: result.complaints, meta: { total: result.total, page, limit } });
+    } catch (e) {
+      console.error("[ops] complaints list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.get(
+  "/complaints/:id",
+  requireOpsPermission(OPS_RESOURCES.COMPLAINT, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const result = await ops.getComplaint(id, facilityNumber);
+      if (!result) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: result });
+    } catch (e) {
+      console.error("[ops] complaint get failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/complaints",
+  requireOpsPermission(OPS_RESOURCES.COMPLAINT, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = complaintCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ops.createComplaint(
+        {
+          facilityNumber,
+          receivedAt: parsed.data.receivedAt,
+          complainantType: parsed.data.complainantType,
+          complainantName: parsed.data.complainantName ?? null,
+          complainantRelation: parsed.data.complainantRelation ?? null,
+          nature: parsed.data.nature,
+          intakeNotes: parsed.data.intakeNotes ?? null,
+          assignedTo: parsed.data.assignedTo ?? null,
+          externalRef: parsed.data.externalRef ?? null,
+          createdBy: actor.id,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] complaint create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.put(
+  "/complaints/:id",
+  requireOpsPermission(OPS_RESOURCES.COMPLAINT, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = complaintUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.updateComplaint(id, facilityNumber, parsed.data, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] complaint update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/complaints/:id/notes",
+  requireOpsPermission(OPS_RESOURCES.COMPLAINT, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = complaintNoteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.addInvestigationNote(id, facilityNumber, getActor(req), parsed.data.note);
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] complaint note add failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/complaints/:id/resolve",
+  requireOpsPermission(OPS_RESOURCES.COMPLAINT, "resolve"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = complaintResolveSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.resolveComplaint(
+        id,
+        facilityNumber,
+        getActor(req),
+        parsed.data.resolutionNote,
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] complaint resolve failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/complaints/:id/close",
+  requireOpsPermission(OPS_RESOURCES.COMPLAINT, "close"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const row = await ops.closeComplaint(id, facilityNumber, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] complaint close failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── W13 Inspections + citations ──────────────────────────────────────────────
+
+const inspectionCreateSchema = z.object({
+  inspectorOrg: z.string().min(1).max(120),
+  inspectorName: z.string().max(200).optional(),
+  purpose: z.string().min(1).max(60),
+  visitAt: z.number().int().positive(),
+  findingsJson: z.string().max(16_000).optional(),
+}).strict();
+
+const inspectionUpdateSchema = z.object({
+  inspectorOrg: z.string().min(1).max(120).optional(),
+  inspectorName: z.string().max(200).nullable().optional(),
+  purpose: z.string().min(1).max(60).optional(),
+  visitAt: z.number().int().positive().optional(),
+  findingsJson: z.string().max(16_000).nullable().optional(),
+  status: z.enum(["open", "closed"]).optional(),
+}).strict();
+
+const inspectionListQuerySchema = z.object({
+  sinceMs: z.coerce.number().int().nonnegative().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+const citationCreateSchema = z.object({
+  citationTitle: z.string().min(1).max(200),
+  detail: z.string().max(4000).optional(),
+  dueAt: z.number().int().positive().nullable().optional(),
+}).strict();
+
+const citationCloseSchema = z.object({
+  closureNote: z.string().trim().min(1).max(4000),
+}).strict();
+
+opsRouter.get(
+  "/facilities/:facilityNumber/inspections",
+  requireOpsPermission(OPS_RESOURCES.INSPECTION, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = inspectionListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await ops.listInspections(facilityNumber, {
+        sinceMs: parsed.data.sinceMs,
+        page,
+        limit,
+      });
+      return res.json({ success: true, data: result.inspections, meta: { total: result.total, page, limit } });
+    } catch (e) {
+      console.error("[ops] inspections list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.get(
+  "/inspections/:id",
+  requireOpsPermission(OPS_RESOURCES.INSPECTION, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const row = await ops.getInspection(id, facilityNumber);
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] inspection get failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/inspections",
+  requireOpsPermission(OPS_RESOURCES.INSPECTION, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = inspectionCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ops.createInspection(
+        {
+          facilityNumber,
+          inspectorOrg: parsed.data.inspectorOrg,
+          inspectorName: parsed.data.inspectorName ?? null,
+          purpose: parsed.data.purpose,
+          visitAt: parsed.data.visitAt,
+          findingsJson: parsed.data.findingsJson ?? null,
+          createdBy: actor.id,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] inspection create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.put(
+  "/inspections/:id",
+  requireOpsPermission(OPS_RESOURCES.INSPECTION, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = inspectionUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.updateInspection(id, facilityNumber, parsed.data, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] inspection update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/inspections/:id/close",
+  requireOpsPermission(OPS_RESOURCES.INSPECTION, "close"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const row = await ops.closeInspection(id, facilityNumber, getActor(req));
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] inspection close failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/inspections/:id/citations",
+  requireOpsPermission(OPS_RESOURCES.INSPECTION, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const inspectionId = parseIdParam(req.params.id);
+      if (inspectionId === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = citationCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.addCitation(
+        inspectionId,
+        facilityNumber,
+        {
+          citationTitle: parsed.data.citationTitle,
+          detail: parsed.data.detail ?? null,
+          dueAt: parsed.data.dueAt ?? null,
+        },
+        getActor(req),
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] citation create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/citations/:id/close",
+  requireOpsPermission(OPS_RESOURCES.INSPECTION, "close"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = citationCloseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.closeCitation(id, facilityNumber, getActor(req), parsed.data.closureNote);
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] citation close failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── W11 Controlled-sub reconciliation ────────────────────────────────────────
+
+const controlledSubListQuerySchema = z.object({
+  resolved: queryStringBool.optional(),
+  includeDestructions: queryStringBool.optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+const controlledSubResolveSchema = z.object({
+  note: z.string().trim().min(1).max(4000),
+  witnessedBy: z.string().trim().min(1).max(120),
+}).strict();
+
+opsRouter.get(
+  "/facilities/:facilityNumber/controlled-sub/discrepancies",
+  requireOpsPermission(OPS_RESOURCES.CONTROLLED_SUB_COUNT, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = controlledSubListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await ops.listControlledSubDiscrepancies(facilityNumber, {
+        resolved: parsed.data.resolved,
+        page,
+        limit,
+      });
+      // Phase 5 §6.B.1 — include "Recent destructions" alongside the
+      // discrepancy list so the FE can render the accordion without a
+      // separate fetch. Opt-in via query so list-only callers stay lean.
+      let recentDestructions: Awaited<ReturnType<typeof ops.listRecentDestructions>> | undefined;
+      if (parsed.data.includeDestructions) {
+        recentDestructions = await ops.listRecentDestructions(facilityNumber, { limit: 25 });
+      }
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit, recentDestructions },
+      });
+    } catch (e) {
+      console.error("[ops] controlled-sub list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+opsRouter.post(
+  "/controlled-sub/counts/:id/resolve",
+  requireOpsPermission(OPS_RESOURCES.CONTROLLED_SUB_COUNT, "resolve"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = controlledSubResolveSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const row = await ops.resolveControlledSubDiscrepancy(
+        id,
+        facilityNumber,
+        getActor(req),
+        { note: parsed.data.note, witnessedBy: parsed.data.witnessedBy },
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] controlled-sub resolve failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);

@@ -501,6 +501,152 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_audit_facility ON ops_audit_trail(facility_number, occurred_at);
   CREATE INDEX IF NOT EXISTS idx_ops_audit_entity   ON ops_audit_trail(entity_type, entity_id, occurred_at);
   CREATE INDEX IF NOT EXISTS idx_ops_audit_actor    ON ops_audit_trail(actor_id, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS ops_temperature_fixtures (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    fixture_key     TEXT NOT NULL,
+    fixture_label   TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    required_min    DOUBLE PRECISION,
+    required_max    DOUBLE PRECISION,
+    unit            TEXT NOT NULL DEFAULT 'F',
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL,
+    UNIQUE(facility_number, fixture_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_tempfx_facility ON ops_temperature_fixtures(facility_number);
+
+  CREATE TABLE IF NOT EXISTS ops_temperature_logs (
+    id                        BIGSERIAL PRIMARY KEY,
+    facility_number           TEXT NOT NULL,
+    fixture_id                BIGINT NOT NULL,
+    fixture_key               TEXT NOT NULL,
+    reading_value             DOUBLE PRECISION NOT NULL,
+    unit                      TEXT NOT NULL DEFAULT 'F',
+    threshold_min             DOUBLE PRECISION,
+    threshold_max             DOUBLE PRECISION,
+    out_of_range              INTEGER NOT NULL DEFAULT 0,
+    reading_at                BIGINT NOT NULL,
+    recorded_by               TEXT NOT NULL,
+    note                      TEXT,
+    follow_up_due_at          BIGINT,
+    follow_up_resolved_at     BIGINT,
+    follow_up_resolved_by     TEXT,
+    follow_up_resolution_note TEXT,
+    created_at                BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_temp_facility ON ops_temperature_logs(facility_number, reading_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_temp_fixture  ON ops_temperature_logs(fixture_id, reading_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_temp_oor      ON ops_temperature_logs(out_of_range, follow_up_resolved_at);
+
+  CREATE TABLE IF NOT EXISTS ops_drill_logs (
+    id                      BIGSERIAL PRIMARY KEY,
+    facility_number         TEXT NOT NULL,
+    drill_kind              TEXT NOT NULL,
+    scenario                TEXT,
+    shift                   TEXT,
+    executed_at             BIGINT NOT NULL,
+    leader                  TEXT,
+    participants_json       TEXT,
+    residents_involved_json TEXT,
+    evacuation_seconds      INTEGER,
+    debrief_notes           TEXT,
+    corrective_actions_json TEXT,
+    status                  TEXT NOT NULL DEFAULT 'executed',
+    created_by              TEXT NOT NULL,
+    created_at              BIGINT NOT NULL,
+    updated_at              BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_drill_facility ON ops_drill_logs(facility_number, executed_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_drill_kind     ON ops_drill_logs(drill_kind);
+
+  CREATE TABLE IF NOT EXISTS ops_vendors (
+    id                 BIGSERIAL PRIMARY KEY,
+    facility_number    TEXT NOT NULL,
+    vendor_name        TEXT NOT NULL,
+    vendor_type        TEXT NOT NULL,
+    contact_name       TEXT,
+    contact_phone      TEXT,
+    contact_email      TEXT,
+    coi_expires_at     BIGINT,
+    license_expires_at BIGINT,
+    notes              TEXT,
+    status             TEXT NOT NULL DEFAULT 'active',
+    created_at         BIGINT NOT NULL,
+    updated_at         BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_vendor_facility ON ops_vendors(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_vendor_coi      ON ops_vendors(coi_expires_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_vendor_status   ON ops_vendors(status);
+
+  CREATE TABLE IF NOT EXISTS ops_complaints (
+    id                   BIGSERIAL PRIMARY KEY,
+    facility_number      TEXT NOT NULL,
+    received_at          BIGINT NOT NULL,
+    complainant_type     TEXT NOT NULL,
+    complainant_name     TEXT,
+    complainant_relation TEXT,
+    nature               TEXT NOT NULL,
+    intake_notes         TEXT,
+    assigned_to          TEXT,
+    external_ref         TEXT,
+    status               TEXT NOT NULL DEFAULT 'open',
+    resolution_note      TEXT,
+    resolved_at          BIGINT,
+    closed_at            BIGINT,
+    created_by           TEXT NOT NULL,
+    created_at           BIGINT NOT NULL,
+    updated_at           BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_complaint_facility ON ops_complaints(facility_number, received_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_complaint_status   ON ops_complaints(status);
+  CREATE INDEX IF NOT EXISTS idx_ops_complaint_assigned ON ops_complaints(assigned_to);
+
+  CREATE TABLE IF NOT EXISTS ops_complaint_investigation_notes (
+    id              BIGSERIAL PRIMARY KEY,
+    complaint_id    BIGINT NOT NULL,
+    facility_number TEXT NOT NULL,
+    noted_at        BIGINT NOT NULL,
+    noted_by        TEXT NOT NULL,
+    note            TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_comp_notes_complaint ON ops_complaint_investigation_notes(complaint_id, noted_at);
+
+  CREATE TABLE IF NOT EXISTS ops_inspections (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    inspector_org   TEXT NOT NULL,
+    inspector_name  TEXT,
+    purpose         TEXT NOT NULL,
+    visit_at        BIGINT NOT NULL,
+    findings_json   TEXT,
+    status          TEXT NOT NULL DEFAULT 'open',
+    closed_at       BIGINT,
+    created_by      TEXT NOT NULL,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_insp_facility ON ops_inspections(facility_number, visit_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_insp_status   ON ops_inspections(status);
+
+  CREATE TABLE IF NOT EXISTS ops_inspection_citations (
+    id              BIGSERIAL PRIMARY KEY,
+    inspection_id   BIGINT NOT NULL,
+    facility_number TEXT NOT NULL,
+    citation_title  TEXT NOT NULL,
+    detail          TEXT,
+    due_at          BIGINT,
+    status          TEXT NOT NULL DEFAULT 'open',
+    closed_at       BIGINT,
+    closed_by       TEXT,
+    closure_note    TEXT,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_cite_inspection ON ops_inspection_citations(inspection_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_cite_status     ON ops_inspection_citations(status);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -964,6 +1110,144 @@ export const opsAuditTrail = pgTable("ops_audit_trail", {
   occurredAt:     ts("occurred_at").notNull(),
 });
 
+// ── Wave 1: W7 Temperature fixtures + logs ────────────────────────────────
+
+export const opsTemperatureFixtures = pgTable("ops_temperature_fixtures", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  fixtureKey:     text("fixture_key").notNull(),
+  fixtureLabel:   text("fixture_label").notNull(),
+  kind:           text("kind").notNull(),
+  requiredMin:    doublePrecision("required_min"),
+  requiredMax:    doublePrecision("required_max"),
+  unit:           text("unit").notNull().default("F"),
+  status:         text("status").notNull().default("active"),
+  createdAt:      ts("created_at").notNull(),
+  updatedAt:      ts("updated_at").notNull(),
+});
+
+export const opsTemperatureLogs = pgTable("ops_temperature_logs", {
+  id:                      serial("id").primaryKey(),
+  facilityNumber:          text("facility_number").notNull(),
+  fixtureId:               bigint("fixture_id", { mode: "number" }).notNull(),
+  fixtureKey:              text("fixture_key").notNull(),
+  readingValue:            doublePrecision("reading_value").notNull(),
+  unit:                    text("unit").notNull().default("F"),
+  thresholdMin:            doublePrecision("threshold_min"),
+  thresholdMax:            doublePrecision("threshold_max"),
+  outOfRange:              integer("out_of_range").notNull().default(0),
+  readingAt:               ts("reading_at").notNull(),
+  recordedBy:              text("recorded_by").notNull(),
+  note:                    text("note"),
+  followUpDueAt:           ts("follow_up_due_at"),
+  followUpResolvedAt:      ts("follow_up_resolved_at"),
+  followUpResolvedBy:      text("follow_up_resolved_by"),
+  followUpResolutionNote:  text("follow_up_resolution_note"),
+  createdAt:               ts("created_at").notNull(),
+});
+
+// ── Wave 1: W5 Drill log ──────────────────────────────────────────────────
+
+export const opsDrillLogs = pgTable("ops_drill_logs", {
+  id:                    serial("id").primaryKey(),
+  facilityNumber:        text("facility_number").notNull(),
+  drillKind:             text("drill_kind").notNull(),
+  scenario:              text("scenario"),
+  shift:                 text("shift"),
+  executedAt:            ts("executed_at").notNull(),
+  leader:                text("leader"),
+  participantsJson:      text("participants_json"),
+  residentsInvolvedJson: text("residents_involved_json"),
+  evacuationSeconds:     integer("evacuation_seconds"),
+  debriefNotes:          text("debrief_notes"),
+  correctiveActionsJson: text("corrective_actions_json"),
+  status:                text("status").notNull().default("executed"),
+  createdBy:             text("created_by").notNull(),
+  createdAt:             ts("created_at").notNull(),
+  updatedAt:             ts("updated_at").notNull(),
+});
+
+// ── Wave 1: W9 Vendors ────────────────────────────────────────────────────
+
+export const opsVendors = pgTable("ops_vendors", {
+  id:               serial("id").primaryKey(),
+  facilityNumber:   text("facility_number").notNull(),
+  vendorName:       text("vendor_name").notNull(),
+  vendorType:       text("vendor_type").notNull(),
+  contactName:      text("contact_name"),
+  contactPhone:     text("contact_phone"),
+  contactEmail:     text("contact_email"),
+  coiExpiresAt:     ts("coi_expires_at"),
+  licenseExpiresAt: ts("license_expires_at"),
+  notes:            text("notes"),
+  status:           text("status").notNull().default("active"),
+  createdAt:        ts("created_at").notNull(),
+  updatedAt:        ts("updated_at").notNull(),
+});
+
+// ── Wave 1: W10 Complaints ────────────────────────────────────────────────
+
+export const opsComplaints = pgTable("ops_complaints", {
+  id:                  serial("id").primaryKey(),
+  facilityNumber:      text("facility_number").notNull(),
+  receivedAt:          ts("received_at").notNull(),
+  complainantType:     text("complainant_type").notNull(),
+  complainantName:     text("complainant_name"),
+  complainantRelation: text("complainant_relation"),
+  nature:              text("nature").notNull(),
+  intakeNotes:         text("intake_notes"),
+  assignedTo:          text("assigned_to"),
+  externalRef:         text("external_ref"),
+  status:              text("status").notNull().default("open"),
+  resolutionNote:      text("resolution_note"),
+  resolvedAt:          ts("resolved_at"),
+  closedAt:            ts("closed_at"),
+  createdBy:           text("created_by").notNull(),
+  createdAt:           ts("created_at").notNull(),
+  updatedAt:           ts("updated_at").notNull(),
+});
+
+export const opsComplaintInvestigationNotes = pgTable("ops_complaint_investigation_notes", {
+  id:             serial("id").primaryKey(),
+  complaintId:    bigint("complaint_id", { mode: "number" }).notNull(),
+  facilityNumber: text("facility_number").notNull(),
+  notedAt:        ts("noted_at").notNull(),
+  notedBy:        text("noted_by").notNull(),
+  note:           text("note").notNull(),
+});
+
+// ── Wave 1: W13 Inspections + citations ───────────────────────────────────
+
+export const opsInspections = pgTable("ops_inspections", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  inspectorOrg:   text("inspector_org").notNull(),
+  inspectorName:  text("inspector_name"),
+  purpose:        text("purpose").notNull(),
+  visitAt:        ts("visit_at").notNull(),
+  findingsJson:   text("findings_json"),
+  status:         text("status").notNull().default("open"),
+  closedAt:       ts("closed_at"),
+  createdBy:      text("created_by").notNull(),
+  createdAt:      ts("created_at").notNull(),
+  updatedAt:      ts("updated_at").notNull(),
+});
+
+export const opsInspectionCitations = pgTable("ops_inspection_citations", {
+  id:             serial("id").primaryKey(),
+  inspectionId:   bigint("inspection_id", { mode: "number" }).notNull(),
+  facilityNumber: text("facility_number").notNull(),
+  citationTitle:  text("citation_title").notNull(),
+  detail:         text("detail"),
+  dueAt:          ts("due_at"),
+  status:         text("status").notNull().default("open"),
+  closedAt:       ts("closed_at"),
+  closedBy:       text("closed_by"),
+  closureNote:    text("closure_note"),
+  createdAt:      ts("created_at").notNull(),
+  updatedAt:      ts("updated_at").notNull(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1030,3 +1314,27 @@ export type InsertOpsEvidenceAttachment = typeof opsEvidenceAttachments.$inferIn
 
 export type OpsAuditTrailEntry          = typeof opsAuditTrail.$inferSelect;
 export type InsertOpsAuditTrailEntry    = typeof opsAuditTrail.$inferInsert;
+
+export type OpsTemperatureFixture       = typeof opsTemperatureFixtures.$inferSelect;
+export type InsertOpsTemperatureFixture = typeof opsTemperatureFixtures.$inferInsert;
+
+export type OpsTemperatureLog           = typeof opsTemperatureLogs.$inferSelect;
+export type InsertOpsTemperatureLog     = typeof opsTemperatureLogs.$inferInsert;
+
+export type OpsDrillLog                 = typeof opsDrillLogs.$inferSelect;
+export type InsertOpsDrillLog           = typeof opsDrillLogs.$inferInsert;
+
+export type OpsVendor                   = typeof opsVendors.$inferSelect;
+export type InsertOpsVendor             = typeof opsVendors.$inferInsert;
+
+export type OpsComplaint                = typeof opsComplaints.$inferSelect;
+export type InsertOpsComplaint          = typeof opsComplaints.$inferInsert;
+
+export type OpsComplaintInvestigationNote       = typeof opsComplaintInvestigationNotes.$inferSelect;
+export type InsertOpsComplaintInvestigationNote = typeof opsComplaintInvestigationNotes.$inferInsert;
+
+export type OpsInspection               = typeof opsInspections.$inferSelect;
+export type InsertOpsInspection         = typeof opsInspections.$inferInsert;
+
+export type OpsInspectionCitation       = typeof opsInspectionCitations.$inferSelect;
+export type InsertOpsInspectionCitation = typeof opsInspectionCitations.$inferInsert;
