@@ -43,6 +43,10 @@ import {
 } from "./evidenceStorage";
 import { listAuditForFacility } from "./auditStorage";
 import {
+  getChartCompletenessForResident,
+  listChartCompleteness,
+} from "./chartCompletenessStorage";
+import {
   MedicationCreateInput,
   MedicationUpdateInput,
   MEDICATION_DISCONTINUE_REASONS,
@@ -2278,10 +2282,24 @@ const evidenceListQuerySchema = z.object({
 }).strict();
 
 const auditTrailQuerySchema = z.object({
-  entityType: z.string().optional(),
+  entityType: z.string().max(200, "entityType too long").optional(),
   entityId: z.coerce.number().int().positive().optional(),
+  // W15 — viewer filters. Strings capped to keep accidental large
+  // payloads out of indexed-equality predicates.
+  actor: z.string().max(200, "actor too long").optional(),
+  action: z.string().max(200, "action too long").optional(),
+  // sinceMs is inclusive, untilMs is exclusive (see storage docstring).
+  sinceMs: z.coerce.number().int().nonnegative().optional(),
+  untilMs: z.coerce.number().int().nonnegative().optional(),
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+// W8 — chart-completeness query schema. `worst` mirrors the
+// ChartItemStatus union so callers can filter to incomplete charts only.
+const chartCompletenessQuerySchema = z.object({
+  worst: z.enum(["ok", "stale", "missing"]).optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
 }).strict();
 
 // ── Multer + per-session rate limiter for evidence upload ────────────────────
@@ -2616,6 +2634,10 @@ opsRouter.get(
       const result = await listAuditForFacility(facilityNumber, {
         entityType: parsed.data.entityType,
         entityId: parsed.data.entityId,
+        actor: parsed.data.actor,
+        action: parsed.data.action,
+        sinceMs: parsed.data.sinceMs,
+        untilMs: parsed.data.untilMs,
         page,
         limit,
       });
@@ -2626,6 +2648,72 @@ opsRouter.get(
       });
     } catch (e) {
       console.error("[ops] audit-trail list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ── W8 — Chart completeness sweep ────────────────────────────────────────────
+
+// GET /facilities/:facilityNumber/chart-completeness?worst=&limit=
+//   Returns one row per active resident with its evaluated chart status
+//   plus a `complete` counter for the "X of Y residents complete" banner.
+opsRouter.get(
+  "/facilities/:facilityNumber/chart-completeness",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = chartCompletenessQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const result = await listChartCompleteness(facilityNumber, {
+        worst: parsed.data.worst,
+        limit: parsed.data.limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: {
+          total: result.total,
+          complete: result.complete,
+          activeResidents: result.activeResidents,
+        },
+      });
+    } catch (e) {
+      console.error("[ops] chart-completeness list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /residents/:id/chart-completeness — per-resident banner.
+//   Note: no `:facilityNumber` in the path, so we resolve it from the
+//   authenticated session. The storage layer enforces tenant scope on the
+//   lookup so a forged id can't escape the facility.
+opsRouter.get(
+  "/residents/:id/chart-completeness",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const row = await getChartCompletenessForResident(id, facilityNumber);
+      if (!row) {
+        return res.status(404).json({ success: false, error: "Not found" });
+      }
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] chart-completeness resident failed", e);
       return res.status(500).json({ success: false, error: "Internal error" });
     }
   },

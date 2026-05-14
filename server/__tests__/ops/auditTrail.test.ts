@@ -215,3 +215,124 @@ describe("auditTrail — paged facility listing", () => {
     expect(r.rows[0].entityType).toBe("ops_vendor");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W15 — audit-trail viewer filters (actor / action / entityType / date range)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function seedAuditRow(
+  fn: string,
+  overrides: Partial<{
+    actorId: string;
+    action: string;
+    entityType: string;
+    entityId: number;
+    occurredAt: number;
+  }> = {},
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO ops_audit_trail
+       (facility_number, actor_id, actor_role, action, entity_type, entity_id,
+        before_json, after_json, occurred_at)
+     VALUES ($1, $2, 'admin', $3, $4, $5, NULL, NULL, $6)`,
+    [
+      fn,
+      overrides.actorId ?? "alice",
+      overrides.action ?? "update",
+      overrides.entityType ?? "ops_vendor",
+      overrides.entityId ?? 1,
+      overrides.occurredAt ?? Date.now(),
+    ],
+  );
+}
+
+describe("auditTrail — W15 viewer filters", () => {
+  it("filters by actor — only matching rows returned", async () => {
+    await seedAuditRow(FACILITY_A, { actorId: "alice", entityId: 1 });
+    await seedAuditRow(FACILITY_A, { actorId: "bob",   entityId: 2 });
+    await seedAuditRow(FACILITY_A, { actorId: "alice", entityId: 3 });
+    const r = await listAuditForFacility(FACILITY_A, {
+      actor: "alice",
+      page: 1,
+      limit: 20,
+    });
+    expect(r.total).toBe(2);
+    for (const row of r.rows) expect(row.actorId).toBe("alice");
+  });
+
+  it("filters by action — only matching rows returned", async () => {
+    await seedAuditRow(FACILITY_A, { action: "create", entityId: 1 });
+    await seedAuditRow(FACILITY_A, { action: "update", entityId: 2 });
+    await seedAuditRow(FACILITY_A, { action: "close",  entityId: 3 });
+    const r = await listAuditForFacility(FACILITY_A, {
+      action: "close",
+      page: 1,
+      limit: 20,
+    });
+    expect(r.total).toBe(1);
+    expect(r.rows[0].action).toBe("close");
+  });
+
+  it("filters by entityType alone (no entityId required)", async () => {
+    await seedAuditRow(FACILITY_A, { entityType: "ops_vendor",    entityId: 1 });
+    await seedAuditRow(FACILITY_A, { entityType: "ops_complaint", entityId: 1 });
+    await seedAuditRow(FACILITY_A, { entityType: "ops_complaint", entityId: 2 });
+    const r = await listAuditForFacility(FACILITY_A, {
+      entityType: "ops_complaint",
+      page: 1,
+      limit: 20,
+    });
+    expect(r.total).toBe(2);
+    for (const row of r.rows) expect(row.entityType).toBe("ops_complaint");
+  });
+
+  it("filters by date range — inclusive at sinceMs, exclusive at untilMs", async () => {
+    const t0 = 1_700_000_000_000;
+    // Five rows at t0, t0+1k, t0+2k, t0+3k, t0+4k.
+    for (let i = 0; i < 5; i += 1) {
+      await seedAuditRow(FACILITY_A, { entityId: i + 1, occurredAt: t0 + i * 1000 });
+    }
+    // [t0+1000, t0+3000): should include t0+1000 and t0+2000 only.
+    const r = await listAuditForFacility(FACILITY_A, {
+      sinceMs: t0 + 1000,
+      untilMs: t0 + 3000,
+      page: 1,
+      limit: 20,
+    });
+    expect(r.total).toBe(2);
+    const times = r.rows.map((row) => row.occurredAt).sort((a, b) => a - b);
+    expect(times).toEqual([t0 + 1000, t0 + 2000]);
+  });
+
+  it("combines multiple filters with AND semantics", async () => {
+    const t0 = 1_700_500_000_000;
+    await seedAuditRow(FACILITY_A, { actorId: "alice", action: "update", entityType: "ops_vendor", entityId: 1, occurredAt: t0 });
+    await seedAuditRow(FACILITY_A, { actorId: "alice", action: "create", entityType: "ops_vendor", entityId: 2, occurredAt: t0 + 1000 });
+    await seedAuditRow(FACILITY_A, { actorId: "bob",   action: "update", entityType: "ops_vendor", entityId: 3, occurredAt: t0 + 2000 });
+    await seedAuditRow(FACILITY_A, { actorId: "alice", action: "update", entityType: "ops_complaint", entityId: 4, occurredAt: t0 + 3000 });
+    // alice + update + ops_vendor in [t0, t0+2000) → only the first row.
+    const r = await listAuditForFacility(FACILITY_A, {
+      actor: "alice",
+      action: "update",
+      entityType: "ops_vendor",
+      sinceMs: t0,
+      untilMs: t0 + 2000,
+      page: 1,
+      limit: 20,
+    });
+    expect(r.total).toBe(1);
+    expect(r.rows[0].entityId).toBe(1);
+  });
+
+  it("tenant scope still applies under W15 filters", async () => {
+    await seedAuditRow(FACILITY_A, { actorId: "alice", entityId: 1 });
+    await seedAuditRow(FACILITY_B, { actorId: "alice", entityId: 1 });
+    const r = await listAuditForFacility(FACILITY_A, {
+      actor: "alice",
+      page: 1,
+      limit: 20,
+    });
+    expect(r.total).toBe(1);
+    for (const row of r.rows) expect(row.facilityNumber).toBe(FACILITY_A);
+  });
+});

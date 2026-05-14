@@ -21,6 +21,12 @@
  *   ComplaintsContent      B9
  *   InspectionsContent     B11
  *
+ * Wave 2 additions:
+ *   - 7th Overview tile "Charts incomplete" (W8) — reads
+ *     /api/ops/facilities/:fn/chart-completeness?worst=missing&limit=1.
+ *   - New "Audit trail" tab next to Reg Settings (⚙) renders the W15
+ *     <AuditTrailViewer> facility-wide filter explorer.
+ *
  * Reg Settings (⚙) tab stays intact — Wave 0 A11.
  */
 import { useMemo, useState } from "react";
@@ -37,6 +43,7 @@ import {
   Building2,
   Siren,
   ClipboardCheck,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RegSettingsContent } from "@/components/operations/RegSettingsContent";
@@ -45,6 +52,7 @@ import { TemperatureLogsContent } from "@/components/operations/TemperatureLogsC
 import { VendorsContent } from "@/components/operations/VendorsContent";
 import { ComplaintsContent } from "@/components/operations/ComplaintsContent";
 import { InspectionsContent } from "@/components/operations/InspectionsContent";
+import { AuditTrailViewer } from "@/components/operations/AuditTrailViewer";
 
 interface Props {
   facilityNumber: string;
@@ -187,6 +195,30 @@ function OverviewTab({
     staleTime: 60_000,
   });
 
+  // W8 Wave 2 — residents with an incomplete chart. Reads the list endpoint
+  // with `worst=missing&limit=1`; we only need `total` for the tile count.
+  // The "Charts incomplete" tile is informational v0 (cross-sub-view nav to
+  // Residents lives in OperationsTab.tsx and is wired in Wave 4).
+  const chartsIncompleteQ = useQuery<{
+    success: boolean;
+    data: { total: number };
+  } | null>({
+    queryKey: [
+      `/api/ops/facilities/${facilityNumber}/chart-completeness?worst=missing&limit=1`,
+    ],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/ops/facilities/${facilityNumber}/chart-completeness?worst=missing&limit=1`,
+        { credentials: "include" },
+      );
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
+  });
+
   // W3 Wave 2 — credentials expiring within 60 days (warning + expired).
   // includeExpired=true so the tile reflects any past-due credential too.
   const credentialsQ = useQuery<{ success: boolean; data: CredentialExpiringLite[] } | null>({
@@ -230,6 +262,11 @@ function OverviewTab({
   const pastSlaTone: "emerald" | "amber" | "red" =
     pastSlaCount === 0 ? "emerald" : pastSlaCount >= 3 ? "red" : "amber";
 
+  // W8 — charts-incomplete tile tone: emerald=0, amber=1+.
+  const chartsIncompleteCount = chartsIncompleteQ.data?.data?.total ?? 0;
+  const chartsIncompleteTone: "emerald" | "amber" =
+    chartsIncompleteCount === 0 ? "emerald" : "amber";
+
   // Credentials tile: red if any are already expired, amber if any are
   // expiring within 60d, emerald otherwise.
   const credRows = credentialsQ.data?.data ?? [];
@@ -253,7 +290,7 @@ function OverviewTab({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" data-testid="audit-overview-tiles">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3" data-testid="audit-overview-tiles">
         <button
           onClick={() => onSwitchTab("complaints")}
           className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
@@ -335,6 +372,23 @@ function OverviewTab({
             value={pastSlaCount}
             tone={pastSlaTone}
             loading={incidentsPastSlaQ.isLoading}
+          />
+        </div>
+        {/*
+          W8 — Charts incomplete tile. Reads the W8 list endpoint with
+          worst=missing&limit=1 (we only need the `total`). Informational-only
+          for v0 — cross-sub-view nav to Operations → Residents is wired in
+          Wave 4, same as the other tiles flagged above.
+        */}
+        <div
+          aria-label="Residents with incomplete charts (informational)"
+          data-testid="audit-overview-charts-incomplete-tile"
+        >
+          <Tile
+            label="Charts incomplete"
+            value={chartsIncompleteCount}
+            tone={chartsIncompleteTone}
+            loading={chartsIncompleteQ.isLoading}
           />
         </div>
       </div>
@@ -437,6 +491,15 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
               Inspections
             </TabsTrigger>
             <TabsTrigger
+              value="audit-trail"
+              className="flex-1"
+              aria-label="Audit trail"
+              data-testid="audit-readiness-tab-audit-trail"
+            >
+              <History className="h-3.5 w-3.5 mr-1" />
+              Audit trail
+            </TabsTrigger>
+            <TabsTrigger
               value="settings"
               className="flex-1"
               aria-label="Reg Settings"
@@ -471,6 +534,10 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
 
           <TabsContent value="inspections" className="mt-4">
             <InspectionsContent facilityNumber={facilityNumber} />
+          </TabsContent>
+
+          <TabsContent value="audit-trail" className="mt-4">
+            <AuditTrailViewer facilityNumber={facilityNumber} />
           </TabsContent>
 
           <TabsContent value="settings" className="mt-4">

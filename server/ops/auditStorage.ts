@@ -16,7 +16,7 @@
  * PHI payloads into the audit table.
  */
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import {
   opsAuditTrail,
@@ -147,14 +147,30 @@ export async function listAuditForEntity(
 
 /**
  * Paginated list of audit rows for a facility, optionally filtered by
- * (entity_type, entity_id). Used by the GET /api/ops/facilities/:fn/audit-trail
- * route. Newest first to match the typical "what happened recently" UI.
+ * (entity_type, entity_id) and W15 viewer filters (actor, action,
+ * occurred-at range). Newest first to match the typical "what happened
+ * recently" UI.
+ *
+ * W15 (Wave 2) filters:
+ *   - actor       — exact actor_id match (indexed via idx_ops_audit_actor)
+ *   - action      — exact action match (e.g., 'create' | 'update' | 'close')
+ *   - entityType  — exact entity_type match (indexed via idx_ops_audit_entity)
+ *   - sinceMs     — occurred_at >= sinceMs (inclusive)
+ *   - untilMs     — occurred_at <  untilMs (exclusive — so "today" can be
+ *                   expressed as [00:00 today, 00:00 tomorrow) without
+ *                   off-by-one ambiguity)
+ *
+ * All filters are AND-composable. Pagination semantics unchanged.
  */
 export async function listAuditForFacility(
   facilityNumber: string,
   opts: {
     entityType?: string;
     entityId?: number;
+    actor?: string;
+    action?: string;
+    sinceMs?: number;
+    untilMs?: number;
     page: number;
     limit: number;
   },
@@ -165,6 +181,14 @@ export async function listAuditForFacility(
   if (opts.entityType) conds.push(eq(opsAuditTrail.entityType, opts.entityType));
   if (typeof opts.entityId === "number") {
     conds.push(eq(opsAuditTrail.entityId, opts.entityId));
+  }
+  if (opts.actor) conds.push(eq(opsAuditTrail.actorId, opts.actor));
+  if (opts.action) conds.push(eq(opsAuditTrail.action, opts.action));
+  if (typeof opts.sinceMs === "number") {
+    conds.push(gte(opsAuditTrail.occurredAt, opts.sinceMs));
+  }
+  if (typeof opts.untilMs === "number") {
+    conds.push(lt(opsAuditTrail.occurredAt, opts.untilMs));
   }
   const where = and(...conds);
 

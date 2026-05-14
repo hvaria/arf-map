@@ -55,6 +55,12 @@ export const OPS_RESOURCES = {
   // Wave 2 additions (Epic C)
   STAFF_CREDENTIAL: "ops_staff_credential",
   INCIDENT: "ops_incident",
+  // Wave 2 W8 — resident-chart-completeness reads. Hangs off the
+  // existing residents Module 1 storage. Granting `read` here keeps the
+  // chart-completeness routes consistent with the rest of the ops
+  // permission scaffold; the existing un-gated residents CRUD remains
+  // facility-auth-only for now.
+  RESIDENT: "ops_resident",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -119,6 +125,13 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.INCIDENT,
     actions: ["read", "create", "update", "close"],
   },
+  // Wave 2 — Resident chart completeness (W8). Only `read` is exposed on
+  // the ops scaffold for the chart-completeness aggregator. Resident
+  // CRUD continues to live on the un-gated routes for now.
+  {
+    resource: OPS_RESOURCES.RESIDENT,
+    actions: ["read"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
@@ -134,6 +147,7 @@ const AUDITOR_READ_ONLY: Permission[] = [
   { resource: OPS_RESOURCES.CONTROLLED_SUB_COUNT,actions: ["read"] },
   { resource: OPS_RESOURCES.STAFF_CREDENTIAL,    actions: ["read"] },
   { resource: OPS_RESOURCES.INCIDENT,            actions: ["read"] },
+  { resource: OPS_RESOURCES.RESIDENT,            actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

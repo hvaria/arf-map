@@ -52,6 +52,11 @@ export const REG_SETTING_KEYS = {
   // expires." Not a regulation-derived placeholder (no statutory N here);
   // 60 is a sensible default. `placeholder: false` suppresses the [V] chip.
   CREDENTIAL_WARNING_DAYS:             { default: "60",           placeholder: false },
+  // Wave 2 W8 — annual physician's report cadence (Phase 1 §11 B14).
+  // The actual statutory cadence has not yet been validated against a
+  // primary source, so the value is marked `placeholder: true` and the
+  // FE [V] chip surfaces until an admin attaches a source note.
+  ANNUAL_PHYSICIAN_REPORT_DAYS:        { default: "365",          placeholder: true },
 } as const;
 
 export type RegSettingKey = keyof typeof REG_SETTING_KEYS;

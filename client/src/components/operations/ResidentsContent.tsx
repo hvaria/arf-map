@@ -18,6 +18,11 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useResidents } from "@/hooks/useResidents";
+import { useChartCompletenessForFacility } from "@/hooks/useChartCompleteness";
+import {
+  ChartCompletenessChip,
+  ChartCompletenessChipSkeleton,
+} from "@/components/operations/ChartCompletenessBanner";
 import { ArrowLeft, MessageSquare, Mic, Plus, Search, User } from "lucide-react";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -266,6 +271,14 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
   // discharged residents reachable through the status filter.
   const { residents, isLoading, error } = useResidents(facilityNumber, { activeOnly: false });
 
+  // W8 — chart completeness aggregate. One round-trip; map by residentId so
+  // each row can render its chip without spamming the per-resident endpoint.
+  // 60s staleTime mirrors the other aggregated reads on this page.
+  const {
+    byResidentId: chartByResidentId,
+    isLoading: chartLoading,
+  } = useChartCompletenessForFacility(facilityNumber);
+
   // If a resident is selected, show their profile
   if (selectedResidentId !== null) {
     return (
@@ -360,10 +373,13 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
                   <th className="text-left px-4 py-3 font-medium">Status</th>
                   <th className="text-left px-4 py-3 font-medium">Admission</th>
                   <th className="text-left px-4 py-3 font-medium">Level of Care</th>
+                  <th className="text-left px-4 py-3 font-medium">Chart</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E0E7FF]">
-                {filtered.map((r) => (
+                {filtered.map((r) => {
+                  const chart = chartByResidentId.get(r.id);
+                  return (
                   <tr
                     key={r.id}
                     className="cursor-pointer transition-colors"
@@ -385,15 +401,29 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
                     <td className="px-4 py-3 text-muted-foreground capitalize">
                       {r.levelOfCare?.replace(/_/g, " ")}
                     </td>
+                    <td className="px-4 py-3">
+                      {chart ? (
+                        <ChartCompletenessChip result={chart} />
+                      ) : chartLoading ? (
+                        <ChartCompletenessChipSkeleton />
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">
+                          —
+                        </span>
+                      )}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
           {/* Mobile card list */}
           <div className="md:hidden space-y-2">
-            {filtered.map((r) => (
+            {filtered.map((r) => {
+              const chart = chartByResidentId.get(r.id);
+              return (
               <button
                 key={r.id}
                 className="w-full text-left rounded-lg border p-4 hover:bg-muted/30 transition-colors"
@@ -409,8 +439,16 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
                   <span>Room {r.roomNumber ?? "—"}</span>
                   <span>Admitted {r.admissionDate ? new Date(r.admissionDate).toLocaleDateString() : "—"}</span>
                 </div>
+                <div className="mt-1.5">
+                  {chart ? (
+                    <ChartCompletenessChip result={chart} />
+                  ) : chartLoading ? (
+                    <ChartCompletenessChipSkeleton />
+                  ) : null}
+                </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         </>
       )}

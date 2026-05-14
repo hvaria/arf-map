@@ -29,6 +29,8 @@ import {
   type MedicationDiscontinueReason,
 } from "@shared/medication-constants";
 import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
+import { ChartCompletenessPanel } from "@/components/operations/ChartCompletenessBanner";
+import { useChartCompletenessForResident } from "@/hooks/useChartCompleteness";
 
 interface Resident {
   id: number;
@@ -686,6 +688,11 @@ export function ResidentProfileContent({
     enabled: !!facilityNumber && !!residentIdStr,
   });
 
+  // W8 — per-resident chart completeness for the profile panel.
+  const { data: chartEnvelope, isLoading: chartLoading } =
+    useChartCompletenessForResident(residentId);
+  const chartResult = chartEnvelope?.data ?? null;
+
   const resident = residentEnvelope?.data ?? undefined;
   const assessments = assessmentsEnvelope?.data ?? [];
   const carePlan = carePlanEnvelope?.data ?? undefined;
@@ -813,6 +820,12 @@ export function ResidentProfileContent({
             <FieldRow label="Funding Source" value={resident.fundingSource?.replace(/_/g, " ")} />
             <FieldRow label="Emergency Contact" value={`${resident.emergencyContactName} — ${resident.emergencyContactPhone}`} />
           </div>
+
+          {/* W8 — chart completeness panel for this resident. */}
+          <ChartCompletenessPanel
+            result={chartResult}
+            isLoading={chartLoading}
+          />
 
           <div>
             <div className="flex items-center justify-between mb-3">
