@@ -12,15 +12,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import {
-  ArrowLeft, Briefcase, User, MapPin, Phone, Mail, Clock,
+  Briefcase, User, MapPin, Phone, Mail, Clock,
   DollarSign, X, Edit3, LogOut, CheckCircle2, Building2,
   Camera, ChevronRight, MailCheck, RefreshCw, Eye, EyeOff, KeyRound,
 } from "lucide-react";
-import { BrandLogo } from "@/components/BrandLogo";
+import { AppHeader } from "@/components/layout/AppHeader";
 import { useToast } from "@/hooks/use-toast";
 import type { Facility } from "@shared/schema";
 import { getPendingAction, clearPendingAction } from "@/lib/pendingAction"; // NEW: expression-of-interest
-import { MyInterestsTab } from "@/components/MyInterestsTab";
 import { CredentialsSection } from "@/components/CredentialsSection";
 import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
 
@@ -1028,15 +1027,8 @@ function Dashboard({ account }: { account: JobSeekerAccount }) {
         </CardContent>
       </Card>
 
-      {/* My applications — replaces the "Open Positions" feed. Browsing
-          open jobs lives on the map (JobsPanel); the profile surface now
-          tracks what *this* seeker has applied to. Same MyInterestsTab
-          component used on /jobseeker/dashboard so the two surfaces stay
-          consistent and per-job rows deep-link back to /#/jobs/:id. */}
-      <div>
-        <h3 className="text-xl font-semibold mb-3" style={{ color: "#1E1B4B" }}>My Applications</h3>
-        <MyInterestsTab />
-      </div>
+      {/* "My Applications" lives on /#/jobseeker/dashboard only —
+          /#/job-seeker is the profile surface, not the activity feed. */}
 
       <Separator />
       <Button
@@ -1102,30 +1094,19 @@ export default function JobSeekerPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <div className="border-b sticky top-0 z-10" style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}>
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <BrandLogo />
-          <Separator orientation="vertical" className="h-8" />
-          <a href="/#/map">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-1.5" />
-              Map
-            </Button>
-          </a>
-          <div className="flex-1">
-            <h1 className="text-base font-semibold flex items-center gap-2" style={{ color: "var(--brand-text-heading)" }}>
-              <Briefcase className="h-4 w-4 text-primary" />
-              Job Seeker Portal
-            </h1>
-          </div>
-          {account && (
-            <p className="text-xs text-muted-foreground hidden sm:block truncate max-w-[200px]">
-              {account.email}
-            </p>
-          )}
-        </div>
-      </div>
+      {/* Unified AppHeader. The "Sign in" affordance on this page is a
+          no-op for anonymous users because the inline auth form below
+          IS the sign in surface — they're already where they need to be. */}
+      <AppHeader
+        backTo="/map"
+        backLabel="Map"
+        onSignInOverride={() => {
+          // Already on the auth surface — no navigation needed. Make sure
+          // we're in the default "auth" view in case the user is in the
+          // middle of forgot-password / verify and clicked the chip.
+          setPageState({ view: "auth" });
+        }}
+      />
 
       <div className="max-w-2xl mx-auto px-4 py-6">
         {isLoading ? (
