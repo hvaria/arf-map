@@ -1,11 +1,21 @@
 import { useEffect } from "react";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { User as UserIcon } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { getQueryFn } from "@/lib/queryClient";
 import { MyInterestsTab, type SeekerInterest } from "@/components/MyInterestsTab"; // NEW: expression-of-interest
-import { BrandLogo } from "@/components/BrandLogo";
+import { AppHeader } from "@/components/layout/AppHeader";
 import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
+
+interface JobSeekerProfileLite {
+  firstName: string | null;
+  lastName: string | null;
+  profilePictureUrl: string | null;
+  phone: string | null;
+  city: string | null;
+  jobTypes: string[] | null;
+}
 
 /**
  * DashboardPage — protected route for authenticated job seekers.
@@ -17,7 +27,7 @@ import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
  *   - Integrating a notification panel for interview invitations
  */
 export default function DashboardPage() {
-  const { user, isReady, logout } = useAuth();
+  const { user, isReady } = useAuth();
   const [, setLocation] = useLocation();
 
   // NEW: expression-of-interest — live Applications count
@@ -26,6 +36,16 @@ export default function DashboardPage() {
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!user,
     staleTime: 30000,
+  });
+
+  // Profile fetch — same query key as JobSeekerPage, so the cache is
+  // shared. Used for avatar + display-name + the "profile complete"
+  // signal on the quick-link card.
+  const { data: profile } = useQuery<JobSeekerProfileLite | null>({
+    queryKey: ["/api/jobseeker/profile"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!user,
+    staleTime: 60000,
   });
 
   // Credentials chip strip — same shared cache the ProfileEditor
@@ -54,52 +74,54 @@ export default function DashboardPage() {
     );
   }
 
-  const handleLogout = async () => {
-    await logout();
-    // Send the (now-anonymous) user back to the map. The role-picker dialog
-    // there auto-opens for unauthenticated visitors, so sign-in is one click
-    // away if they want to come back.
-    setLocation("/map");
-  };
+  // Sign-out flows through the AppHeader's account chip → useAppHeaderAuth,
+  // which calls AuthContext.logout(). The old inline button is retired.
+
+  // Derived bits — display name + avatar + "is the profile filled in".
+  // displayName falls back to the email's local-part (same convention as
+  // JobSeekerPage's read-only profile card) so a brand-new seeker who
+  // hasn't set firstName/lastName still gets a personal greeting.
+  const fullName = profile
+    ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") || null
+    : null;
+  const displayName = fullName ?? user.email.split("@")[0];
+  const avatarUrl = profile?.profilePictureUrl ?? null;
+  // Match the JobSeekerPage "profile complete" criteria so the quick-link
+  // card on the dashboard agrees with the badge on the profile page.
+  const isProfileComplete = !!(
+    profile?.firstName &&
+    profile.city &&
+    profile.phone &&
+    profile.jobTypes &&
+    profile.jobTypes.length > 0
+  );
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Top nav — neutral white shell matching Operations tab. The
-          previous indigo→pink gradient header has been dropped to unify
-          the visual language across seeker and operator surfaces. */}
-      <header className="border-b bg-white" style={{ borderColor: "var(--portal-border-subtle)" }}>
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-          {/* Brand mark — clickable, returns the user to the map (in-app home). */}
-          <Link
-            href="/map"
-            className="flex items-center hover:opacity-90 transition-opacity"
-            aria-label="Back to map"
-          >
-            <BrandLogo size={44} />
-          </Link>
-          <div className="flex items-center gap-4">
-            <span className="hidden text-xs text-muted-foreground sm:block">
-              {user.email}
-            </span>
-            <button
-              onClick={handleLogout}
-              className="rounded-md px-3 py-1.5 text-xs font-medium border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 transition-colors"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      {/* Unified AppHeader — no back button (this surface IS the seeker
+          home), account chip on the right surfaces identity + sign-out. */}
+      <AppHeader />
 
       {/* Main content */}
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 space-y-4">
-        {/* Welcome heading — canonical operator page-title shape. */}
-        <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
-          Welcome back
-        </h1>
-        <p className="text-sm text-muted-foreground -mt-2">
-          Signed in as <strong className="font-medium" style={{ color: "#1E1B4B" }}>{user.email}</strong>. Your profile and applications are ready to view.
-        </p>
+        {/* Welcome row — avatar on the left, name + email beneath.
+            Replaces the old plain "Welcome back" heading so a returning
+            seeker recognises themself at a glance. */}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-full bg-stone-200 flex items-center justify-center shrink-0 overflow-hidden">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <UserIcon className="h-6 w-6 text-stone-500" aria-hidden="true" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold truncate" style={{ color: "#1E1B4B" }}>
+              Hi {displayName}
+            </h1>
+            <p className="text-sm text-muted-foreground truncate">{user.email}</p>
+          </div>
+        </div>
 
         {/* Stat tiles — operator KPI tile pattern (rounded-lg p-3 + soft
             indigo neutral; status tones reserved for actual status values). */}
@@ -164,17 +186,24 @@ export default function DashboardPage() {
             className="group flex items-start gap-4 rounded-xl p-5 transition-shadow hover:shadow-md"
             style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}
           >
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg" style={{ background: "#EEF2FF" }}>
-              <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5" style={{ color: "#818CF8" }} aria-hidden="true">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a5.99 5.99 0 00-4.793 2.39A6.483 6.483 0 0010 16.5a6.483 6.483 0 004.793-2.11A5.99 5.99 0 0010 12z" clipRule="evenodd" />
-              </svg>
+            {/* Avatar-as-icon — shows the seeker's actual photo when
+                uploaded so the card stops reading as an anonymous
+                "complete your profile" stub for users who already did. */}
+            <div className="h-9 w-9 flex-shrink-0 rounded-full overflow-hidden bg-stone-200 flex items-center justify-center">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <UserIcon className="h-5 w-5 text-stone-500" aria-hidden="true" />
+              )}
             </div>
             <div>
               <p className="text-sm font-semibold" style={{ color: "#1E1B4B" }}>
-                Complete Your Profile
+                {isProfileComplete ? "My profile" : "Complete your profile"}
               </p>
               <p className="mt-0.5 text-xs" style={{ color: "#6B7280" }}>
-                Add experience, certifications, and job preferences.
+                {isProfileComplete
+                  ? "Update your phone, experience, or credentials."
+                  : "Add experience, credentials, and job preferences."}
               </p>
             </div>
           </a>
