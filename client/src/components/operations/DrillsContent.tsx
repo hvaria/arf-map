@@ -61,18 +61,24 @@ import { Plus, Siren, Info } from "lucide-react";
 export interface DrillLog {
   id: number;
   facilityNumber: string;
-  kind: "fire" | "disaster" | "active_threat" | "other";
+  drillKind: "fire" | "disaster" | "active_threat" | "other";
   shift: "AM" | "PM" | "NOC" | null;
   scenario: string | null;
   executedAt: number;
   leader: string | null;
   participantsJson: string | null;
-  residentsJson: string | null;
+  residentsInvolvedJson: string | null;
   evacuationSeconds: number | null;
-  debrief: string | null;
-  correctiveActions: string | null;
+  debriefNotes: string | null;
+  correctiveActionsJson: string | null;
   status: "executed" | "scheduled";
+  createdBy: string;
   createdAt: number;
+  updatedAt: number;
+  // Parsed arrays populated server-side by decodeDrillLog().
+  participants: string[];
+  residentsInvolved: string[];
+  correctiveActions: string[];
 }
 
 const DRILL_KINDS = ["fire", "disaster", "active_threat", "other"] as const;
@@ -430,8 +436,8 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
     [drills, currentQ.year, currentQ.quarter],
   );
 
-  const fireThisQ = thisQuarter.filter((d) => d.kind === "fire").length;
-  const disasterThisQ = thisQuarter.filter((d) => d.kind === "disaster").length;
+  const fireThisQ = thisQuarter.filter((d) => d.drillKind === "fire").length;
+  const disasterThisQ = thisQuarter.filter((d) => d.drillKind === "disaster").length;
 
   const avgEvac = useMemo(() => {
     const withEvac = last12.filter(
@@ -481,7 +487,7 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
           {latest ? (
             <>
               <p className="text-sm font-semibold capitalize">
-                {latest.kind.replace(/_/g, " ")} · {latest.shift ?? "—"}
+                {latest.drillKind.replace(/_/g, " ")} · {latest.shift ?? "—"}
               </p>
               <p className="text-xs text-muted-foreground">{fmtRelativeDays(latest.executedAt)}</p>
             </>
@@ -527,8 +533,11 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
             {[...last12]
               .sort((a, b) => b.executedAt - a.executedAt)
               .map((d) => {
-                const participants = parseList(d.participantsJson);
-                const residents = parseList(d.residentsJson);
+                // Server's decodeDrillLog already parses JSON columns into arrays.
+                // Fall back to the raw JSON strings only if a row was returned
+                // by a code path that didn't run the decoder.
+                const participants = d.participants ?? parseList(d.participantsJson);
+                const residents = d.residentsInvolved ?? parseList(d.residentsInvolvedJson);
                 return (
                   <li
                     key={d.id}
@@ -540,7 +549,7 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="min-w-0">
                         <p className="font-medium text-sm capitalize">
-                          {d.kind.replace(/_/g, " ")} drill
+                          {d.drillKind.replace(/_/g, " ")} drill
                           {d.shift ? ` · ${d.shift} shift` : ""}
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
@@ -557,9 +566,9 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
                             Scenario: {d.scenario}
                           </p>
                         )}
-                        {d.debrief && (
+                        {d.debriefNotes && (
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                            Debrief: {d.debrief}
+                            Debrief: {d.debriefNotes}
                           </p>
                         )}
                       </div>

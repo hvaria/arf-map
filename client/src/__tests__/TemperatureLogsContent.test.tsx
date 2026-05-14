@@ -72,7 +72,7 @@ function fixture(overrides: Partial<TempFixture> = {}): TempFixture {
     id: 1,
     facilityNumber: "197600001",
     fixtureKey: "fridge_kitchen_1",
-    name: "Fridge — Kitchen 1",
+    fixtureLabel: "Fridge — Kitchen 1",
     kind: "fridge",
     unit: "F",
     requiredMin: 32,

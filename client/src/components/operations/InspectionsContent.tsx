@@ -72,7 +72,9 @@ export interface InspectionRow {
   purpose: string;
   visitAt: number;
   inspectorName: string | null;
-  findings: string[];
+  // BE returns findings as a JSON-encoded array string (column findings_json);
+  // helpers in this file parse on render.
+  findingsJson: string | null;
   status: "open" | "cited" | "remediating" | "closed";
   createdAt: number;
   citationCount?: number;
@@ -82,12 +84,22 @@ export interface InspectionRow {
 export interface Citation {
   id: number;
   inspectionId: number;
-  title: string;
+  citationTitle: string;
   detail: string | null;
   dueAt: number | null;
   status: "open" | "remediating" | "closed";
   closureNote: string | null;
   closedAt: number | null;
+}
+
+function parseFindings(json: string | null | undefined): string[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export interface InspectionDetailRow extends InspectionRow {
@@ -558,16 +570,19 @@ function InspectionDetail({
             </div>
           </div>
 
-          {insp.findings && insp.findings.length > 0 && (
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground mb-2">Findings</h2>
-              <ul className="space-y-1.5 list-disc pl-5 text-sm">
-                {insp.findings.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {(() => {
+            const findings = parseFindings(insp.findingsJson);
+            return findings.length > 0 ? (
+              <div>
+                <h2 className="text-sm font-medium text-muted-foreground mb-2">Findings</h2>
+                <ul className="space-y-1.5 list-disc pl-5 text-sm">
+                  {findings.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null;
+          })()}
 
           <div>
             <h2 className="text-sm font-medium text-muted-foreground mb-2">
@@ -585,7 +600,7 @@ function InspectionDetail({
                   className="rounded-md border bg-white p-3 flex items-start justify-between gap-3 flex-wrap"
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">{c.title}</p>
+                    <p className="text-sm font-medium">{c.citationTitle}</p>
                     {c.detail && (
                       <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap">
                         {c.detail}

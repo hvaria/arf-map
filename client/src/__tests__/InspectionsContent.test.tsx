@@ -69,7 +69,7 @@ function inspection(overrides: Partial<InspectionRow> = {}): InspectionRow {
     purpose: "annual",
     visitAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
     inspectorName: "A. Garcia",
-    findings: [],
+    findingsJson: null,
     status: "closed",
     createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
     citationCount: 0,

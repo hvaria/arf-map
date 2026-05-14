@@ -60,13 +60,13 @@ import { Plus, Building2 } from "lucide-react";
 export interface Vendor {
   id: number;
   facilityNumber: string;
-  name: string;
-  type: string;
+  vendorName: string;
+  vendorType: string;
   contactName: string | null;
   contactPhone: string | null;
   contactEmail: string | null;
-  coiExpires: number | null;
-  licenseExpires: number | null;
+  coiExpiresAt: number | null;
+  licenseExpiresAt: number | null;
   notes: string | null;
   status: "active" | "archived";
   createdAt: number;
@@ -375,13 +375,13 @@ export function VendorsContent({ facilityNumber }: { facilityNumber: string }) {
   // the user filters by 14/30 the active count is informational only.
   const active = vendors.filter((v) => v.status === "active").length;
   const expiring60 = vendors.filter((v) => {
-    if (v.status !== "active" || v.coiExpires === null) return false;
-    const d = daysUntil(v.coiExpires)!;
+    if (v.status !== "active" || v.coiExpiresAt === null) return false;
+    const d = daysUntil(v.coiExpiresAt)!;
     return d >= 0 && d <= 60;
   }).length;
   const expired = vendors.filter((v) => {
-    if (v.coiExpires === null) return false;
-    return daysUntil(v.coiExpires)! < 0;
+    if (v.coiExpiresAt === null) return false;
+    return daysUntil(v.coiExpiresAt)! < 0;
   }).length;
 
   const filterPills: Array<{ key: FilterPill; label: string }> = [
@@ -478,19 +478,19 @@ export function VendorsContent({ facilityNumber }: { facilityNumber: string }) {
               </thead>
               <tbody className="divide-y">
                 {vendors.map((v) => {
-                  const coiBadge = expiryBadge(v.coiExpires);
-                  const days = daysUntil(v.coiExpires);
+                  const coiBadge = expiryBadge(v.coiExpiresAt);
+                  const days = daysUntil(v.coiExpiresAt);
                   return (
                     <tr key={v.id} className="hover:bg-stone-50/50 transition-colors">
-                      <td className="px-4 py-3 font-medium">{v.name}</td>
+                      <td className="px-4 py-3 font-medium">{v.vendorName}</td>
                       <td className="px-4 py-3">
                         <Badge variant="secondary" className="capitalize text-xs">
-                          {v.type}
+                          {v.vendorType}
                         </Badge>
                       </td>
                       <td className="px-4 py-3 portal-num">
                         <div className="flex items-center gap-2">
-                          <span>{fmtDate(v.coiExpires)}</span>
+                          <span>{fmtDate(v.coiExpiresAt)}</span>
                           {coiBadge && (
                             <span
                               className={cn(
@@ -506,7 +506,7 @@ export function VendorsContent({ facilityNumber }: { facilityNumber: string }) {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 portal-num">{fmtDate(v.licenseExpires)}</td>
+                      <td className="px-4 py-3 portal-num">{fmtDate(v.licenseExpiresAt)}</td>
                       <td className="px-4 py-3">
                         <span
                           className={cn(
@@ -527,7 +527,7 @@ export function VendorsContent({ facilityNumber }: { facilityNumber: string }) {
                             onClick={() => archiveMutation.mutate(v.id)}
                             disabled={archiveMutation.isPending}
                             data-testid={`vendor-archive-${v.id}`}
-                            aria-label={`Archive ${v.name}`}
+                            aria-label={`Archive ${v.vendorName}`}
                           >
                             Archive
                           </Button>

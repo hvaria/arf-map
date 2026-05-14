@@ -67,12 +67,12 @@ export interface TempFixture {
   id: number;
   facilityNumber: string;
   fixtureKey: string;
-  name: string;
+  fixtureLabel: string;
   kind: string;
   unit: "F" | "C";
   requiredMin: number | null;
   requiredMax: number | null;
-  active?: number | boolean;
+  status?: "active" | "inactive";
 }
 
 export interface TempLog {
@@ -469,7 +469,7 @@ function RecordReadingDialog({
                 <SelectContent>
                   {fixtures.map((f) => (
                     <SelectItem key={f.id} value={String(f.id)}>
-                      {f.name}
+                      {f.fixtureLabel}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -788,7 +788,7 @@ export function TemperatureLogsContent({ facilityNumber }: { facilityNumber: str
         <div className="rounded-lg p-3 text-center border bg-stone-50 border-stone-200">
           {latestLog && latestFixture ? (
             <>
-              <p className="text-sm font-semibold truncate">{latestFixture.name}</p>
+              <p className="text-sm font-semibold truncate">{latestFixture.fixtureLabel}</p>
               <p className="text-xs text-muted-foreground">
                 {fmtRelative(latestLog.readingAt)}
               </p>
@@ -848,7 +848,7 @@ export function TemperatureLogsContent({ facilityNumber }: { facilityNumber: str
                 >
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
-                      <p className="font-medium text-sm">{fixture.name}</p>
+                      <p className="font-medium text-sm">{fixture.fixtureLabel}</p>
                       {latest ? (
                         <p className="text-xs text-muted-foreground mt-0.5">
                           Last:{" "}
