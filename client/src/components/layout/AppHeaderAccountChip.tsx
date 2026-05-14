@@ -69,6 +69,9 @@ export function AppHeaderAccountChip({
           aria-label="Account menu"
         >
           <Avatar className="h-8 w-8 bg-brand-primary text-white">
+            {auth.avatarUrl && (
+              <AvatarImage src={auth.avatarUrl} alt="" className="object-cover" />
+            )}
             <AvatarFallback className="bg-brand-primary text-white text-xs font-semibold">
               {initials}
             </AvatarFallback>
