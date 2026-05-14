@@ -224,6 +224,7 @@ export default function JobDetailPage() {
               facilityNumber={job.facilityNumber}
               facilityName={facility.name}
               jobId={job.id}
+              jobTitle={job.title}
               ctaLabel="Apply to this job"
             />
             <p className="text-[11px] mt-2 text-center text-muted-foreground">
