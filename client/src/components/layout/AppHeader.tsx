@@ -6,6 +6,7 @@
 import { type ReactNode } from "react";
 import { Link } from "wouter";
 import { BrandLogo } from "@/components/BrandLogo";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAppHeaderAuth } from "@/hooks/useAppHeaderAuth";
 import { AppHeaderBackButton } from "./AppHeaderBackButton";
@@ -82,6 +83,22 @@ export function AppHeader({
       <div className="ml-auto flex items-center gap-2">
         {!logoOnly && (
           <>
+            {/* Persistent "Find jobs" link for signed-in seekers.
+                Operators don't see this — their nav lives in the
+                FacilityPortal tab strip. Hidden on mobile (the link is
+                still reachable from the dashboard's Find jobs CTA + the
+                mobile sheet's brand logo Home target) so the header
+                stays compact on narrow viewports. */}
+            {auth.role === "jobseeker" && (
+              <Button
+                asChild
+                variant="ghost"
+                size="sm"
+                className="hidden sm:inline-flex h-8 px-3 text-sm font-medium text-stone-700 hover:text-stone-900"
+              >
+                <Link href="/jobs">Find jobs</Link>
+              </Button>
+            )}
             {rightSlot}
             {!hideAccountChip && (
               <div className="hidden sm:block">
