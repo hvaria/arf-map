@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Briefcase, Building2, ChevronRight, Clock, Send, Trash2 } from "lucide-react";
@@ -6,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { StatusBadge } from "@/components/StatusBadge";
+import { JobDetailModal } from "@/components/JobDetailModal";
 
 export interface SeekerInterest {
   id: number;
@@ -29,6 +31,10 @@ function timeAgo(ts: number): string {
 export function MyInterestsTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  // Open the job detail in place — clicking "View job" on the dashboard
+  // should not redirect to /#/map and then back. The modal lives here so
+  // it overlays whichever page MyInterestsTab is rendered on.
+  const [modalJobId, setModalJobId] = useState<number | null>(null);
 
   const { data: interests, isLoading, isError } = useQuery<SeekerInterest[]>({
     queryKey: ["/api/jobseeker/interests"],
@@ -130,20 +136,21 @@ export function MyInterestsTab() {
 
             <div className="mt-3 flex items-center justify-between gap-2">
               {isPerJob ? (
-                <Link
-                  href={`/jobs/${interest.jobId}`}
-                  className="inline-flex items-center gap-1 text-xs font-medium hover:underline"
+                <button
+                  type="button"
+                  onClick={() => interest.jobId != null && setModalJobId(interest.jobId)}
+                  className="inline-flex items-center gap-1 text-xs font-medium hover:underline bg-transparent border-0 p-0 cursor-pointer"
                   style={{ color: "#4F46E5" }}
                 >
                   View job <ChevronRight className="h-3 w-3" />
-                </Link>
+                </button>
               ) : (
                 <Link
                   href="/map"
                   className="inline-flex items-center gap-1 text-xs font-medium hover:underline"
                   style={{ color: "#4F46E5" }}
                 >
-                  View facility on map <ChevronRight className="h-3 w-3" />
+                  See location <ChevronRight className="h-3 w-3" />
                 </Link>
               )}
               <Button
@@ -160,6 +167,16 @@ export function MyInterestsTab() {
           </div>
         );
       })}
+
+      {/* Job detail modal — overlays the current page (dashboard /
+          profile) instead of redirecting to /#/map first. */}
+      <JobDetailModal
+        jobId={modalJobId}
+        open={modalJobId != null}
+        onOpenChange={(open) => {
+          if (!open) setModalJobId(null);
+        }}
+      />
     </div>
   );
 }
