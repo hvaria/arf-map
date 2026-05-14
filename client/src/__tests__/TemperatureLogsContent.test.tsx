@@ -192,7 +192,6 @@ describe("TemperatureLogsContent — record dialog", () => {
         expect.objectContaining({
           fixtureId: 1,
           readingValue: 38,
-          unit: "F",
           recordedBy: expect.any(String),
         }),
       );

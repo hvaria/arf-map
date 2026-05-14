@@ -149,7 +149,7 @@ describe("DrillsContent — form submit", () => {
         "POST",
         "/api/ops/drills",
         expect.objectContaining({
-          kind: "fire",
+          drillKind: "fire",
           evacuationSeconds: 2 * 60 + 34,
         }),
       );

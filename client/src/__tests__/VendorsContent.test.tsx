@@ -171,8 +171,8 @@ describe("VendorsContent — add vendor", () => {
         "POST",
         "/api/ops/vendors",
         expect.objectContaining({
-          name: "Linen Co",
-          type: "pharmacy", // default in the dropdown
+          vendorName: "Linen Co",
+          vendorType: "pharmacy", // default in the dropdown
         }),
       );
     });

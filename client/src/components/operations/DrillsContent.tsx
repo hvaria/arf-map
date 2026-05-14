@@ -209,19 +209,18 @@ function LogDrillDialog({
         .filter(Boolean);
 
       const res = await apiRequest("POST", `/api/ops/drills`, {
-        facilityNumber,
-        kind: form.kind,
-        shift: form.shift || null,
-        scenario: form.scenario.trim() || null,
+        drillKind: form.kind,
+        shift: form.shift || undefined,
+        scenario: form.scenario.trim() || undefined,
         executedAt: toLocalEpochMsWithTime(form.date, form.time),
-        leader: form.leader.trim() || null,
+        leader: form.leader.trim() || undefined,
         participants,
-        residents,
+        residentsInvolved: residents,
         evacuationSeconds:
-          evacSeconds === null || Number.isNaN(evacSeconds) ? null : evacSeconds,
-        debrief: form.debrief.trim() || null,
+          evacSeconds === null || Number.isNaN(evacSeconds) ? undefined : evacSeconds,
+        debriefNotes: form.debrief.trim() || undefined,
         correctiveActions,
-        status: "executed",
+        status: "executed" as const,
       });
       const json = (await res.json()) as { success: boolean; data: DrillLog };
       if (json?.data?.id && evidenceRef.current?.pendingCount) {

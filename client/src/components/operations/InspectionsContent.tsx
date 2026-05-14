@@ -180,12 +180,11 @@ function LogInspectionDialog({
     mutationFn: async () => {
       const findings = form.findings.map((f) => f.trim()).filter(Boolean);
       const res = await apiRequest("POST", `/api/ops/inspections`, {
-        facilityNumber,
         inspectorOrg: form.inspectorOrg,
         purpose: form.purpose,
         visitAt: toLocalEpochMs(form.visitAt),
-        inspectorName: form.inspectorName.trim() || null,
-        findings,
+        inspectorName: form.inspectorName.trim() || undefined,
+        findingsJson: findings.length ? JSON.stringify(findings) : undefined,
       });
       const json = (await res.json()) as { success: boolean; data: InspectionRow };
       if (json?.data?.id && evidenceRef.current?.pendingCount) {
@@ -465,9 +464,9 @@ function InspectionDetail({
         "POST",
         `/api/ops/inspections/${inspectionId}/citations`,
         {
-          title: citationForm.title.trim(),
-          detail: citationForm.detail.trim() || null,
-          dueAt: citationForm.dueAt ? toLocalEpochMs(citationForm.dueAt) : null,
+          citationTitle: citationForm.title.trim(),
+          detail: citationForm.detail.trim() || undefined,
+          dueAt: citationForm.dueAt ? toLocalEpochMs(citationForm.dueAt) : undefined,
         },
       );
       return res.json();

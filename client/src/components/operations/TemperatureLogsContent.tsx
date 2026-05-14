@@ -180,13 +180,12 @@ function AddFixtureDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/temp-fixtures`, {
-        facilityNumber,
-        name: form.name.trim(),
         fixtureKey,
+        fixtureLabel: form.name.trim(),
         kind: form.kind,
         unit: form.unit,
-        requiredMin: form.requiredMin ? Number(form.requiredMin) : null,
-        requiredMax: form.requiredMax ? Number(form.requiredMax) : null,
+        requiredMin: form.requiredMin ? Number(form.requiredMin) : undefined,
+        requiredMax: form.requiredMax ? Number(form.requiredMax) : undefined,
       });
       return res.json();
     },
@@ -360,13 +359,11 @@ function RecordReadingDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/temp-logs`, {
-        facilityNumber,
         fixtureId: Number(form.fixtureId),
         readingValue: Number(form.readingValue),
-        unit: fixture?.unit ?? "F",
         readingAt: new Date(form.readingAt).getTime(),
         recordedBy: form.recordedBy.trim() || defaultRecordedBy,
-        note: form.note.trim() || null,
+        note: form.note.trim() || undefined,
       });
       const json = (await res.json()) as { success: boolean; data: TempLog };
       // Flush pre-save evidence (optional kitchen photo) per Phase 3 §4.2.

@@ -166,15 +166,14 @@ function AddVendorDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/vendors`, {
-        facilityNumber,
-        name: form.name.trim(),
-        type: form.type,
-        contactName: form.contactName.trim() || null,
-        contactPhone: form.contactPhone.trim() || null,
-        contactEmail: form.contactEmail.trim() || null,
-        coiExpires: form.coiExpires ? toLocalEpochMs(form.coiExpires) : null,
-        licenseExpires: form.licenseExpires ? toLocalEpochMs(form.licenseExpires) : null,
-        notes: form.notes.trim() || null,
+        vendorName: form.name.trim(),
+        vendorType: form.type,
+        contactName: form.contactName.trim() || undefined,
+        contactPhone: form.contactPhone.trim() || undefined,
+        contactEmail: form.contactEmail.trim() || undefined,
+        coiExpiresAt: form.coiExpires ? toLocalEpochMs(form.coiExpires) : undefined,
+        licenseExpiresAt: form.licenseExpires ? toLocalEpochMs(form.licenseExpires) : undefined,
+        notes: form.notes.trim() || undefined,
       });
       const json = (await res.json()) as { success: boolean; data: Vendor };
       if (json?.data?.id && evidenceRef.current?.pendingCount) {

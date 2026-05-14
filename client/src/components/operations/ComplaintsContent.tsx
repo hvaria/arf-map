@@ -180,17 +180,16 @@ function LogComplaintDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/ops/complaints`, {
-        facilityNumber,
         complainantType: form.complainantType,
-        complainantName: isAnonymous ? null : form.complainantName.trim() || null,
+        complainantName: isAnonymous ? undefined : form.complainantName.trim() || undefined,
         complainantRelation: isAnonymous
-          ? null
-          : form.complainantRelation.trim() || null,
+          ? undefined
+          : form.complainantRelation.trim() || undefined,
         nature: form.nature.trim(),
         receivedAt: new Date(`${form.receivedAt}T00:00:00`).getTime(),
-        intakeNotes: form.intakeNotes.trim() || null,
-        externalRef: form.externalRef.trim() || null,
-        assignedTo: form.assignedTo || null,
+        intakeNotes: form.intakeNotes.trim() || undefined,
+        externalRef: form.externalRef.trim() || undefined,
+        assignedTo: form.assignedTo || undefined,
       });
       const json = (await res.json()) as { success: boolean; data: ComplaintRow };
       if (json?.data?.id && evidenceRef.current?.pendingCount) {
