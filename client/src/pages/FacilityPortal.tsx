@@ -3,9 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Link, useLocation } from "wouter";
-import { ArrowLeft, Building2, Briefcase, Plus, Pencil, Trash2, LogOut, CheckCircle2, Edit3, AlertCircle, MailCheck, RefreshCw, Users, KeyRound, Eye, EyeOff, MapPin, Lock } from "lucide-react";
-import { BrandLogo } from "@/components/BrandLogo";
+import { Building2, Briefcase, Plus, Pencil, Trash2, Edit3, MailCheck, RefreshCw, KeyRound, Eye, EyeOff, Lock, CheckCircle2, AlertCircle } from "lucide-react";
+import { AppHeader } from "@/components/layout/AppHeader";
 import OperationsTab from "@/components/OperationsTab";
 import { OperationsPaywall } from "@/components/billing/OperationsPaywall";
 import { isOperationsActive } from "@/lib/subscription";
@@ -14,17 +13,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
-import type { Facility } from "@shared/schema";
-import { useFacilities } from "@/hooks/useFacilities";
 import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-of-interest
 import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
 
@@ -1047,11 +1043,9 @@ function clearHashParams(keys: string[]) {
   window.history.replaceState(null, "", nextUrl);
 }
 
-function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
+function Dashboard({ user }: { user: SessionUser }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { facilityByNumber } = useFacilities();
-  const [, navigate] = useLocation();
   const [editingDetails, setEditingDetails] = useState(false);
 
   // Controlled tab state — so the post-checkout / paywall-deeplink effects
@@ -1106,12 +1100,27 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const facility = facilityByNumber.get(user.facilityNumber) ?? null;
-
-  const { data: publicData } = useQuery<{ overrides: FacilityOverride | null }>({
+  // The /public endpoint already returns the facility row alongside
+  // overrides + job postings, so we read facility identity (name + city)
+  // off it directly rather than loading the entire CA facilities dataset
+  // via useFacilities() just to map by number.
+  const { data: publicData } = useQuery<{
+    facility: { name?: string | null; city?: string | null } | null;
+    overrides: FacilityOverride | null;
+  }>({
     queryKey: [`/api/facilities/${user.facilityNumber}/public`],
     queryFn: getQueryFn({ on401: "throw" }),
   });
+  const facility = publicData?.facility ?? null;
+
+  // Listing-completeness signal — surfaced inside "My details" tab as the
+  // operator's primary nudge to fill in missing public-listing info.
+  const overrides = publicData?.overrides ?? null;
+  const missingFields: string[] = [];
+  if (!overrides?.phone) missingFields.push("phone");
+  if (!overrides?.email) missingFields.push("email");
+  if (!overrides?.description) missingFields.push("description");
+  const isListingComplete = missingFields.length === 0;
 
   // Open notes drive the indicator on the Operations tab. Same query key as
   // OperationsTab → NotesContent uses, so React Query dedupes.
@@ -1127,24 +1136,10 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
   const notesCount = notesItems.length;
   const hasUrgentNote = notesItems.some((n) => n.priority === "urgent");
 
-  const logoutMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/facility/logout"),
-    // UI-05: clear auth cache synchronously so the UI transitions to the login
-    // form immediately — no async refetch race condition. After clearing, send
-    // the (now-anonymous) user to the map, which auto-opens the role picker.
-    onSuccess: () => {
-      qc.setQueryData(["/api/facility/me"], null);
-      onLogout();
-      toast({ title: "Logged out" });
-      navigate("/map");
-    },
-  });
-
-  const isListingComplete = !!(
-    publicData?.overrides?.phone &&
-    publicData?.overrides?.email &&
-    publicData?.overrides?.description
-  );
+  // Sign-out now flows through the AppHeader's account chip → useAppHeaderAuth.
+  // The previous `logoutMutation` (POST /api/facility/logout + cache clear +
+  // navigate to /map) is preserved verbatim inside the hook, so the
+  // user-visible behavior is unchanged.
 
   return (
     <Tabs
@@ -1152,115 +1147,41 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
       onValueChange={setActiveTab}
       className="min-h-screen flex flex-col bg-white"
     >
-      {/* ── Top bar ─────────────────────────────────────────────────────────
-       * Single row at 56px. Identity collapses inline rather than stacking
-       * into an avatar + 3-line block: brand mark establishes identity, the
-       * facility name reads as the page title in normal sentence case (not
-       * uppercase orange), and metadata sits dot-separated to its right.
-       *
-       * Status chip uses the new semantic status tokens; the role lens
-       * (previously buried in the OperationsTab body) lives here so the
-       * preview banner is anchored to the page header it affects.
+      {/* ── Top bar ──
+       * Unified AppHeader. Identity (facility name + lic # + city) lives
+       * in the sticky sub-toolbar below so operators managing multiple
+       * accounts always see which facility they're editing. Listing
+       * completeness surfaces inside the "My details" tab content. The
+       * notes bell stays in the AppHeader rightSlot as the operator's
+       * primary inbox affordance.
        */}
-      <header
-        className="sticky top-0 z-30 bg-white border-b"
+      <AppHeader
+        rightSlot={<NotesNotificationButton facilityNumber={user.facilityNumber} />}
+      />
+
+      {/* ── Sub-toolbar (identity row + tab strip) ──────────────────────
+       * Combined into one sticky container at top-16 z-20 so the math
+       * stays simple: a single sub-toolbar sits directly under the
+       * AppHeader (h-16). The identity row is informational only; the
+       * <nav>/TabsList below carries the keyboard semantics. Underline-
+       * style active state via .portal-tabs (defined in index.css).
+       */}
+      <div
+        className="sticky top-16 z-20 bg-white border-b"
         style={{ borderColor: "var(--portal-border-subtle)" }}
       >
-        <div className="px-4 lg:px-6 min-h-16 py-2 flex items-center gap-4">
-          {/* DO NOT MODIFY - Brand Lock — render at default size so the
-              constellation icon stays in proportion with the fixed
-              "Neighbourhood / Care / Finder" text labels. The brand mark is
-              wrapped in a Link so clicking it returns the user to the map
-              (the in-app "home"). The wrapper is display:flex so it doesn't
-              affect BrandLogo's intrinsic layout. */}
-          <Link
-            href="/map"
-            className="flex items-center hover:opacity-90 transition-opacity"
-            aria-label="Back to map"
+        <div className="max-w-7xl mx-auto px-4 lg:px-6 py-2 flex items-baseline gap-3">
+          <h1
+            className="text-base font-semibold text-stone-900 truncate"
+            data-testid="facility-identity-name"
           >
-            <BrandLogo />
-          </Link>
-
-          <Link href="/map" className="hidden md:block">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground hover:text-foreground gap-1.5"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Back to Map
-            </Button>
-          </Link>
-
-          <div
-            className="hidden md:block h-6 w-px"
-            style={{ background: "var(--portal-border-subtle)" }}
-            aria-hidden="true"
-          />
-
-          {/* Identity — inline, dense, no decorative avatar bubble */}
-          <div className="min-w-0 flex items-center gap-3 flex-1">
-            <div className="min-w-0">
-              <h1 className="text-[15px] font-semibold leading-tight truncate text-stone-900">
-                {facility?.name ?? `Facility #${user.facilityNumber}`}
-              </h1>
-              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate">
-                <span className="portal-num">Lic. {user.facilityNumber}</span>
-                {facility && (
-                  <>
-                    <span aria-hidden="true" className="text-stone-300">·</span>
-                    <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{facility.city}</span>
-                  </>
-                )}
-              </p>
-            </div>
-
-            {/* Listing-completeness chip — semantic tokens, no full-width
-                badge. Hidden on narrow viewports where it would push the
-                action cluster out. */}
-            <span
-              className={cn(
-                "hidden lg:inline-flex items-center gap-1 h-6 px-2 rounded-full border text-[11px] font-medium",
-                isListingComplete
-                  ? "bg-[var(--portal-status-ok-bg)] text-[var(--portal-status-ok)] border-[var(--portal-status-ok-border)]"
-                  : "bg-[var(--portal-status-warning-bg)] text-[var(--portal-status-warning)] border-[var(--portal-status-warning-border)]"
-              )}
-            >
-              {isListingComplete ? (
-                <CheckCircle2 className="h-3 w-3" />
-              ) : (
-                <AlertCircle className="h-3 w-3" />
-              )}
-              {isListingComplete ? "Listing complete" : "Listing incomplete"}
-            </span>
-          </div>
-
-          {/* Action cluster — bell + logout. Bell carries its own counter. */}
-          <div className="flex items-center gap-1">
-            <NotesNotificationButton facilityNumber={user.facilityNumber} />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground hover:text-foreground gap-1.5"
-              onClick={() => logoutMutation.mutate()}
-              disabled={logoutMutation.isPending}
-              aria-label="Log out"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">
-                {logoutMutation.isPending ? "Logging out…" : "Log out"}
-              </span>
-            </Button>
-          </div>
+            {facility?.name ?? `Facility #${user.facilityNumber}`}
+          </h1>
+          <span className="text-xs text-stone-500 truncate">
+            <span className="portal-num">Lic. {user.facilityNumber}</span>
+            {facility?.city ? ` · ${facility.city}` : ""}
+          </span>
         </div>
-
-        {/* ── Tab strip ───────────────────────────────────────────────────
-         * Sits as its own sticky row underneath the top bar. Underline-style
-         * active state via .portal-tabs (defined in index.css). No icons in
-         * tab labels — the icons fought with the underline indicator and
-         * gave the strip a "toolbar" feel instead of "primary nav."
-         */}
         <nav
           aria-label="Facility portal sections"
           className="portal-tabs px-4 lg:px-6 overflow-x-auto"
@@ -1309,7 +1230,7 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
             </TabsTrigger>
           </TabsList>
         </nav>
-      </header>
+      </div>
 
       {/* ── Page canvas ─────────────────────────────────────────────────
        * Warm-neutral background distinguishes content from the white
@@ -1322,6 +1243,43 @@ function Dashboard({ user, onLogout }: { user: SessionUser; onLogout: () => void
       >
         <div className="max-w-3xl mx-auto px-4 lg:px-6 py-6">
           <TabsContent value="details" className="mt-0">
+            {/* Listing-completeness banner — replaces the chip that
+                previously lived in the header. Sits above the
+                details table so the operator sees the nudge before
+                they scan the fields. */}
+            <div
+              role="status"
+              data-testid="listing-completeness-banner"
+              className={cn(
+                "mb-4 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm",
+                isListingComplete
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                  : "bg-amber-50 border-amber-200 text-amber-900",
+              )}
+            >
+              {isListingComplete ? (
+                <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" aria-hidden="true" />
+              ) : (
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
+              )}
+              <div className="min-w-0">
+                {isListingComplete ? (
+                  <p className="font-medium leading-snug">
+                    Your public listing is complete.
+                  </p>
+                ) : (
+                  <>
+                    <p className="font-medium leading-snug">
+                      Your public listing is missing {missingFields.length} field
+                      {missingFields.length === 1 ? "" : "s"}: {missingFields.join(", ")}.
+                    </p>
+                    <p className="text-amber-800/80 text-[13px] mt-0.5 leading-snug">
+                      Filling these in helps families find you.
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
             {editingDetails ? (
               <div className="rounded-lg border bg-white p-5" style={{ borderColor: "var(--portal-border-subtle)" }}>
                 <div className="mb-4">
@@ -1466,37 +1424,16 @@ export default function FacilityPortal() {
     }
   };
 
-  const handleLogout = () => {
-    qc.setQueryData(["/api/facility/me"], null);
-  };
-
   if (me) {
-    return <Dashboard user={me} onLogout={handleLogout} />;
+    return <Dashboard user={me} />;
   }
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Header */}
-      <header className="border-b px-4 py-3 flex items-center gap-3" style={{ background: "var(--brand-white)", borderBottom: "1px solid var(--brand-border)" }}>
-        {/* DO NOT MODIFY - Brand Lock — wrapped in a Link so clicking the
-            brand mark returns the user to the map (the in-app "home"). */}
-        <Link
-          href="/map"
-          className="flex items-center hover:opacity-90 transition-opacity"
-          aria-label="Back to map"
-        >
-          <BrandLogo />
-        </Link>
-        <Separator orientation="vertical" className="h-8" />
-        <Link href="/map">
-          <Button variant="ghost" size="sm" className="-ml-2">
-            <ArrowLeft className="h-4 w-4 mr-1.5" />
-            Back to Map
-          </Button>
-        </Link>
-        <Separator orientation="vertical" className="h-5" />
-        <span className="text-sm font-medium text-muted-foreground">Facility Portal</span>
-      </header>
+      {/* Unified AppHeader — logoOnly variant for the unauthenticated
+          portal shell. The auth form below is the only affordance the
+          visitor needs at this point. */}
+      <AppHeader logoOnly />
 
       <main className="max-w-xl mx-auto px-4 py-8">
         {isLoading ? (

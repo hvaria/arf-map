@@ -1,0 +1,100 @@
+// z-index map for the unified shell:
+//   header        = 30
+//   sub-toolbars  = 20 (rendered as siblings, e.g. FacilityPortal tabs)
+//   panels        = 40
+//   dialogs/sheets = 50
+import { type ReactNode } from "react";
+import { Link } from "wouter";
+import { BrandLogo } from "@/components/BrandLogo";
+import { cn } from "@/lib/utils";
+import { useAppHeaderAuth } from "@/hooks/useAppHeaderAuth";
+import { AppHeaderBackButton } from "./AppHeaderBackButton";
+import { AppHeaderAccountChip } from "./AppHeaderAccountChip";
+import { AppHeaderMobileMenu } from "./AppHeaderMobileMenu";
+
+export interface AppHeaderProps {
+  /** Hide the right-side cluster (account chip + mobile menu + rightSlot). Back button and logo still render. */
+  logoOnly?: boolean;
+  /** Back-button target. Omit to skip the back affordance entirely. */
+  backTo?: string;
+  /** Visible label next to the back chevron. Defaults to "Back". */
+  backLabel?: string;
+  /** Override the default home route the logo links to. */
+  logoHomeOverride?: string;
+  /** "solid" (default, white bg) | "glass" (translucent — for MapPage). */
+  variant?: "solid" | "glass";
+  /** Content rendered immediately BEFORE the account chip (bell, refresh, etc.). */
+  rightSlot?: ReactNode;
+  /** Extra items rendered inside the mobile Sheet (e.g. notes bell). */
+  mobileExtras?: ReactNode;
+  /** Suppress the chip even when signed in (used on auth screens). */
+  hideAccountChip?: boolean;
+  /** Anonymous sign-in click handler. When set, used instead of routing. */
+  onSignInOverride?: () => void;
+}
+
+export function AppHeader({
+  logoOnly = false,
+  backTo,
+  backLabel = "Back",
+  logoHomeOverride,
+  variant = "solid",
+  rightSlot,
+  mobileExtras,
+  hideAccountChip = false,
+  onSignInOverride,
+}: AppHeaderProps) {
+  const auth = useAppHeaderAuth();
+  const logoHome = logoHomeOverride ?? auth.homePath;
+
+  return (
+    <header
+      className={cn(
+        "sticky top-0 z-30 h-16 flex items-center px-4 lg:px-6 gap-3",
+        "shadow-[0_1px_3px_rgba(15,23,42,0.06),0_4px_12px_rgba(15,23,42,0.04)]",
+        variant === "glass" ? "bg-white/85 backdrop-blur" : "bg-white",
+      )}
+    >
+      {/* Back button shows whenever a target is supplied, even in
+          logoOnly shells — `logoOnly` only suppresses the right-side
+          account chip / mobile menu, not navigation affordances. */}
+      {backTo && (
+        <AppHeaderBackButton to={backTo} label={backLabel} />
+      )}
+
+      <Link
+        href={logoHome}
+        className="flex items-center hover:opacity-90 transition-opacity"
+        aria-label="Home"
+      >
+        {/* Two instances toggled by breakpoint so we get a slightly
+            smaller mark on mobile without rerendering on resize. */}
+        <span className="hidden sm:flex">
+          <BrandLogo size={48} />
+        </span>
+        <span className="flex sm:hidden">
+          <BrandLogo size={44} />
+        </span>
+      </Link>
+
+      {/* Right-aligned cluster. `ml-auto` keeps the logo flush-left even
+          when there's no left content; the gap matches the header's. */}
+      <div className="ml-auto flex items-center gap-2">
+        {!logoOnly && (
+          <>
+            {rightSlot}
+            {!hideAccountChip && (
+              <div className="hidden sm:block">
+                <AppHeaderAccountChip onSignInOverride={onSignInOverride} />
+              </div>
+            )}
+            <AppHeaderMobileMenu
+              extras={mobileExtras}
+              onSignInOverride={onSignInOverride}
+            />
+          </>
+        )}
+      </div>
+    </header>
+  );
+}

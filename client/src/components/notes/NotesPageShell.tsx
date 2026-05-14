@@ -27,13 +27,14 @@
  * for `h-full` so the shell fills the modal's height.
  */
 import { useEffect, useState } from "react";
-import { ArrowLeft, ExternalLink, X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { useNotesUrlState } from "@/hooks/useNotesUrlState";
 import { track } from "@/lib/telemetry";
+import { AppHeader } from "@/components/layout/AppHeader";
 import { NotesIdentityHeader } from "./NotesIdentityHeader";
 import { NotesToolbar } from "./NotesToolbar";
 import { NoteGroupTabs } from "./NoteGroupTabs";
@@ -170,15 +171,11 @@ export function NotesPageShell({
 
   // In modal mode the leftSlot is empty (no "back to portal" — there's no
   // route to go back to) and the rightSlot is a Close X. In page mode the
-  // existing "Back to portal" + "Quick triage drawer" pair is preserved.
-  const leftSlot = isModal ? null : (
-    <a href="#/facility-portal">
-      <Button variant="ghost" size="sm" className="-ml-2">
-        <ArrowLeft className="h-4 w-4 mr-1.5" />
-        Back to portal
-      </Button>
-    </a>
-  );
+  // "Back to portal" affordance has moved into the AppHeader (rendered
+  // above the modal-only branch) — the leftSlot is therefore null in both
+  // modes and the existing identity header keeps the urgent-count badge
+  // alongside any extra rightSlot.
+  const leftSlot = null;
   const rightSlot = isModal ? (
     <Button
       variant="ghost"
@@ -213,8 +210,24 @@ export function NotesPageShell({
           : "min-h-screen flex flex-col bg-background"
       }
     >
-      {/* Sticky page header */}
-      <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      {/* In page mode the unified AppHeader provides the brand mark +
+          back-to-portal affordance + account chip. The NotesIdentityHeader
+          (facility crumb + urgent-count badge) and toolbar/tabs row stack
+          as a sticky sibling underneath. Modal mode skips the AppHeader —
+          the modal frame already has its own chrome and the NotesIdentityHeader
+          carries the close affordance via `rightSlot`. */}
+      {!isModal && <AppHeader backTo="/facility-portal" backLabel="Operations" />}
+
+      {/* Sticky toolbar/tabs row. `top-16` clears the AppHeader on page mode;
+          modal mode renders the same component at `top-0` (the modal frame
+          contains the scroll context, not the page). */}
+      <header
+        className={
+          isModal
+            ? "sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+            : "sticky top-16 z-20 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+        }
+      >
         <div className="px-4 pt-3 pb-2">
           <NotesIdentityHeader
             variant="expanded"

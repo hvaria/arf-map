@@ -3,10 +3,10 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { Building2, MapPin, Activity, Briefcase, ArrowLeft, RefreshCw } from "lucide-react";
+import { Building2, MapPin, Activity, Briefcase, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+import { AppHeader } from "@/components/layout/AppHeader";
 import type { FacilitiesMeta } from "@shared/schema";
 import { normalizeRawType } from "@shared/taxonomy";
 
@@ -70,21 +70,14 @@ export default function StatsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b bg-background/95 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
-          <a href="/#/map">
-            <Button variant="ghost" size="sm" className="gap-1.5 -ml-2">
-              <ArrowLeft className="h-4 w-4" />
-              Map
-            </Button>
-          </a>
-          <Separator orientation="vertical" className="h-5" />
+      {/* Unified AppHeader. Refresh + last-updated label move into the
+          rightSlot so the visual chrome stays consistent with every other
+          authenticated surface. */}
+      <AppHeader
+        backTo="/map"
+        backLabel="Map"
+        rightSlot={
           <div className="flex items-center gap-2">
-            <BarChart2Icon className="h-4 w-4 text-primary" />
-            <h1 className="text-sm font-semibold">California CCLD Statistics</h1>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
             {lastUpdated && (
               <span className="text-xs text-muted-foreground hidden sm:block">
                 Data: {lastUpdated}
@@ -95,10 +88,16 @@ export default function StatsPage() {
               Refresh
             </Button>
           </div>
-        </div>
-      </header>
+        }
+      />
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-8">
+        {/* Inline page-title row — the AppHeader carries the brand mark
+            only; the page's own heading still belongs in the canvas. */}
+        <div className="flex items-center gap-2">
+          <BarChart2Icon className="h-4 w-4 text-primary" />
+          <h1 className="text-sm font-semibold">California CCLD Statistics</h1>
+        </div>
         {/* KPI row */}
         {isLoading ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { MapView } from "@/components/MapView";
 import { FacilityPanel } from "@/components/FacilityPanel";
 import { JobsPanel } from "@/components/JobsPanel";
@@ -15,10 +14,9 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Building2, Briefcase, LogIn, MapPin, SlidersHorizontal } from "lucide-react";
+import { Building2, Briefcase, MapPin, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { BrandLogo } from "@/components/BrandLogo";
-import { getQueryFn } from "@/lib/queryClient";
+import { AppHeader } from "@/components/layout/AppHeader";
 import { useAuth } from "@/context/AuthContext";
 import { useSession } from "@/hooks/useSession";
 import { useFacilityPins } from "@/hooks/useFacilityPins";
@@ -155,12 +153,6 @@ export default function MapPage() {
 
   const { user: jobSeeker, isReady: jobSeekerReady } = useAuth();
 
-  const { data: jobSeekerProfile } = useQuery<{ profilePictureUrl?: string | null; firstName?: string | null } | null>({
-    queryKey: ["/api/jobseeker/profile"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!jobSeeker,
-  });
-
   const { data: facilityUser, isLoading: facilitySessionLoading } = useSession();
 
   // Force the role-picker dialog open for any visitor who has neither a
@@ -190,47 +182,15 @@ export default function MapPage() {
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background" data-testid="map-page">
 
-      {/* ── Top navbar ── */}
-      <header className="flex items-center justify-between px-4 h-18 border-b bg-[oklch(95.7%_0.038_77.164_/_0.8))] backdrop-blur-sm z-50 flex-shrink-0">
-        <BrandLogo size={80} />
-        <div className="hidden md:flex items-center gap-1">
-          {jobSeeker ? (
-            <a href="/#/job-seeker">
-              <Button variant="outline" size="sm" className="h-7 text-xs flex items-center gap-1.5">
-                <div className="w-4 h-4 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0">
-                  {jobSeekerProfile?.profilePictureUrl ? (
-                    <img src={jobSeekerProfile.profilePictureUrl} alt="Profile" className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-[8px] font-semibold text-foreground">
-                      {jobSeeker.email[0].toUpperCase()}
-                    </span>
-                  )}
-                </div>
-                {jobSeekerProfile?.firstName ?? jobSeeker.email.split("@")[0]}
-              </Button>
-            </a>
-          ) : facilityUser ? (
-            <a href="/#/facility-portal">
-              <Button variant="outline" size="sm" className="h-7 text-xs flex items-center gap-1.5">
-                <div className="w-4 h-4 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0 bg-primary/10">
-                  <Building2 className="h-2.5 w-2.5 text-primary" />
-                </div>
-                {facilityUser.username}
-              </Button>
-            </a>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => setLoginDialogOpen(true)}
-            >
-              <LogIn className="h-3.5 w-3.5 mr-1" />
-              Login
-            </Button>
-          )}
-        </div>
-      </header>
+      {/* ── Top navbar ──
+       * Unified AppHeader, glass variant so the map shows through. The
+       * anonymous-user "Sign in" affordance routes through the existing
+       * role-picker dialog rather than navigating away.
+       */}
+      <AppHeader
+        variant="glass"
+        onSignInOverride={() => setLoginDialogOpen(true)}
+      />
 
       {/* ── Main content (map + sidebar) ── */}
       <div className="flex flex-1 overflow-hidden">
@@ -321,52 +281,9 @@ export default function MapPage() {
                 )}
               </div>
 
-              {/* Mobile-only: account/login button */}
-              <div className="pointer-events-auto ml-auto md:hidden">
-                {jobSeeker ? (
-                  <a href="/#/job-seeker">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="bg-background/90 backdrop-blur-sm shadow-sm flex items-center gap-1.5"
-                    >
-                      <div className="w-5 h-5 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0">
-                        {jobSeekerProfile?.profilePictureUrl ? (
-                          <img src={jobSeekerProfile.profilePictureUrl} alt="Profile" className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-[9px] font-semibold text-foreground">
-                            {jobSeeker.email[0].toUpperCase()}
-                          </span>
-                        )}
-                      </div>
-                      Account
-                    </Button>
-                  </a>
-                ) : facilityUser ? (
-                  <a href="/#/facility-portal">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="bg-background/90 backdrop-blur-sm shadow-sm flex items-center gap-1.5"
-                    >
-                      <div className="w-5 h-5 rounded-full border border-border overflow-hidden flex items-center justify-center flex-shrink-0 bg-primary/10">
-                        <Building2 className="h-3 w-3 text-primary" />
-                      </div>
-                      My Facility
-                    </Button>
-                  </a>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="bg-background/90 backdrop-blur-sm shadow-sm"
-                    onClick={() => setLoginDialogOpen(true)}
-                  >
-                    <LogIn className="h-4 w-4 mr-1.5" />
-                    Login
-                  </Button>
-                )}
-              </div>
+              {/* Mobile sign-in / account affordance lives in the AppHeader's
+                  Sheet menu (hamburger). The previous floating button here
+                  was redundant with the unified header. */}
             </div>
           </div>
 

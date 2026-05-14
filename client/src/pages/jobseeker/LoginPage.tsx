@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "@/context/AuthContext";
+import { AppHeader } from "@/components/layout/AppHeader";
 import type { ApiError } from "@/lib/auth";
 
 // ── Validation schema ─────────────────────────────────────────────────────────
@@ -131,20 +132,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen bg-white flex items-center justify-center px-4 py-12">
-      {/* Small back-link in the top-left so users can bail out of sign-in
-          without losing their way. Map auto-opens the role picker for
-          anonymous visitors so they can pick a different door. */}
-      <Link
-        href="/map"
-        className="absolute top-5 left-5 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-[#818CF8] transition-colors"
-      >
-        <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
-          <path fillRule="evenodd" d="M12.78 5.22a.75.75 0 010 1.06L7.06 12l5.72 5.72a.75.75 0 11-1.06 1.06l-6.25-6.25a.75.75 0 010-1.06l6.25-6.25a.75.75 0 011.06 0z" clipRule="evenodd" />
-        </svg>
-        Back to map
-      </Link>
+    <div className="relative min-h-screen bg-white flex flex-col">
+      {/* Unified AppHeader — logoOnly so the sign-in card stays the focal
+          point. The back chevron returns the user to the registration /
+          marketing surface at #/job-seeker. */}
+      <AppHeader logoOnly backTo="/job-seeker" backLabel="Sign up" />
 
+      <div className="flex flex-1 items-center justify-center px-4 py-12">
       <div className="relative w-full max-w-[420px]">
         {/* Card */}
         <div
@@ -367,6 +361,7 @@ export default function LoginPage() {
           </a>
           .
         </p>
+      </div>
       </div>
     </div>
   );
