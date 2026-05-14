@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Send, CheckCircle2, Star, Briefcase, Building2, MapPin, Mail, Info } from "lucide-react";
+import { Send, CheckCircle2, Star, Briefcase, Building2, MapPin, Mail, Info, User, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -65,6 +65,7 @@ interface SeekerInterest {
 interface JobSeekerProfileLite {
   firstName: string | null;
   lastName: string | null;
+  profilePictureUrl: string | null;
   city: string | null;
   state: string | null;
   phone: string | null;
@@ -326,10 +327,10 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
 
 // ── ProfilePreview ──────────────────────────────────────────────────────────
 // Surfaces the slice of the seeker's profile the facility will see when
-// the application lands. Read-only — the seeker edits in
-// /#/jobseeker/dashboard so we don't fork an editor here. If the profile
-// hasn't been filled in yet, the preview becomes a soft nudge to
-// complete it (non-blocking — submission still goes through).
+// the application lands. Leads with avatar + display name (what a hiring
+// team scans first), with email as secondary muted text — earlier
+// versions led with the email which mis-framed the application as
+// anonymous. Read-only: seekers edit in /#/job-seeker.
 function ProfilePreview({
   profile,
   email,
@@ -338,45 +339,83 @@ function ProfilePreview({
   email: string;
 }) {
   // Credentials preview — only fetched once the dialog has opened
-  // (parent gates `profile` on `dialogOpen`), so the dropdown payload
-  // is not paid for on the FacilityPanel mount path.
+  // (parent gates `profile` on `dialogOpen`), so the payload is not
+  // paid for on the FacilityPanel mount path.
   const { data: credentials } = useCredentials({ enabled: !!profile });
   const credentialList = credentials ?? [];
+
+  // Display name falls back to the email's local-part when the seeker
+  // hasn't set firstName/lastName — same convention as
+  // JobSeekerPage's read-only profile card.
+  const fullName = profile
+    ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") || null
+    : null;
+  const displayName = fullName ?? email.split("@")[0];
+  const avatarUrl = profile?.profilePictureUrl ?? null;
+
+  // Header — avatar + name + email — is shown regardless of whether
+  // the profile is filled out, so a brand-new seeker still sees what
+  // the facility will see (just their email-derived name + a nudge).
+  const header = (
+    <div className="flex items-center gap-2">
+      <div className="w-9 h-9 rounded-full bg-stone-200 flex items-center justify-center shrink-0 overflow-hidden">
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <User className="h-4 w-4 text-stone-500" aria-hidden="true" />
+        )}
+      </div>
+      <div className="min-w-0">
+        <p className="text-stone-900 font-medium leading-tight truncate">{displayName}</p>
+        <p className="text-[11px] text-stone-500 flex items-center gap-1 truncate">
+          <Mail className="h-3 w-3 shrink-0" />
+          <span className="truncate">{email}</span>
+        </p>
+      </div>
+    </div>
+  );
+
+  // Empty-profile state: header + a soft nudge to fill in the rest.
   if (!profile) {
     return (
-      <p className="mt-1.5 text-stone-500">
-        Just your email (<span className="font-medium text-stone-700">{email}</span>).{" "}
-        <a
-          href="#/jobseeker/dashboard"
-          className="font-medium text-blue-700 hover:underline"
-        >
-          Add details to your profile →
-        </a>
-      </p>
+      <>
+        {header}
+        <p className="mt-2 text-[11px] text-stone-500">
+          <a
+            href="#/job-seeker"
+            className="font-medium text-blue-700 hover:underline"
+          >
+            Add a profile picture, name, and details →
+          </a>
+        </p>
+      </>
     );
   }
-  const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(" ") || null;
+
+  // Filled profile: header, then secondary fields, then credential chips.
   const location = [profile.city, profile.state].filter(Boolean).join(", ") || null;
   const years = profile.yearsExperience != null
     ? `${profile.yearsExperience} yr${profile.yearsExperience === 1 ? "" : "s"} experience`
     : null;
   const items: Array<{ icon: typeof Mail; text: string }> = [
-    { icon: Mail, text: email },
-    ...(fullName ? [{ icon: Building2, text: fullName }] : []),
     ...(location ? [{ icon: MapPin, text: location }] : []),
-    ...(profile.phone ? [{ icon: Building2, text: profile.phone }] : []),
+    ...(profile.phone ? [{ icon: Phone, text: profile.phone }] : []),
     ...(years ? [{ icon: Briefcase, text: years }] : []),
   ];
+
   return (
     <>
-      <ul className="mt-1.5 space-y-0.5 text-stone-700">
-        {items.map((it, i) => (
-          <li key={i} className="flex items-center gap-1.5">
-            <it.icon className="h-3 w-3 text-stone-400 shrink-0" />
-            <span className="truncate">{it.text}</span>
-          </li>
-        ))}
-      </ul>
+      {header}
+      {items.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-stone-700">
+          {items.map((it, i) => (
+            <li key={i} className="flex items-center gap-1.5">
+              <it.icon className="h-3 w-3 text-stone-400 shrink-0" />
+              <span className="truncate">{it.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {credentialList.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {credentialList.map((c) => (
