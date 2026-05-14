@@ -223,8 +223,8 @@ function AuthSection({
         <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-3">
           <Briefcase className="h-7 w-7 text-primary" />
         </div>
-        <h2 className="text-xl font-bold">Job Seeker Portal</h2>
-        <p className="text-sm text-muted-foreground mt-1">Find positions at residential care facilities</p>
+        <h2 className="text-xl font-bold">Caregiver &amp; Staff Sign In</h2>
+        <p className="text-sm text-muted-foreground mt-1">Find work at ARFs, RCFEs and group homes near you</p>
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
@@ -639,8 +639,8 @@ export default function JobSeekerPage() {
           no-op for anonymous users because the inline auth form below
           IS the sign in surface — they're already where they need to be. */}
       <AppHeader
-        backTo="/map"
-        backLabel="Map"
+        backTo="/jobs"
+        backLabel="Find jobs"
         onSignInOverride={() => {
           // Already on the auth surface — no navigation needed. Make sure
           // we're in the default "auth" view in case the user is in the

@@ -154,7 +154,7 @@ export function JobDetailModal({ jobId, open, onOpenChange }: Props) {
               >
                 <p className="portal-eyebrow flex items-center justify-center gap-1">
                   <Briefcase className="h-3 w-3" />
-                  Role
+                  Position
                 </p>
                 <p className="text-sm font-semibold mt-1" style={{ color: "#1E1B4B" }}>
                   {job.type}

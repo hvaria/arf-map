@@ -259,7 +259,7 @@ export default function MapPage() {
                   >
                     <MapPin className="h-3.5 w-3.5 shrink-0 text-stone-500" />
                     <span className="flex-1 leading-tight text-stone-700">
-                      Showing all California facilities. Search your area for a faster view.
+                      Showing all of California. Use your location to see jobs near you.
                     </span>
                     <button
                       type="button"
@@ -315,9 +315,9 @@ export default function MapPage() {
                 style={{ borderColor: "var(--portal-border-subtle)" }}
               >
                 <span className="inline-block h-8 w-8 rounded-full border-[3px] border-stone-200 border-t-[var(--portal-accent)] animate-spin" />
-                <div className="text-[13px] font-medium text-stone-800">Loading facilities…</div>
+                <div className="text-[13px] font-medium text-stone-800">Loading jobs…</div>
                 <div className="text-[11px] text-muted-foreground -mt-1">
-                  {circleCenter ? "Finding care facilities near you" : "Preparing map"}
+                  {circleCenter ? "Finding open positions near you" : "Preparing map"}
                 </div>
               </div>
             </div>
@@ -391,7 +391,7 @@ export default function MapPage() {
               Welcome
             </DialogTitle>
             <DialogDescription className="text-[13px] text-muted-foreground">
-              Choose how you'd like to use Neighbourhood Care Finder.
+              How will you use this site?
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3 pt-2">
@@ -407,9 +407,9 @@ export default function MapPage() {
                   <Briefcase className="h-4 w-4" />
                 </span>
                 <div>
-                  <p className="font-semibold text-[14px] text-stone-900 leading-none">Job seeker</p>
+                  <p className="font-semibold text-[14px] text-stone-900 leading-none">I'm looking for work</p>
                   <p className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
-                    Browse and apply for open positions.
+                    Find open caregiver, DSP, nursing &amp; admin jobs near you.
                   </p>
                 </div>
               </button>

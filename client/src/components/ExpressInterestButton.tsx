@@ -171,7 +171,10 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
     },
   });
 
-  // Not logged in — curiosity trap: write pending action and go to register
+  // Not logged in — curiosity trap: write pending action and go to register.
+  // Default label depends on grain: per-job applications use "Apply" while
+  // facility-level interest uses "Contact this facility" — both softer
+  // than the old generic "Express Interest" framing.
   if (!me) {
     return (
       <button
@@ -182,7 +185,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
         }}
       >
         <Send className="h-4 w-4" />
-        {ctaLabel ?? "Express Interest"}
+        {ctaLabel ?? (isPerJob ? "Apply" : "Contact this facility")}
       </button>
     );
   }
@@ -202,7 +205,10 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
     );
   }
 
-  // Already applied (pending or viewed)
+  // Already applied (pending or viewed). Per-job submissions read as
+  // "Applied"; facility-level interest stays as "Sent" — the verb that
+  // matches the grain so the seeker isn't told they "applied" to a
+  // facility when there was no specific posting.
   if (existing) {
     return (
       <button
@@ -211,7 +217,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
         style={{ background: "#F0F4FF", color: "#4F46E5", border: "1px solid #E0E7FF" }}
       >
         <CheckCircle2 className="h-4 w-4" />
-        Interest Sent ✓
+        {isPerJob ? "Applied ✓" : "Sent ✓"}
       </button>
     );
   }
@@ -224,14 +230,14 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
         onClick={() => setDialogOpen(true)}
       >
         <Send className="h-4 w-4" />
-        {ctaLabel ?? "Express Interest"}
+        {ctaLabel ?? (isPerJob ? "Apply" : "Contact this facility")}
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle style={{ color: "#1E1B4B" }}>
-              {isPerJob ? "Apply to this job" : "Express Interest"}
+              {isPerJob ? "Apply to this job" : "Contact this facility"}
             </DialogTitle>
           </DialogHeader>
 
@@ -315,7 +321,7 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
               >
                 {submitMutation.isPending
                   ? (isPerJob ? "Submitting…" : "Sending…")
-                  : (isPerJob ? "Submit Application" : "Send Interest")}
+                  : (isPerJob ? "Submit Application" : "Send message")}
               </button>
             </div>
           </div>

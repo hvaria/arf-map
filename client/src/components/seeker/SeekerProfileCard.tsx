@@ -141,9 +141,9 @@ export function SeekerProfileCard({ profile, email, onEdit }: SeekerProfileCardP
 
           {!isProfileComplete && (
             <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-sm text-amber-700 dark:text-amber-300">
-              Complete your profile so facilities can find you.{" "}
+              Add your details so hiring managers can reach you.{" "}
               <button onClick={onEdit} className="underline font-medium">
-                Set it up →
+                Finish my profile →
               </button>
             </div>
           )}

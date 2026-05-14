@@ -49,7 +49,7 @@ function BrandMark() {
         </svg>
       </div>
       <span className="text-sm font-semibold tracking-wide uppercase" style={{ color: "#1E1B4B" }}>
-        ARF Care Portal
+        ARF Care Jobs
       </span>
     </div>
   );
@@ -136,7 +136,7 @@ export default function LoginPage() {
       {/* Unified AppHeader — logoOnly so the sign-in card stays the focal
           point. The back chevron returns the user to the registration /
           marketing surface at #/job-seeker. */}
-      <AppHeader logoOnly backTo="/job-seeker" backLabel="Sign up" />
+      <AppHeader logoOnly backTo="/job-seeker" backLabel="Create account" />
 
       <div className="flex flex-1 items-center justify-center px-4 py-12">
       <div className="relative w-full max-w-[420px]">
@@ -155,10 +155,10 @@ export default function LoginPage() {
             {/* Heading */}
             <div className="mb-7 text-center">
               <h1 className="text-2xl font-semibold tracking-tight" style={{ color: "#1E1B4B" }}>
-                Job Seeker Sign In
+                Sign in
               </h1>
               <p className="mt-2 text-sm" style={{ color: "#6B7280" }}>
-                Access your profile, applications, and job opportunities.
+                See your job applications and saved jobs.
               </p>
             </div>
 

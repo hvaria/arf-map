@@ -231,9 +231,9 @@ export function CredentialsSection() {
 
   return (
     <div>
-      <h4 className="portal-eyebrow mb-1">Credentials &amp; Clearances <span className="normal-case tracking-normal text-muted-foreground font-normal">(optional)</span></h4>
+      <h4 className="portal-eyebrow mb-1">Licenses, trainings &amp; clearances</h4>
       <p className="text-[11px] text-muted-foreground mb-3">
-        Health items (TB, vaccines) and Live Scan are shared with facilities only when you apply to a job.
+        TB, CPR, Live Scan and similar are only shared with a facility when you apply.
       </p>
 
       {/* Existing rows */}
@@ -443,7 +443,7 @@ export function CredentialsSection() {
           type="button"
         >
           <Plus className="h-4 w-4" />
-          Add credential
+          Add a license or training
         </Button>
       )}
     </div>

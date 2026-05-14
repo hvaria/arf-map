@@ -194,9 +194,9 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
           ) : jobs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Briefcase className="h-7 w-7 mb-3 text-stone-300" />
-              <p className="text-[13px] font-medium text-stone-700">No open positions</p>
+              <p className="text-[13px] font-medium text-stone-700">No jobs posted yet</p>
               <p className="text-[12px] mt-1 text-center px-4 leading-relaxed">
-                Facilities post openings here when they&apos;re hiring.
+                Check back soon — facilities post new openings here.
               </p>
             </div>
           ) : (
@@ -231,7 +231,7 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
         <>
           <Separator />
           <p className="text-[11px] text-muted-foreground text-center py-2 px-3 leading-relaxed shrink-0">
-            Tap any posting to see the facility on the map.
+            Tap a job to see where it is.
           </p>
         </>
       )}

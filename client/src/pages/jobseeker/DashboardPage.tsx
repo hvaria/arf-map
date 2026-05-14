@@ -91,14 +91,12 @@ export default function DashboardPage() {
   // Sign-out flows through the AppHeader's account chip → useAppHeaderAuth,
   // which calls AuthContext.logout(). The old inline button is retired.
 
-  // Derived bits — display name + avatar + "is the profile filled in".
-  // displayName falls back to the email's local-part (same convention as
-  // JobSeekerPage's read-only profile card) so a brand-new seeker who
-  // hasn't set firstName/lastName still gets a personal greeting.
-  const fullName = profile
-    ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") || null
-    : null;
-  const displayName = fullName ?? user.email.split("@")[0];
+  // Derived bits — first-name greeting + avatar.
+  // Prefer the profile's firstName (BA copy: "Hi {firstName}"); fall back
+  // to the email's local part for brand-new seekers who haven't filled
+  // in their name yet, so the greeting still feels personal.
+  const firstName = profile?.firstName?.trim() || null;
+  const displayName = firstName ?? user.email.split("@")[0];
   const avatarUrl = profile?.profilePictureUrl ?? null;
 
   return (
@@ -124,7 +122,7 @@ export default function DashboardPage() {
             <h1 className="text-xl font-semibold truncate" style={{ color: "#1E1B4B" }}>
               Hi {displayName}
             </h1>
-            <p className="text-sm text-muted-foreground truncate">{user.email}</p>
+            <p className="text-sm text-muted-foreground truncate">Welcome back</p>
           </div>
         </div>
 
@@ -132,9 +130,9 @@ export default function DashboardPage() {
             indigo neutral; status tones reserved for actual status values). */}
         <div className="grid gap-3 sm:grid-cols-3">
           {[
-            { label: "Applications", value: String(interests.length), icon: "📋" },
-            { label: "Saved Jobs", value: "—", icon: "🔖" },
-            { label: "Profile Views", value: "—", icon: "👀" },
+            { label: "Jobs applied to", value: String(interests.length), icon: "📋" },
+            { label: "Saved for later", value: "—", icon: "🔖" },
+            { label: "Times facilities viewed you", value: "—", icon: "👀" },
           ].map(({ label, value, icon }) => (
             <div
               key={label}

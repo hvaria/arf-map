@@ -274,7 +274,7 @@ export function SeekerProfileEditor({ profile, onSaved }: SeekerProfileEditorPro
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Contact Number</Label>
+            <Label>Phone number</Label>
             <Input
               type="tel"
               placeholder="(530) 555-0100"
@@ -360,7 +360,7 @@ export function SeekerProfileEditor({ profile, onSaved }: SeekerProfileEditorPro
       {/* Job types */}
       <div>
         <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">
-          Positions I'm Looking For
+          Roles I work
         </h4>
         <p className="text-xs text-muted-foreground mb-3">Select all that apply</p>
         <div className="flex flex-wrap gap-2">

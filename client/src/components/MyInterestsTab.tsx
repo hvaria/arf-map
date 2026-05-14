@@ -46,7 +46,7 @@ export function MyInterestsTab() {
     mutationFn: (id: number) => apiRequest("DELETE", `/api/jobseeker/interests/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/jobseeker/interests"] });
-      toast({ title: "Interest withdrawn" });
+      toast({ title: "Application withdrawn" });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to withdraw", description: err.message, variant: "destructive" });
@@ -77,10 +77,10 @@ export function MyInterestsTab() {
         <Send className="h-8 w-8 mx-auto text-muted-foreground mb-3 opacity-40" />
         <p className="text-sm font-medium text-muted-foreground">No applications yet</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Browse the map, open a job, and click "Apply to this job" to get started.
+          Find a job near you and tap Apply.
         </p>
-        <a href="#/map" className="mt-4 inline-block text-xs text-primary hover:underline">
-          Browse jobs →
+        <a href="#/jobs" className="mt-4 inline-block text-xs text-primary hover:underline">
+          Find jobs →
         </a>
       </div>
     );
