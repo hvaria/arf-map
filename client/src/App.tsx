@@ -45,8 +45,11 @@ function AppRouter() {
         <Route path="/" component={LandingRoute} />
         {/* Map moved off `/` so the marketing landing can claim the front
             door. Unauthenticated visitors who reach the map see the existing
-            role-picker dialog auto-open with the map dimmed behind it. */}
+            role-picker dialog auto-open with the map dimmed behind it.
+            `/jobs` is a friendlier alias — same component, both URLs work
+            so existing links to `/map` never break. */}
         <Route path="/map" component={MapPage} />
+        <Route path="/jobs" component={MapPage} />
         <Route path="/stats" component={StatsPage} />
         <Route path="/facility-portal" component={FacilityPortal} />
         {/* Dedicated split-pane Notes page (Slice 1 of the Notes redesign).

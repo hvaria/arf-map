@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { User as UserIcon } from "lucide-react";
@@ -7,28 +7,33 @@ import { getQueryFn } from "@/lib/queryClient";
 import { MyInterestsTab, type SeekerInterest } from "@/components/MyInterestsTab"; // NEW: expression-of-interest
 import { AppHeader } from "@/components/layout/AppHeader";
 import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
-
-interface JobSeekerProfileLite {
-  firstName: string | null;
-  lastName: string | null;
-  profilePictureUrl: string | null;
-  phone: string | null;
-  city: string | null;
-  jobTypes: string[] | null;
-}
+import { Card, CardContent } from "@/components/ui/card";
+import { SeekerProfileCard } from "@/components/seeker/SeekerProfileCard";
+import {
+  SeekerProfileEditor,
+  type JobSeekerProfile,
+} from "@/components/seeker/SeekerProfileEditor";
 
 /**
- * DashboardPage — protected route for authenticated job seekers.
+ * DashboardPage — canonical home for authenticated job seekers.
  *
- * This is a functional skeleton.  Extend it by:
- *   - Fetching GET /api/jobseeker/profile for the candidate's full profile
- *   - Fetching GET /api/jobs for recommended job listings
- *   - Adding a Snowflake-backed analytics widget for application insights
- *   - Integrating a notification panel for interview invitations
+ * Surfaces, in order: welcome row, stat tiles, profile card + inline
+ * editor, credentials chip strip, applications list, and a single
+ * right-aligned "Find jobs" link. The previous 2-up quick-link grid was
+ * dropped because (a) "complete your profile" is now redundant (the
+ * profile lives on this page) and (b) the second card's only purpose
+ * was to deep-link back to the map, which the single link does for less
+ * weight.
  */
 export default function DashboardPage() {
   const { user, isReady } = useAuth();
   const [, setLocation] = useLocation();
+
+  // Profile-editor visibility — opens inline below the read-only card.
+  // Auto-opens once for a brand-new seeker whose /profile returns null so
+  // the first thing they see is the form to fill out.
+  const [editingProfile, setEditingProfile] = useState(false);
+  const didAutoOpen = useRef(false);
 
   // NEW: expression-of-interest — live Applications count
   const { data: interests = [] } = useQuery<SeekerInterest[]>({
@@ -40,13 +45,22 @@ export default function DashboardPage() {
 
   // Profile fetch — same query key as JobSeekerPage, so the cache is
   // shared. Used for avatar + display-name + the "profile complete"
-  // signal on the quick-link card.
-  const { data: profile } = useQuery<JobSeekerProfileLite | null>({
+  // signal and as the source of truth for the profile card / editor.
+  const { data: profile } = useQuery<JobSeekerProfile | null>({
     queryKey: ["/api/jobseeker/profile"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!user,
     staleTime: 60000,
   });
+
+  // First-time seekers (no profile row yet) get the editor expanded on
+  // first visit so the very first action is "fill out my profile".
+  useEffect(() => {
+    if (!didAutoOpen.current && profile === null) {
+      didAutoOpen.current = true;
+      setEditingProfile(true);
+    }
+  }, [profile]);
 
   // Credentials chip strip — same shared cache the ProfileEditor
   // section writes to, so additions show up here without a refetch.
@@ -86,15 +100,6 @@ export default function DashboardPage() {
     : null;
   const displayName = fullName ?? user.email.split("@")[0];
   const avatarUrl = profile?.profilePictureUrl ?? null;
-  // Match the JobSeekerPage "profile complete" criteria so the quick-link
-  // card on the dashboard agrees with the badge on the profile page.
-  const isProfileComplete = !!(
-    profile?.firstName &&
-    profile.city &&
-    profile.phone &&
-    profile.jobTypes &&
-    profile.jobTypes.length > 0
-  );
 
   return (
     <div className="min-h-screen bg-white">
@@ -147,10 +152,33 @@ export default function DashboardPage() {
           ))}
         </div>
 
+        {/* Profile — read-only card by default with an inline Edit button
+            that swaps to the editor on the same page. Mirrors the visual
+            language used by /#/job-seeker so both surfaces share one
+            component and one query cache. */}
+        <div className="pt-4">
+          {editingProfile ? (
+            <Card>
+              <CardContent className="pt-5">
+                <SeekerProfileEditor
+                  profile={profile ?? null}
+                  onSaved={() => setEditingProfile(false)}
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <SeekerProfileCard
+              profile={profile ?? null}
+              email={user.email}
+              onEdit={() => setEditingProfile(true)}
+            />
+          )}
+        </div>
+
         {/* Credentials — chip strip of saved credentials/clearances.
             Sourced from the same React Query cache the ProfileEditor
             CredentialsSection writes to; empty state nudges the user
-            to the profile page rather than embedding the editor here. */}
+            to open the inline editor rather than navigate elsewhere. */}
         <div className="pt-4">
           <h2 className="text-sm font-semibold mb-2" style={{ color: "#1E1B4B" }}>
             Credentials
@@ -162,12 +190,13 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : (
-            <a
-              href="#/job-seeker"
-              className="inline-flex items-center text-xs font-medium text-indigo-700 hover:underline"
+            <button
+              type="button"
+              onClick={() => setEditingProfile(true)}
+              className="inline-flex items-center text-xs font-medium text-indigo-700 hover:underline bg-transparent border-0 p-0 cursor-pointer"
             >
               Add credentials to your profile →
-            </a>
+            </button>
           )}
         </div>
 
@@ -179,54 +208,18 @@ export default function DashboardPage() {
           <MyInterestsTab />
         </div>
 
-        {/* Quick links */}
-        <div className="pt-4 grid gap-4 sm:grid-cols-2">
+        {/* Find-jobs link — replaces the old 2-up quick-link card grid.
+            The first card ("Complete your profile") is redundant now
+            that the profile is on this page; the second was a heavy
+            duplicate of the map button. A single right-aligned text
+            link keeps the affordance without the visual weight. */}
+        <div className="pt-4 flex justify-end">
           <a
-            href="#/job-seeker"
-            className="group flex items-start gap-4 rounded-xl p-5 transition-shadow hover:shadow-md"
-            style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}
+            href="#/jobs"
+            className="text-sm font-medium hover:underline"
+            style={{ color: "#4F46E5" }}
           >
-            {/* Avatar-as-icon — shows the seeker's actual photo when
-                uploaded so the card stops reading as an anonymous
-                "complete your profile" stub for users who already did. */}
-            <div className="h-9 w-9 flex-shrink-0 rounded-full overflow-hidden bg-stone-200 flex items-center justify-center">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <UserIcon className="h-5 w-5 text-stone-500" aria-hidden="true" />
-              )}
-            </div>
-            <div>
-              <p className="text-sm font-semibold" style={{ color: "#1E1B4B" }}>
-                {isProfileComplete ? "My profile" : "Complete your profile"}
-              </p>
-              <p className="mt-0.5 text-xs" style={{ color: "#6B7280" }}>
-                {isProfileComplete
-                  ? "Update your phone, experience, or credentials."
-                  : "Add experience, credentials, and job preferences."}
-              </p>
-            </div>
-          </a>
-
-          <a
-            href="#/map"
-            className="group flex items-start gap-4 rounded-xl p-5 transition-shadow hover:shadow-md"
-            style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}
-          >
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg" style={{ background: "#EEF2FF" }}>
-              <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5" style={{ color: "#818CF8" }} aria-hidden="true">
-                <path fillRule="evenodd" d="M6 6V5a3 3 0 013-3h2a3 3 0 013 3v1h2a2 2 0 012 2v3.57A22.952 22.952 0 0110 13a22.95 22.95 0 01-8-1.43V8a2 2 0 012-2h2zm2-1a1 1 0 011-1h2a1 1 0 011 1v1H8V5zm1 5a1 1 0 011-1h.01a1 1 0 110 2H10a1 1 0 01-1-1z" clipRule="evenodd" />
-                <path d="M2 13.692V16a2 2 0 002 2h12a2 2 0 002-2v-2.308A24.974 24.974 0 0110 15c-2.796 0-5.487-.46-8-1.308z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold" style={{ color: "#1E1B4B" }}>
-                Browse Job Opportunities
-              </p>
-              <p className="mt-0.5 text-xs" style={{ color: "#6B7280" }}>
-                Explore open positions at care facilities near you.
-              </p>
-            </div>
+            Find jobs →
           </a>
         </div>
       </main>
