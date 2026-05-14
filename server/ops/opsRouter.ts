@@ -25,7 +25,12 @@ import {
   listRegSettings,
   setRegSetting,
   seedDefaultsForFacility,
+  getRegSetting,
 } from "./regSettings";
+import {
+  CREDENTIAL_TYPES,
+  CREDENTIAL_STATUSES,
+} from "@shared/staff-credentials";
 import {
   EVIDENCE_MAX_BYTES,
   EVIDENCE_ALLOWED_MIME,
@@ -3769,6 +3774,311 @@ opsRouter.post(
         return res.status(400).json({ success: false, error: (e as Error).message });
       }
       console.error("[ops] controlled-sub resolve failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W3 — Staff Credentials (Wave 2, Epic C)
+//
+// Routes mirror Wave 1 module shape: every route chains the existing
+// requireFacilityAuth + requireActiveSubscription (inherited from the
+// router) + requireOpsPermission(STAFF_CREDENTIAL, ...). IDOR guard via
+// :facilityNumber. CREDENTIAL_WARNING_DAYS for the evaluate-shift route
+// comes from getRegSetting — never from the client.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const credentialCreateSchema = z.object({
+  staffId: z.number().int().positive(),
+  credentialType: z.enum(CREDENTIAL_TYPES),
+  issuedAt: z.number().int().nonnegative().nullable().optional(),
+  expiresAt: z.number().int().nonnegative().nullable().optional(),
+  verifiedAt: z.number().int().nonnegative().nullable().optional(),
+  verifiedBy: z.string().trim().max(120).nullable().optional(),
+  status: z.enum(CREDENTIAL_STATUSES).optional(),
+  note: z.string().trim().max(2000).nullable().optional(),
+}).strict();
+
+const credentialUpdateSchema = z.object({
+  credentialType: z.enum(CREDENTIAL_TYPES).optional(),
+  issuedAt: z.number().int().nonnegative().nullable().optional(),
+  expiresAt: z.number().int().nonnegative().nullable().optional(),
+  verifiedAt: z.number().int().nonnegative().nullable().optional(),
+  verifiedBy: z.string().trim().max(120).nullable().optional(),
+  status: z.enum(CREDENTIAL_STATUSES).optional(),
+  note: z.string().trim().max(2000).nullable().optional(),
+}).strict();
+
+const credentialListQuerySchema = z.object({
+  staffId: z.coerce.number().int().positive().optional(),
+  credentialType: z.enum(CREDENTIAL_TYPES).optional(),
+  status: z.enum(CREDENTIAL_STATUSES).optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+const expiringListQuerySchema = z.object({
+  withinDays: z.coerce.number().int().positive().max(3650).optional(),
+  includeExpired: queryStringBool.optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+}).strict();
+
+const evaluateShiftSchema = z.object({
+  staffId: z.number().int().positive(),
+  shiftAtMs: z.number().int().positive(),
+}).strict();
+
+// "other" credentials must carry a non-empty note — the audit trail needs
+// to know what "other" actually means. Apply on both create and update.
+function assertOtherCredentialHasNote(
+  credentialType: string | undefined,
+  note: string | null | undefined,
+): void {
+  if (credentialType === "other") {
+    if (!note || !note.trim()) {
+      throw new Error("credential_type 'other' requires a non-empty note");
+    }
+  }
+}
+
+// GET /facilities/:facilityNumber/staff-credentials
+opsRouter.get(
+  "/facilities/:facilityNumber/staff-credentials",
+  requireOpsPermission(OPS_RESOURCES.STAFF_CREDENTIAL, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = credentialListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await ops.listStaffCredentials(facilityNumber, {
+        staffId: parsed.data.staffId,
+        credentialType: parsed.data.credentialType,
+        status: parsed.data.status,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] staff-credentials list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /staff-credentials/:id
+opsRouter.get(
+  "/staff-credentials/:id",
+  requireOpsPermission(OPS_RESOURCES.STAFF_CREDENTIAL, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const row = await ops.getStaffCredential(id, facilityNumber);
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] staff-credential get failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /staff-credentials
+opsRouter.post(
+  "/staff-credentials",
+  requireOpsPermission(OPS_RESOURCES.STAFF_CREDENTIAL, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = credentialCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      try {
+        assertOtherCredentialHasNote(parsed.data.credentialType, parsed.data.note ?? null);
+      } catch (e) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      const actor = getActor(req);
+      const row = await ops.createStaffCredential(
+        {
+          facilityNumber,
+          staffId: parsed.data.staffId,
+          credentialType: parsed.data.credentialType,
+          issuedAt: parsed.data.issuedAt ?? null,
+          expiresAt: parsed.data.expiresAt ?? null,
+          verifiedAt: parsed.data.verifiedAt ?? null,
+          verifiedBy: parsed.data.verifiedBy ?? null,
+          status: parsed.data.status ?? "active",
+          note: parsed.data.note ?? null,
+          createdBy: actor.id,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] staff-credential create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// PUT /staff-credentials/:id
+opsRouter.put(
+  "/staff-credentials/:id",
+  requireOpsPermission(OPS_RESOURCES.STAFF_CREDENTIAL, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const parsed = credentialUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      // The "other" note rule applies to the *resulting* row; if either
+      // credentialType or note is being changed, re-check with the merged
+      // values. Pull the existing row only when needed.
+      const before = await ops.getStaffCredential(id, facilityNumber);
+      if (!before) return res.status(404).json({ success: false, error: "Not found" });
+      const nextType = parsed.data.credentialType ?? before.credentialType;
+      const nextNote =
+        parsed.data.note !== undefined ? parsed.data.note : before.note;
+      try {
+        assertOtherCredentialHasNote(nextType, nextNote);
+      } catch (e) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      const row = await ops.updateStaffCredential(
+        id,
+        facilityNumber,
+        parsed.data,
+        getActor(req),
+      );
+      if (!row) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] staff-credential update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// DELETE /staff-credentials/:id — soft delete
+opsRouter.delete(
+  "/staff-credentials/:id",
+  requireOpsPermission(OPS_RESOURCES.STAFF_CREDENTIAL, "delete"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res.status(401).json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseIdParam(req.params.id);
+      if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
+      const ok = await ops.softDeleteStaffCredential(id, facilityNumber, getActor(req));
+      if (!ok) return res.status(404).json({ success: false, error: "Not found" });
+      return res.json({ success: true, data: { id, deleted: true } });
+    } catch (e) {
+      console.error("[ops] staff-credential delete failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/credentials/expiring
+opsRouter.get(
+  "/facilities/:facilityNumber/credentials/expiring",
+  requireOpsPermission(OPS_RESOURCES.STAFF_CREDENTIAL, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = expiringListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      // If client doesn't pass withinDays, default to the facility's
+      // CREDENTIAL_WARNING_DAYS reg setting (Wave 2 acceptance criterion).
+      let withinDays = parsed.data.withinDays;
+      if (typeof withinDays !== "number") {
+        const raw = await getRegSetting(facilityNumber, "CREDENTIAL_WARNING_DAYS");
+        const parsedDays = parseInt(raw, 10);
+        withinDays = Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : 60;
+      }
+      const data = await ops.listExpiringCredentials(facilityNumber, {
+        withinDays,
+        includeExpired: parsed.data.includeExpired ?? false,
+        limit: parsed.data.limit ?? 50,
+      });
+      return res.json({
+        success: true,
+        data,
+        meta: { withinDays, count: data.length },
+      });
+    } catch (e) {
+      console.error("[ops] credentials expiring list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /facilities/:facilityNumber/credentials/evaluate-shift
+opsRouter.post(
+  "/facilities/:facilityNumber/credentials/evaluate-shift",
+  requireOpsPermission(OPS_RESOURCES.STAFF_CREDENTIAL, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = evaluateShiftSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      }
+      // warningDays comes from reg settings — never trust the client.
+      const raw = await getRegSetting(facilityNumber, "CREDENTIAL_WARNING_DAYS");
+      const parsedDays = parseInt(raw, 10);
+      const warningDays =
+        Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : 60;
+      const result = await ops.evaluateStaffCredentialsForShift(
+        facilityNumber,
+        parsed.data.staffId,
+        parsed.data.shiftAtMs,
+        warningDays,
+      );
+      return res.json({ success: true, data: { ...result, warningDays } });
+    } catch (e) {
+      if (e instanceof Error && /staff not found/i.test(e.message)) {
+        return res.status(404).json({ success: false, error: e.message });
+      }
+      if (isDomainError(e)) {
+        return res.status(400).json({ success: false, error: (e as Error).message });
+      }
+      console.error("[ops] credentials evaluate-shift failed", e);
       return res.status(500).json({ success: false, error: "Internal error" });
     }
   },

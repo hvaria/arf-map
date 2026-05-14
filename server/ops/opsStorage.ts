@@ -28,6 +28,7 @@ import {
   opsComplaintInvestigationNotes,
   opsInspections,
   opsInspectionCitations,
+  opsStaffCredentials,
   type OpsResident,
   type InsertOpsResident,
   type OpsResidentAssessment,
@@ -78,7 +79,17 @@ import {
   type OpsInspection,
   type InsertOpsInspection,
   type OpsInspectionCitation,
+  type OpsStaffCredential,
+  type InsertOpsStaffCredential,
 } from "./opsSchema";
+import {
+  CREDENTIAL_TYPES,
+  CREDENTIAL_STATUSES,
+  ROLE_REQUIRED_CREDENTIALS,
+  credentialSeverity,
+  type CredentialType,
+  type CredentialStatus,
+} from "@shared/staff-credentials";
 import { recordAudit } from "./auditStorage";
 import { listEvidence } from "./evidenceStorage";
 
@@ -3249,4 +3260,377 @@ export async function listRecentDestructions(
     createdAt: Number(row.created_at),
     drugName: row.drug_name ?? null,
   })) as Array<OpsMedDestruction & { drugName: string | null }>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module 8 — Staff Credentials (Wave 2, Epic C — W3)
+//
+// One row per credential per staff member; replaces the narrow
+// `ops_staff.license_expiry` column for the per-credential matrix. Pattern
+// reuses Module 7: module-level async functions, shared `db` + `pool`,
+// Drizzle for typed CRUD, mandatory tenant filter on every query, soft-
+// delete via `deleted_at IS NULL`, and `safeAudit()` wrapping every
+// mutation. Source-of-truth for credential type enum and per-role required
+// matrix is `shared/staff-credentials.ts`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CREDENTIAL_TYPE_SET = new Set<string>(CREDENTIAL_TYPES);
+const CREDENTIAL_STATUS_SET = new Set<string>(CREDENTIAL_STATUSES);
+
+function assertCredentialType(t: string): void {
+  if (!CREDENTIAL_TYPE_SET.has(t)) {
+    throw new Error(`Invalid credential_type: ${t}`);
+  }
+}
+
+function assertCredentialStatus(s: string): void {
+  if (!CREDENTIAL_STATUS_SET.has(s)) {
+    throw new Error(`Invalid credential status: ${s}`);
+  }
+}
+
+export async function listStaffCredentials(
+  facilityNumber: string,
+  opts: {
+    staffId?: number;
+    credentialType?: CredentialType;
+    status?: CredentialStatus;
+    page: number;
+    limit: number;
+  },
+): Promise<{ rows: OpsStaffCredential[]; total: number }> {
+  const conds = [
+    eq(opsStaffCredentials.facilityNumber, facilityNumber),
+    sql`${opsStaffCredentials.deletedAt} IS NULL`,
+  ];
+  if (typeof opts.staffId === "number") {
+    conds.push(eq(opsStaffCredentials.staffId, opts.staffId));
+  }
+  if (opts.credentialType) {
+    conds.push(eq(opsStaffCredentials.credentialType, opts.credentialType));
+  }
+  if (opts.status) {
+    conds.push(eq(opsStaffCredentials.status, opts.status));
+  }
+  const where = and(...conds);
+  const offset = (opts.page - 1) * opts.limit;
+  const [rows, countRows] = await Promise.all([
+    db
+      .select()
+      .from(opsStaffCredentials)
+      .where(where)
+      // Most-relevant first: soonest expiry, then most-recently-updated. Rows
+      // with NULL `expires_at` (non-expiring) sort last so the "what's about
+      // to bite me" lives at the top of the list.
+      .orderBy(
+        sql`${opsStaffCredentials.expiresAt} IS NULL`,
+        opsStaffCredentials.expiresAt,
+        desc(opsStaffCredentials.updatedAt),
+      )
+      .limit(opts.limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(opsStaffCredentials)
+      .where(where),
+  ]);
+  return { rows, total: countRows[0]?.count ?? 0 };
+}
+
+export async function getStaffCredential(
+  id: number,
+  facilityNumber: string,
+): Promise<OpsStaffCredential | undefined> {
+  return pgFirst(
+    db
+      .select()
+      .from(opsStaffCredentials)
+      .where(
+        and(
+          eq(opsStaffCredentials.id, id),
+          eq(opsStaffCredentials.facilityNumber, facilityNumber),
+          sql`${opsStaffCredentials.deletedAt} IS NULL`,
+        ),
+      ),
+  );
+}
+
+export async function createStaffCredential(
+  data: InsertOpsStaffCredential,
+  actor: AuditActor,
+): Promise<OpsStaffCredential> {
+  assertCredentialType(data.credentialType);
+  if (data.status !== undefined) assertCredentialStatus(data.status);
+  const now = Date.now();
+  const rows = await db
+    .insert(opsStaffCredentials)
+    .values({
+      ...data,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    })
+    .returning();
+  const row = rows[0] as OpsStaffCredential;
+  await safeAudit({
+    facilityNumber: row.facilityNumber,
+    actor,
+    action: "create",
+    entityType: "ops_staff_credential",
+    entityId: row.id,
+    after: row,
+  });
+  return row;
+}
+
+export async function updateStaffCredential(
+  id: number,
+  facilityNumber: string,
+  data: Partial<InsertOpsStaffCredential>,
+  actor: AuditActor,
+): Promise<OpsStaffCredential | undefined> {
+  const before = await getStaffCredential(id, facilityNumber);
+  if (!before) return undefined;
+  if (data.credentialType !== undefined) assertCredentialType(data.credentialType);
+  if (data.status !== undefined) assertCredentialStatus(data.status);
+  const now = Date.now();
+  const rows = await db
+    .update(opsStaffCredentials)
+    .set({ ...data, updatedAt: now })
+    .where(
+      and(
+        eq(opsStaffCredentials.id, id),
+        eq(opsStaffCredentials.facilityNumber, facilityNumber),
+        sql`${opsStaffCredentials.deletedAt} IS NULL`,
+      ),
+    )
+    .returning();
+  const after = rows[0] as OpsStaffCredential | undefined;
+  if (after) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_staff_credential",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
+}
+
+export async function softDeleteStaffCredential(
+  id: number,
+  facilityNumber: string,
+  actor: AuditActor,
+): Promise<boolean> {
+  const before = await getStaffCredential(id, facilityNumber);
+  if (!before) return false;
+  const now = Date.now();
+  const rows = await db
+    .update(opsStaffCredentials)
+    .set({ deletedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(opsStaffCredentials.id, id),
+        eq(opsStaffCredentials.facilityNumber, facilityNumber),
+        sql`${opsStaffCredentials.deletedAt} IS NULL`,
+      ),
+    )
+    .returning({ id: opsStaffCredentials.id });
+  if (rows.length > 0) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "delete",
+      entityType: "ops_staff_credential",
+      entityId: id,
+      before,
+      after: { ...before, deletedAt: now },
+    });
+  }
+  return rows.length > 0;
+}
+
+/**
+ * Surfaces credentials whose expiry falls within `withinDays` of now.
+ * - Excludes rows with `expires_at IS NULL` (non-expiring credentials —
+ *   e.g. fingerprint clearance via DOJ subsequent-notification).
+ * - Excludes already-expired rows by default; pass `includeExpired: true`
+ *   to surface them too (the daily-triage screen wants them mixed in).
+ * - Soft-deleted rows are always excluded.
+ * - Joined with `ops_staff` so the FE can render "Jane Doe (Med Tech) — CPR
+ *   expires Mar 15" without a follow-up fetch. LEFT JOIN guards against
+ *   stale rows that reference a deleted staff member (legacy data).
+ */
+export async function listExpiringCredentials(
+  facilityNumber: string,
+  opts: { withinDays: number; includeExpired?: boolean; limit?: number },
+): Promise<Array<OpsStaffCredential & { staffName?: string; staffRole?: string }>> {
+  const limit = Math.min(500, Math.max(1, opts.limit ?? 100));
+  const now = Date.now();
+  const cutoff = now + opts.withinDays * 24 * 60 * 60 * 1000;
+  const includeExpired = opts.includeExpired ?? false;
+  // Hits idx_ops_staff_cred_expiry (expires_at) + idx_ops_staff_cred_active
+  // (partial index on deleted_at IS NULL). Tenant filter on c.facility_number
+  // is mandatory — defense in depth even though the JOIN scopes via s too.
+  const sql_ = `
+    SELECT
+      c.id, c.facility_number, c.staff_id, c.credential_type,
+      c.issued_at, c.expires_at, c.verified_at, c.verified_by,
+      c.status, c.note, c.created_by, c.created_at, c.updated_at, c.deleted_at,
+      s.first_name AS staff_first_name,
+      s.last_name  AS staff_last_name,
+      s.role       AS staff_role
+    FROM ops_staff_credentials c
+    LEFT JOIN ops_staff s
+      ON s.id = c.staff_id AND s.facility_number = c.facility_number
+    WHERE c.facility_number = $1
+      AND c.deleted_at IS NULL
+      AND c.expires_at IS NOT NULL
+      AND c.expires_at <= $2
+      ${includeExpired ? "" : "AND c.expires_at >= $3"}
+    ORDER BY c.expires_at ASC, c.id ASC
+    LIMIT ${includeExpired ? "$3" : "$4"}
+  `;
+  const params: unknown[] = includeExpired
+    ? [facilityNumber, cutoff, limit]
+    : [facilityNumber, cutoff, now, limit];
+  const res = await pool.query(sql_, params);
+  return res.rows.map((row) => {
+    const first = row.staff_first_name ?? null;
+    const last = row.staff_last_name ?? null;
+    const staffName =
+      first || last ? `${first ?? ""}${first && last ? " " : ""}${last ?? ""}` : undefined;
+    return {
+      id: Number(row.id),
+      facilityNumber: row.facility_number,
+      staffId: Number(row.staff_id),
+      credentialType: row.credential_type,
+      issuedAt: row.issued_at !== null ? Number(row.issued_at) : null,
+      expiresAt: row.expires_at !== null ? Number(row.expires_at) : null,
+      verifiedAt: row.verified_at !== null ? Number(row.verified_at) : null,
+      verifiedBy: row.verified_by ?? null,
+      status: row.status,
+      note: row.note ?? null,
+      createdBy: row.created_by,
+      createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at),
+      deletedAt: row.deleted_at !== null ? Number(row.deleted_at) : null,
+      staffName,
+      staffRole: row.staff_role ?? undefined,
+    } as OpsStaffCredential & { staffName?: string; staffRole?: string };
+  });
+}
+
+/**
+ * Schedule-block helper for W3 acceptance criteria: given a staff member +
+ * shift start, compute the worst credential severity across every cert their
+ * role REQUIRES (per `ROLE_REQUIRED_CREDENTIALS` in shared). Used by the FE
+ * shift-assignment dialog and any future server-side enforcement.
+ *
+ * Hot path — called per assignment. Two queries total (no N+1):
+ *   1) ops_staff lookup (tenant-scoped, not terminated)
+ *   2) one batched fetch of the latest active row per required credential
+ *      type for this staff member
+ *
+ * `warningDays` is read upstream from `getRegSetting(facilityNumber,
+ * 'CREDENTIAL_WARNING_DAYS')` — never trust a client-supplied value here.
+ */
+export async function evaluateStaffCredentialsForShift(
+  facilityNumber: string,
+  staffId: number,
+  shiftAtMs: number,
+  warningDays: number,
+): Promise<{
+  worst: "ok" | "warning" | "expired";
+  missing: CredentialType[];
+  expired: CredentialType[];
+  warning: CredentialType[];
+  ok: CredentialType[];
+}> {
+  // (1) staff lookup — tenant-scoped, must not be terminated. Throw a
+  // domain error so the route layer can map to 404.
+  const staffRow = await pgFirst(
+    db
+      .select({
+        id: opsStaff.id,
+        role: opsStaff.role,
+        status: opsStaff.status,
+      })
+      .from(opsStaff)
+      .where(
+        and(
+          eq(opsStaff.id, staffId),
+          eq(opsStaff.facilityNumber, facilityNumber),
+        ),
+      ),
+  );
+  if (!staffRow) {
+    throw new Error("Staff not found for this facility");
+  }
+  const role = staffRow.role;
+  const required = ROLE_REQUIRED_CREDENTIALS[role] ?? ROLE_REQUIRED_CREDENTIALS.other;
+
+  // (2) Batch-fetch all active rows for this staff member in one query.
+  // The list is bounded by len(CREDENTIAL_TYPES) per staff member, so we
+  // pull all credential rows and pick the best (latest-expiring) per type.
+  const credRows = await db
+    .select({
+      credentialType: opsStaffCredentials.credentialType,
+      expiresAt: opsStaffCredentials.expiresAt,
+      status: opsStaffCredentials.status,
+    })
+    .from(opsStaffCredentials)
+    .where(
+      and(
+        eq(opsStaffCredentials.facilityNumber, facilityNumber),
+        eq(opsStaffCredentials.staffId, staffId),
+        eq(opsStaffCredentials.status, "active"),
+        sql`${opsStaffCredentials.deletedAt} IS NULL`,
+      ),
+    );
+
+  // Pick the most-forgiving (latest expiry; null = non-expiring beats any
+  // dated row) per credentialType.
+  const bestByType = new Map<string, number | null>();
+  for (const r of credRows) {
+    const cur = bestByType.get(r.credentialType);
+    const next = r.expiresAt;
+    if (cur === undefined) {
+      bestByType.set(r.credentialType, next);
+      continue;
+    }
+    // null beats everything (non-expiring is always "ok")
+    if (cur === null || next === null) {
+      bestByType.set(r.credentialType, null);
+      continue;
+    }
+    if (next > cur) bestByType.set(r.credentialType, next);
+  }
+
+  const missing: CredentialType[] = [];
+  const expired: CredentialType[] = [];
+  const warning: CredentialType[] = [];
+  const okList: CredentialType[] = [];
+
+  for (const reqType of required) {
+    if (!bestByType.has(reqType)) {
+      missing.push(reqType);
+      continue;
+    }
+    const expiresAt = bestByType.get(reqType) ?? null;
+    const sev = credentialSeverity(expiresAt, warningDays, shiftAtMs);
+    if (sev === "expired") expired.push(reqType);
+    else if (sev === "warning") warning.push(reqType);
+    else okList.push(reqType);
+  }
+
+  let worst: "ok" | "warning" | "expired";
+  if (missing.length > 0 || expired.length > 0) worst = "expired";
+  else if (warning.length > 0) worst = "warning";
+  else worst = "ok";
+
+  return { worst, missing, expired, warning, ok: okList };
 }

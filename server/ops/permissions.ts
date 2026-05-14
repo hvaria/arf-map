@@ -52,6 +52,8 @@ export const OPS_RESOURCES = {
   COMPLAINT: "ops_complaint",
   INSPECTION: "ops_inspection",
   CONTROLLED_SUB_COUNT: "ops_controlled_sub_count",
+  // Wave 2 additions (Epic C)
+  STAFF_CREDENTIAL: "ops_staff_credential",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -101,6 +103,13 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.CONTROLLED_SUB_COUNT,
     actions: ["read", "resolve"],
   },
+  // Wave 2 — Staff credentials (W3). Admin gets full CRUD; the soft-delete
+  // path is gated by `delete`. There is no `resolve`/`close` for credentials
+  // — renewal is a write (update) and the status field carries the lifecycle.
+  {
+    resource: OPS_RESOURCES.STAFF_CREDENTIAL,
+    actions: ["read", "create", "update", "delete"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
@@ -114,6 +123,7 @@ const AUDITOR_READ_ONLY: Permission[] = [
   { resource: OPS_RESOURCES.COMPLAINT,           actions: ["read"] },
   { resource: OPS_RESOURCES.INSPECTION,          actions: ["read"] },
   { resource: OPS_RESOURCES.CONTROLLED_SUB_COUNT,actions: ["read"] },
+  { resource: OPS_RESOURCES.STAFF_CREDENTIAL,    actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

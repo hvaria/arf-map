@@ -68,6 +68,12 @@ interface VendorLite {
 interface DrillLite {
   executedAt: number;
 }
+interface CredentialExpiringLite {
+  id: number;
+  staffId: number;
+  credentialType: string;
+  expiresAt: number | null;
+}
 
 // ── Overview tab ──────────────────────────────────────────────────────────────
 
@@ -160,6 +166,24 @@ function OverviewTab({
     enabled: !!facilityNumber,
     staleTime: 60_000,
   });
+  // W3 Wave 2 — credentials expiring within 60 days (warning + expired).
+  // includeExpired=true so the tile reflects any past-due credential too.
+  const credentialsQ = useQuery<{ success: boolean; data: CredentialExpiringLite[] } | null>({
+    queryKey: [
+      `/api/ops/facilities/${facilityNumber}/credentials/expiring?withinDays=60&includeExpired=true`,
+    ],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/ops/facilities/${facilityNumber}/credentials/expiring?withinDays=60&includeExpired=true`,
+        { credentials: "include" },
+      );
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
+  });
 
   const openComplaints = (complaintsQ.data?.data ?? []).filter(
     (c) => c.status === "open" || c.status === "investigating",
@@ -179,6 +203,17 @@ function OverviewTab({
     return q.year === currentQ.year && q.quarter === currentQ.quarter;
   }).length;
 
+  // Credentials tile: red if any are already expired, amber if any are
+  // expiring within 60d, emerald otherwise.
+  const credRows = credentialsQ.data?.data ?? [];
+  const nowMs = Date.now();
+  const credentialsExpired = credRows.filter(
+    (r) => r.expiresAt !== null && r.expiresAt < nowMs,
+  ).length;
+  const credentialsExpiringCount = credRows.length;
+  const credentialsTone: "red" | "amber" | "emerald" =
+    credentialsExpired > 0 ? "red" : credentialsExpiringCount > 0 ? "amber" : "emerald";
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-dashed p-5">
@@ -191,7 +226,7 @@ function OverviewTab({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="audit-overview-tiles">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="audit-overview-tiles">
         <button
           onClick={() => onSwitchTab("complaints")}
           className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
@@ -240,6 +275,25 @@ function OverviewTab({
             loading={drillsQ.isLoading}
           />
         </button>
+        {/*
+          W3 — Credentials tile. Informational-only for v0: there is no clean
+          cross-sub-view nav primitive that can jump Operations → Staff →
+          Credentials from here. Wave 4 follow-up will wire the existing
+          `setActiveTab` / `goToSubView` in OperationsTab.tsx so this tile
+          becomes navigable like the others.
+        */}
+        <div
+          aria-label="Credentials expiring within 60 days (informational)"
+          data-testid="audit-overview-credentials-tile"
+        >
+          <Tile
+            label="Credentials expiring (60d)"
+            value={credentialsExpiringCount}
+            tone={credentialsTone}
+            loading={credentialsQ.isLoading}
+            hint={credentialsExpired > 0 ? `${credentialsExpired} already expired` : undefined}
+          />
+        </div>
       </div>
 
       <div className="rounded-lg border bg-stone-50 p-4">

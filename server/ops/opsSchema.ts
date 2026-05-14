@@ -647,6 +647,29 @@ export const OPS_PG_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_ops_cite_inspection ON ops_inspection_citations(inspection_id);
   CREATE INDEX IF NOT EXISTS idx_ops_cite_status     ON ops_inspection_citations(status);
+
+  -- ── Wave 2: W3 Staff credentials (per-credential row model, replaces
+  --    the narrow ops_staff.license_expiry column with a row per cert/clear)
+  CREATE TABLE IF NOT EXISTS ops_staff_credentials (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    staff_id        BIGINT NOT NULL,
+    credential_type TEXT NOT NULL,
+    issued_at       BIGINT,
+    expires_at      BIGINT,
+    verified_at     BIGINT,
+    verified_by     TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',
+    note            TEXT,
+    created_by      TEXT NOT NULL,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL,
+    deleted_at      BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_staff_cred_facility ON ops_staff_credentials(facility_number);
+  CREATE INDEX IF NOT EXISTS idx_ops_staff_cred_staff    ON ops_staff_credentials(staff_id, credential_type);
+  CREATE INDEX IF NOT EXISTS idx_ops_staff_cred_expiry   ON ops_staff_credentials(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_staff_cred_active   ON ops_staff_credentials(deleted_at) WHERE deleted_at IS NULL;
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1248,6 +1271,33 @@ export const opsInspectionCitations = pgTable("ops_inspection_citations", {
   updatedAt:      ts("updated_at").notNull(),
 });
 
+// ── Wave 2: W3 Staff credentials ──────────────────────────────────────────
+//
+// One row per credential per staff member. Replaces the narrow
+// `ops_staff.license_expiry` column for the per-credential matrix (TB
+// clearance, fingerprint clearance, CPR, First Aid, dementia training,
+// food handler, RCFE administrator certificate, pre-/in-service hours,
+// etc). Valid `credentialType` values and per-role required matrix live
+// in `shared/staff-credentials.ts` — single source of truth shared by
+// client and server.
+
+export const opsStaffCredentials = pgTable("ops_staff_credentials", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  staffId:        bigint("staff_id", { mode: "number" }).notNull(),
+  credentialType: text("credential_type").notNull(),
+  issuedAt:       ts("issued_at"),
+  expiresAt:      ts("expires_at"),
+  verifiedAt:     ts("verified_at"),
+  verifiedBy:     text("verified_by"),
+  status:         text("status").notNull().default("active"),
+  note:           text("note"),
+  createdBy:      text("created_by").notNull(),
+  createdAt:      ts("created_at").notNull(),
+  updatedAt:      ts("updated_at").notNull(),
+  deletedAt:      ts("deleted_at"),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1338,3 +1388,6 @@ export type InsertOpsInspection         = typeof opsInspections.$inferInsert;
 
 export type OpsInspectionCitation       = typeof opsInspectionCitations.$inferSelect;
 export type InsertOpsInspectionCitation = typeof opsInspectionCitations.$inferInsert;
+
+export type OpsStaffCredential          = typeof opsStaffCredentials.$inferSelect;
+export type InsertOpsStaffCredential    = typeof opsStaffCredentials.$inferInsert;

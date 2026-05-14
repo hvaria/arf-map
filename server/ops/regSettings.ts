@@ -48,6 +48,10 @@ export const REG_SETTING_KEYS = {
   RECORD_RETENTION_YEARS_DEFAULT:      { default: "3",            placeholder: true },
   POSTING_BILINGUAL_THRESHOLD:         { default: "english_only", placeholder: true },
   VENDOR_COI_EXPIRING_DAYS:            { default: "60",           placeholder: true },
+  // Wave 2 W3 — facility-tunable "warn me N days before a staff credential
+  // expires." Not a regulation-derived placeholder (no statutory N here);
+  // 60 is a sensible default. `placeholder: false` suppresses the [V] chip.
+  CREDENTIAL_WARNING_DAYS:             { default: "60",           placeholder: false },
 } as const;
 
 export type RegSettingKey = keyof typeof REG_SETTING_KEYS;
