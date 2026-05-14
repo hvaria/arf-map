@@ -1,11 +1,23 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "wouter";
-import { Briefcase, MapPin, DollarSign, Clock, ChevronRight } from "lucide-react";
+import { Briefcase, MapPin, DollarSign, Clock, ChevronRight, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import type { FacilityPin } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { getQueryFn } from "@/lib/queryClient";
+import { JobDetailModal } from "@/components/JobDetailModal";
+
+interface JobSeekerAuth {
+  id: number;
+  email: string;
+}
+
+interface SeekerInterest {
+  id: number;
+  jobId: number | null;
+  status: string;
+}
 
 interface DbJob {
   id: number;
@@ -79,7 +91,10 @@ function isJunkJob(j: { title: string; description: string; salary: string }): b
 }
 
 export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber }: JobsPanelProps) {
-  const [, setLocation] = useLocation();
+  // Modal state — clicking a card opens the in-context job detail
+  // modal instead of navigating away to /#/jobs/:id. The route still
+  // exists for shared / deep-linked URLs.
+  const [modalJobId, setModalJobId] = useState<number | null>(null);
 
   // DB jobs from the facility portal — single source of truth now that the
   // pin payload no longer carries embedded jobPostings. Facility metadata
@@ -90,6 +105,28 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
     queryKey: ["/api/jobs"],
     staleTime: 60000,
   });
+
+  // "Applied" indicator — only fetched when the viewer is a logged-in
+  // job seeker. Anonymous viewers and facility-portal users (different
+  // auth session) see no badge: `me` is null for them, so the interests
+  // query is disabled and `appliedJobIds` stays empty. This is per-user
+  // state and never leaks across sessions.
+  const { data: me } = useQuery<JobSeekerAuth | null>({
+    queryKey: ["/api/jobseeker/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 60000,
+  });
+  const { data: myInterests = [] } = useQuery<SeekerInterest[]>({
+    queryKey: ["/api/jobseeker/interests"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!me,
+    staleTime: 30000,
+  });
+  const appliedJobIds = useMemo(() => {
+    const s = new Set<number>();
+    for (const i of myInterests) if (i.jobId != null) s.add(i.jobId);
+    return s;
+  }, [myInterests]);
 
   const jobs = useMemo<DisplayJob[]>(() => {
     return dbJobs
@@ -143,15 +180,21 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
             jobs.map((job) => {
               const facility = facilityByNumber.get(job.facilityNumber) ?? null;
               const isSelected = selectedFacility?.number === job.facilityNumber;
+              const isApplied = appliedJobIds.has(job.id);
               return (
                 <JobCard
                   key={job.key}
                   job={job}
                   facility={facility}
                   isSelected={isSelected}
+                  isApplied={isApplied}
                   onClick={() => {
+                    // Keep the existing map-context behavior: clicking a
+                    // card still focuses the facility pin on the map so
+                    // back-from-modal feels grounded. Then open the
+                    // detail modal in place — no navigation away.
                     if (facility) onSelectFacility(facility);
-                    setLocation(`/jobs/${job.id}`);
+                    setModalJobId(job.id);
                   }}
                 />
               );
@@ -169,6 +212,17 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
           </p>
         </>
       )}
+
+      {/* In-context job detail modal — opens on card click instead of
+          navigating to /#/jobs/:id. The route still works for shared
+          / deep-linked URLs. */}
+      <JobDetailModal
+        jobId={modalJobId}
+        open={modalJobId != null}
+        onOpenChange={(open) => {
+          if (!open) setModalJobId(null);
+        }}
+      />
     </div>
   );
 }
@@ -177,11 +231,13 @@ function JobCard({
   job,
   facility,
   isSelected,
+  isApplied,
   onClick,
 }: {
   job: DisplayJob;
   facility: FacilityPin | null;
   isSelected: boolean;
+  isApplied: boolean;
   onClick: () => void;
 }) {
   return (
@@ -191,10 +247,16 @@ function JobCard({
         "w-full text-left rounded-md border transition-colors p-3 group focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
         isSelected
           ? "border-[var(--portal-accent)] bg-[var(--portal-accent-soft)]"
-          : "bg-white hover:bg-stone-50",
+          : isApplied
+            ? "border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50"
+            : "bg-white hover:bg-stone-50",
       )}
       style={{
-        borderColor: isSelected ? "var(--portal-accent)" : "var(--portal-border-subtle)",
+        borderColor: isSelected
+          ? "var(--portal-accent)"
+          : isApplied
+            ? undefined // let the className handle it for the emerald tint
+            : "var(--portal-border-subtle)",
       }}
     >
       <div className="flex items-start gap-2">
@@ -211,6 +273,15 @@ function JobCard({
           )}
         </div>
         <div className="shrink-0 flex flex-col items-end gap-1.5">
+          {/* Applied pill (operator emerald tone, ok=applied). Only
+              renders for logged-in job seekers who have submitted an
+              application for THIS specific job. */}
+          {isApplied && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0 rounded-full border bg-emerald-100 text-emerald-700 border-emerald-200">
+              <CheckCircle2 className="h-2.5 w-2.5" />
+              Applied
+            </span>
+          )}
           <Badge
             variant="outline"
             className="text-[10px] px-1.5 py-0 bg-stone-50 text-stone-600 border-stone-200"
