@@ -57,6 +57,21 @@ export const REG_SETTING_KEYS = {
   // primary source, so the value is marked `placeholder: true` and the
   // FE [V] chip surfaces until an admin attaches a source note.
   ANNUAL_PHYSICIAN_REPORT_DAYS:        { default: "365",          placeholder: true },
+  // ── Wave 3 W14 — Daily summary email toggles ──────────────────────────────
+  // Operational toggles — not regulation-derived, so `placeholder: false`
+  // suppresses the [V] chip. Each facility can opt-in independently, pick
+  // a delivery hour (UTC), pick recipients, and choose which sections of
+  // the triage roll-up to include. Values are stored as strings (mirrors
+  // existing convention); the backend coerces booleans via === "true".
+  DAILY_SUMMARY_ENABLED:               { default: "false",        placeholder: false },
+  DAILY_SUMMARY_HOUR_UTC:              { default: "14",           placeholder: false },
+  DAILY_SUMMARY_RECIPIENTS:            { default: "",             placeholder: false },
+  DAILY_SUMMARY_INCLUDE_OBLIGATIONS:   { default: "true",         placeholder: false },
+  DAILY_SUMMARY_INCLUDE_INCIDENTS:     { default: "true",         placeholder: false },
+  DAILY_SUMMARY_INCLUDE_TEMPERATURE_OOR:{ default: "true",        placeholder: false },
+  DAILY_SUMMARY_INCLUDE_CREDENTIALS:   { default: "true",         placeholder: false },
+  DAILY_SUMMARY_INCLUDE_COMPLAINTS:    { default: "true",         placeholder: false },
+  DAILY_SUMMARY_INCLUDE_VENDORS:       { default: "true",         placeholder: false },
 } as const;
 
 export type RegSettingKey = keyof typeof REG_SETTING_KEYS;

@@ -89,6 +89,72 @@ export async function sendVerificationEmail(to: string, otp: string): Promise<vo
   logOtp(to, otp);
 }
 
+/**
+ * Generic transactional email send. Used by Wave 3 W14 (daily summary)
+ * and anywhere else we need to deliver a fully-rendered HTML + plaintext
+ * message rather than an OTP. Uses the same Resend → SMTP fallback chain
+ * as `sendVerificationEmail` so behavior + retry semantics stay consistent.
+ *
+ * Returns `{ messageId? }` so the caller can persist the Resend message id
+ * on the notification-log row. Throws on hard delivery failure — caller
+ * decides whether to mark the log row `failed` and continue.
+ */
+export async function sendEmail(input: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<{ messageId?: string }> {
+  const { to, subject, html, text } = input;
+
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      const { data, error } = await resend.emails.send({
+        from: process.env.SMTP_FROM || "ARF Map <onboarding@resend.dev>",
+        to,
+        subject,
+        html,
+        text,
+      });
+      if (error) throw new Error(error.message);
+      return { messageId: data?.id };
+    } catch (err: any) {
+      console.error(`[email] Resend API failed: ${err?.message ?? err} — trying SMTP fallback`);
+    }
+  }
+
+  if (process.env.SMTP_HOST) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT || "587"),
+        secure: process.env.SMTP_SECURE === "true",
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      });
+      const info = await transporter.sendMail({
+        from: process.env.SMTP_FROM || "ARF Map <noreply@arf-map.app>",
+        to,
+        subject,
+        html,
+        text,
+      });
+      return { messageId: info?.messageId };
+    } catch (err: any) {
+      console.error(`[email] SMTP delivery failed: ${err?.message ?? err}`);
+      if (process.env.NODE_ENV === "production") throw err;
+    }
+  }
+
+  // Dev fallback: print to console so local development keeps working
+  // without RESEND_API_KEY or an SMTP host.
+  console.log(`\n========================================`);
+  console.log(`[email] ${subject}`);
+  console.log(`        to: ${to}`);
+  console.log(`========================================\n`);
+  return {};
+}
+
 export async function sendPasswordResetEmail(to: string, otp: string): Promise<void> {
   if (process.env.RESEND_API_KEY) {
     try {

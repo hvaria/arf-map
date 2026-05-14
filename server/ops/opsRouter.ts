@@ -43,6 +43,13 @@ import {
 } from "./evidenceStorage";
 import { listAuditForFacility } from "./auditStorage";
 import * as obligations from "./obligationsStorage";
+import { aggregateTriage } from "./triageAggregator";
+import {
+  listNotifications,
+  type NotificationKind,
+  type DeliveryStatus,
+} from "./notificationStorage";
+import { sendDailySummaryForFacility } from "./dailySummaryScheduler";
 import {
   OBLIGATION_STATUSES,
   OBLIGATION_SEVERITIES,
@@ -2358,6 +2365,37 @@ const auditTrailQuerySchema = z.object({
 const chartCompletenessQuerySchema = z.object({
   worst: z.enum(["ok", "stale", "missing"]).optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
+}).strict();
+
+// W1 — triage aggregator query schema. perSectionLimit caps the drill-down
+// rows returned per section so the JSON stays small even on a backlogged
+// facility. `now` is an optional override used by tests; production
+// callers should never set it.
+const triageQuerySchema = z.object({
+  perSectionLimit: z.coerce.number().int().positive().max(100).optional(),
+  now: z.coerce.number().int().positive().optional(),
+}).strict();
+
+// W14 — notification-log query schema. Mirrors the audit-trail viewer's
+// filter set so the UI can layer the same "by kind / by status / by
+// time-range" affordances on top.
+const notificationListQuerySchema = z.object({
+  kind: z.enum(["daily_summary", "incident_sla_warning", "manual_test"]).optional(),
+  deliveryStatus: z.enum(["queued", "sent", "failed"]).optional(),
+  sinceMs: z.coerce.number().int().nonnegative().optional(),
+  untilMs: z.coerce.number().int().nonnegative().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+}).strict();
+
+// W14 — admin "send test email" body schema. The override list is optional
+// so an operator can either trigger to the stored recipients or aim at a
+// throwaway inbox for a one-off verification.
+const dailySummaryTestSendSchema = z.object({
+  overrideRecipients: z
+    .array(z.string().email().max(254))
+    .max(10)
+    .optional(),
 }).strict();
 
 // ── Multer + per-session rate limiter for evidence upload ────────────────────
@@ -4720,6 +4758,106 @@ opsRouter.post(
       return res.json({ success: true, data: result });
     } catch (e) {
       console.error("[ops] obligation backfill failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 3 Phase 3.1 — W1 Daily Triage + W14 Daily Summary Email
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// W1 reads the eleven-section triage payload for the Audit Readiness drill-
+// down list. W14 paginates the daily-summary notification log and exposes a
+// "send test email" admin action that bypasses the hour + idempotency guards.
+//
+// Permission mapping:
+//   GET /triage         — OBLIGATION:read   (umbrella — the aggregator spans
+//                                            every audit-readiness surface)
+//   GET /notifications  — AUDIT_TRAIL:read  (the log is forensic + insert-only,
+//                                            so it shares the audit-trail read perm)
+//   POST /daily-summary/test-send — REG_SETTING:manage_settings  (matches the
+//                                            existing reg-settings mutate perm)
+
+// GET /facilities/:facilityNumber/triage?perSectionLimit=&now=
+opsRouter.get(
+  "/facilities/:facilityNumber/triage",
+  requireOpsPermission(OPS_RESOURCES.OBLIGATION, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = triageQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const data = await aggregateTriage(facilityNumber, {
+        perSectionLimit: parsed.data.perSectionLimit,
+        now: parsed.data.now,
+      });
+      return res.json({ success: true, data });
+    } catch (e) {
+      console.error("[ops] triage aggregate failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/notifications?kind=&deliveryStatus=&sinceMs=&untilMs=&page=&limit=
+opsRouter.get(
+  "/facilities/:facilityNumber/notifications",
+  requireOpsPermission(OPS_RESOURCES.AUDIT_TRAIL, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = notificationListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await listNotifications(facilityNumber, {
+        kind: parsed.data.kind as NotificationKind | undefined,
+        deliveryStatus: parsed.data.deliveryStatus as DeliveryStatus | undefined,
+        sinceMs: parsed.data.sinceMs,
+        untilMs: parsed.data.untilMs,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] notifications list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /facilities/:facilityNumber/daily-summary/test-send
+opsRouter.post(
+  "/facilities/:facilityNumber/daily-summary/test-send",
+  requireOpsPermission(OPS_RESOURCES.REG_SETTING, "manage_settings"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = dailySummaryTestSendSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const result = await sendDailySummaryForFacility(facilityNumber, {
+        manualTest: true,
+        overrideRecipients: parsed.data.overrideRecipients,
+      });
+      return res.json({ success: true, data: result });
+    } catch (e) {
+      console.error("[ops] daily-summary test-send failed", e);
       return res.status(500).json({ success: false, error: "Internal error" });
     }
   },

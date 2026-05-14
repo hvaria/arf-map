@@ -33,7 +33,17 @@
  *     consumes `meta.total` for the count. Tone: emerald=0, amber=1-4,
  *     red=5+. Informational v0 (cross-sub-view nav deferred to Wave 4).
  *
- * Reg Settings (⚙) tab stays intact — Wave 0 A11.
+ * Wave 3 (W1 Daily Triage):
+ *   - Overview tab's welcome placeholder is replaced by the live
+ *     <DailyTriageList> drill-down rendered below the 8 KPI tiles.
+ *     Tiles preserved. Deep-link rows route to the matching Audit
+ *     Readiness sub-tab when one exists (logs / vendors / complaints /
+ *     inspections) and fall back to staying on Overview otherwise —
+ *     consistent with the Wave 4 cross-Operations nav primitive in
+ *     OperationsTab.tsx:1272 (`goToSubView`).
+ *
+ * Reg Settings (⚙) tab stays intact — Wave 0 A11. Wave 3 W14 appends a
+ * Daily summary email section to it.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -41,7 +51,6 @@ import { getQueryFn } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ShieldCheck,
   ArrowLeft,
   Settings,
   MessageSquare,
@@ -59,6 +68,8 @@ import { VendorsContent } from "@/components/operations/VendorsContent";
 import { ComplaintsContent } from "@/components/operations/ComplaintsContent";
 import { InspectionsContent } from "@/components/operations/InspectionsContent";
 import { AuditTrailViewer } from "@/components/operations/AuditTrailViewer";
+import { DailyTriageList } from "@/components/operations/DailyTriageList";
+import type { TriageItem, TriageSection } from "@shared/triage";
 
 interface Props {
   facilityNumber: string;
@@ -319,18 +330,25 @@ function OverviewTab({
   const credentialsTone: "red" | "amber" | "emerald" =
     credentialsExpired > 0 ? "red" : credentialsExpiringCount > 0 ? "amber" : "emerald";
 
-  return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-dashed p-5">
-        <ShieldCheck className="h-7 w-7 mx-auto text-muted-foreground mb-3" />
-        <h2 className="text-base font-medium text-center mb-1">
-          Welcome to Audit Readiness
-        </h2>
-        <p className="text-sm text-muted-foreground text-center max-w-xl mx-auto">
-          Use this hub to keep your inspection binder healthy day to day.
-        </p>
-      </div>
+  // Wave 3 W1 — map a triage row's section to the matching Audit Readiness
+  // sub-tab so "Open →" lands the user where the entity lives. Sections
+  // without an Audit-Readiness sub-tab (incidents, credentials, charts,
+  // obligations, controlled subs) stay on Overview — Wave 4 wires the
+  // cross-Operations nav via OperationsTab.tsx:1272 `goToSubView`.
+  const SECTION_TO_TAB: Partial<Record<TriageSection, string>> = {
+    temperature_out_of_range_open: "logs",
+    vendors_expired: "vendors",
+    vendors_expiring: "vendors",
+    complaints_open: "complaints",
+    drills_quarter_deficit: "drills",
+  };
+  const handleDeepLink = (item: TriageItem) => {
+    const next = SECTION_TO_TAB[item.section];
+    if (next) onSwitchTab(next);
+  };
 
+  return (
+    <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3" data-testid="audit-overview-tiles">
         <button
           onClick={() => onSwitchTab("complaints")}
@@ -450,6 +468,12 @@ function OverviewTab({
           />
         </div>
       </div>
+
+      <DailyTriageList
+        facilityNumber={facilityNumber}
+        onOpenSettings={onOpenSettings}
+        onOpenDeepLink={handleDeepLink}
+      />
 
       <div className="rounded-lg border bg-stone-50 p-4">
         <p className="text-sm text-muted-foreground mb-3">Jump to:</p>

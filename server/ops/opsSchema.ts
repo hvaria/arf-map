@@ -729,6 +729,33 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_obligations_target     ON ops_obligations(target_type, target_id);
   CREATE INDEX IF NOT EXISTS idx_ops_obligations_due_active ON ops_obligations(due_at) WHERE deleted_at IS NULL;
   CREATE INDEX IF NOT EXISTS idx_ops_obligations_source     ON ops_obligations(source_entity_type, source_entity_id);
+
+  -- ── Wave 3 W14: Daily-summary email log (append-only, audit-grade) ──────
+  -- Mirrors the insert-only contract of ops_audit_trail. The app layer
+  -- exposes no UPDATE/DELETE; failed/queued rows get a sibling row when
+  -- retried. triage_snapshot is JSON-as-TEXT truncated at 16 KB (same
+  -- AUDIT_JSON_MAX_BYTES convention from auditStorage.ts) so an inspector
+  -- can reconstruct what the message reported on without re-running the
+  -- aggregator.
+  CREATE TABLE IF NOT EXISTS ops_notification_log (
+    id                  BIGSERIAL PRIMARY KEY,
+    facility_number     TEXT NOT NULL,
+    channel             TEXT NOT NULL,
+    kind                TEXT NOT NULL,
+    recipient           TEXT NOT NULL,
+    subject             TEXT,
+    body_preview        TEXT,
+    delivery_status     TEXT NOT NULL DEFAULT 'queued',
+    delivery_error      TEXT,
+    resend_message_id   TEXT,
+    triage_snapshot     TEXT,
+    scheduled_for       BIGINT NOT NULL,
+    sent_at             BIGINT,
+    created_at          BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_notif_facility ON ops_notification_log(facility_number, scheduled_for);
+  CREATE INDEX IF NOT EXISTS idx_ops_notif_status   ON ops_notification_log(delivery_status, scheduled_for);
+  CREATE INDEX IF NOT EXISTS idx_ops_notif_kind     ON ops_notification_log(kind, scheduled_for);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1412,6 +1439,30 @@ export const opsObligations = pgTable("ops_obligations", {
   deletedAt:          ts("deleted_at"),
 });
 
+// ── Wave 3 W14: Daily-summary email log (append-only) ─────────────────────
+// One row per send attempt. Same insert-only contract as opsAuditTrail —
+// the storage layer exposes recordNotification() + listNotifications()
+// only; no UPDATE/DELETE surface. Body is never persisted; bodyPreview is
+// capped to ~200 chars upstream. triageSnapshot is JSON-as-TEXT capped at
+// AUDIT_JSON_MAX_BYTES upstream.
+
+export const opsNotificationLog = pgTable("ops_notification_log", {
+  id:               serial("id").primaryKey(),
+  facilityNumber:   text("facility_number").notNull(),
+  channel:          text("channel").notNull(),
+  kind:             text("kind").notNull(),
+  recipient:        text("recipient").notNull(),
+  subject:          text("subject"),
+  bodyPreview:      text("body_preview"),
+  deliveryStatus:   text("delivery_status").notNull().default("queued"),
+  deliveryError:    text("delivery_error"),
+  resendMessageId:  text("resend_message_id"),
+  triageSnapshot:   text("triage_snapshot"),
+  scheduledFor:     ts("scheduled_for").notNull(),
+  sentAt:           ts("sent_at"),
+  createdAt:        ts("created_at").notNull(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1508,3 +1559,6 @@ export type InsertOpsStaffCredential    = typeof opsStaffCredentials.$inferInser
 
 export type OpsObligation               = typeof opsObligations.$inferSelect;
 export type InsertOpsObligation         = typeof opsObligations.$inferInsert;
+
+export type OpsNotificationLogEntry       = typeof opsNotificationLog.$inferSelect;
+export type InsertOpsNotificationLogEntry = typeof opsNotificationLog.$inferInsert;

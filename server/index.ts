@@ -20,6 +20,7 @@ import { bootstrapTrackersSchema } from "./trackers/trackerStorage";
 // inherits requireFacilityAuth — see M4 fix.
 import { bootstrapMainSchema } from "./db/bootstrap";
 import { stripeWebhookHandler } from "./billing/webhookHandler";
+import { startDailySummaryScheduler } from "./ops/dailySummaryScheduler";
 import type { FacilityAccount } from "@shared/schema";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
@@ -267,6 +268,13 @@ app.use((req, res, next) => {
       getCachedFacilities()
         .then((f) => { if (f.length) log(`[facilitiesService] pre-warmed ${f.length} facilities`); })
         .catch(() => { /* silently skip — autoSeedIfEmpty handles the empty-DB case */ });
+    }
+
+    // Wave 3 W14 — daily-summary scheduler. Production only; set
+    // DISABLE_DAILY_SUMMARY=1 in staging/test deployments that share a DB
+    // with prod so they don't double-fire the cadence email.
+    if (process.env.NODE_ENV === "production") {
+      startDailySummaryScheduler();
     }
 
   });
