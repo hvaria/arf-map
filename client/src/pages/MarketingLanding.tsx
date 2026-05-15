@@ -302,7 +302,7 @@ function NavBar({
           aria-label="Neighbourhood Care Finder home"
           className="flex items-center shrink-0"
         >
-          <BrandLogo size={80} />
+          <BrandLogo size={60} />
         </a>
 
         <nav className="hidden md:flex items-center gap-9 text-[13px] font-medium text-stone-600">
