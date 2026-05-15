@@ -69,6 +69,7 @@ function payload(): TriagePayload {
       drills_quarter_deficit: 0,
       charts_incomplete: 0,
       controlled_sub_discrepancies_aging: 0,
+      postings_stale_or_missing: 0,
     },
     totalItems: 3,
     items: [
@@ -224,6 +225,7 @@ describe("DailyTriageList — Wave 3 W1", () => {
             drills_quarter_deficit: 0,
             charts_incomplete: 0,
             controlled_sub_discrepancies_aging: 0,
+            postings_stale_or_missing: 0,
           },
           totalItems: 0,
           items: [],

@@ -72,6 +72,10 @@ export const OPS_RESOURCES = {
   // own parallel auth (requireAuditorToken) on a separate router.
   SHARE_LINK: "ops_share_link",
   PREAUDIT_PULL: "ops_preaudit_pull",
+  // Wave 4 Phase 4.1 — Posting verification catalogue (W6). Per-facility
+  // catalog rows + walkthrough verification log. Admin gets read/create/
+  // update; auditor read-only (read-only audit walkthrough use case).
+  POSTING: "ops_posting",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -167,6 +171,14 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.PREAUDIT_PULL,
     actions: ["read", "create"],
   },
+  // Wave 4 Phase 4.1 — Posting verification (W6). Admin gets read/create/
+  // update on the catalog + verifications. No delete — catalog rows are
+  // archived via the `archive` route (an update path) and verifications
+  // are append-only forensic records.
+  {
+    resource: OPS_RESOURCES.POSTING,
+    actions: ["read", "create", "update"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
@@ -184,6 +196,7 @@ const AUDITOR_READ_ONLY: Permission[] = [
   { resource: OPS_RESOURCES.INCIDENT,            actions: ["read"] },
   { resource: OPS_RESOURCES.RESIDENT,            actions: ["read"] },
   { resource: OPS_RESOURCES.OBLIGATION,          actions: ["read"] },
+  { resource: OPS_RESOURCES.POSTING,             actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

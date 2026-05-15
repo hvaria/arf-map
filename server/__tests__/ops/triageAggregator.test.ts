@@ -32,6 +32,10 @@ import { bootstrapMainSchema } from "../../db/bootstrap";
 import { bootstrapOpsSchema } from "../../ops/opsStorage";
 import { createObligation } from "../../ops/obligationsStorage";
 import { aggregateTriage } from "../../ops/triageAggregator";
+import {
+  createPostingCatalogEntry,
+  createPostingVerification,
+} from "../../ops/postingsStorage";
 
 const FACILITY_A = "TEST-FAC-TRIAGE-A";
 const FACILITY_B = "TEST-FAC-TRIAGE-B";
@@ -41,23 +45,31 @@ const DAY = 24 * 60 * 60 * 1000;
 
 async function cleanup(): Promise<void> {
   await pool.query(
-    `DELETE FROM ops_obligations         WHERE facility_number = ANY($1::text[])`,
+    `DELETE FROM ops_obligations             WHERE facility_number = ANY($1::text[])`,
     [[...ALL_FN]],
   );
   await pool.query(
-    `DELETE FROM ops_staff_credentials   WHERE facility_number = ANY($1::text[])`,
+    `DELETE FROM ops_posting_verifications   WHERE facility_number = ANY($1::text[])`,
     [[...ALL_FN]],
   );
   await pool.query(
-    `DELETE FROM ops_staff               WHERE facility_number = ANY($1::text[])`,
+    `DELETE FROM ops_posting_catalog         WHERE facility_number = ANY($1::text[])`,
     [[...ALL_FN]],
   );
   await pool.query(
-    `DELETE FROM ops_audit_trail         WHERE facility_number = ANY($1::text[])`,
+    `DELETE FROM ops_staff_credentials       WHERE facility_number = ANY($1::text[])`,
     [[...ALL_FN]],
   );
   await pool.query(
-    `DELETE FROM ops_facility_settings   WHERE facility_number = ANY($1::text[])`,
+    `DELETE FROM ops_staff                   WHERE facility_number = ANY($1::text[])`,
+    [[...ALL_FN]],
+  );
+  await pool.query(
+    `DELETE FROM ops_audit_trail             WHERE facility_number = ANY($1::text[])`,
+    [[...ALL_FN]],
+  );
+  await pool.query(
+    `DELETE FROM ops_facility_settings       WHERE facility_number = ANY($1::text[])`,
     [[...ALL_FN]],
   );
 }
@@ -252,5 +264,73 @@ describe("triageAggregator — per-section limit + counts", () => {
       (i) => i.section === "overdue_obligations",
     );
     expect(inItems.length).toBe(5);
+  });
+});
+
+// Wave 4 Phase 4.1 (W6) — postings_stale_or_missing section.
+describe("triageAggregator — postings_stale_or_missing", () => {
+  it("surfaces stale and missing posting catalog entries with correct severity", async () => {
+    const now = Date.now();
+    // One STALE row: cadence=30d, last verified 100d ago, status=current.
+    const stale = await createPostingCatalogEntry(
+      {
+        facilityNumber: FACILITY_A,
+        postingKey: "residents_rights",
+        titleEn: "Residents rights",
+        titleEs: null,
+        locationHint: "Common",
+        required: 1,
+        cadenceDays: 30,
+        notes: null,
+        status: "active",
+        createdBy: ACTOR.id,
+        createdAt: now,
+        updatedAt: now,
+      },
+      ACTOR,
+    );
+    await createPostingVerification(
+      {
+        facilityNumber: FACILITY_A,
+        catalogId: stale.id,
+        postingKey: "residents_rights",
+        verifiedAt: now - 100 * DAY,
+        verifiedBy: ACTOR.id,
+        status: "current",
+        note: null,
+        evidenceCount: 0,
+        createdAt: now,
+      },
+      ACTOR,
+    );
+    // One MISSING row: no verification on file.
+    await createPostingCatalogEntry(
+      {
+        facilityNumber: FACILITY_A,
+        postingKey: "fire_safety_notice",
+        titleEn: "Fire safety",
+        titleEs: null,
+        locationHint: "Kitchen",
+        required: 1,
+        cadenceDays: 60,
+        notes: null,
+        status: "active",
+        createdBy: ACTOR.id,
+        createdAt: now,
+        updatedAt: now,
+      },
+      ACTOR,
+    );
+
+    const payload = await aggregateTriage(FACILITY_A, { now });
+    expect(payload.counts.postings_stale_or_missing).toBe(2);
+    const items = payload.items.filter(
+      (i) => i.section === "postings_stale_or_missing",
+    );
+    expect(items.length).toBe(2);
+    const missing = items.find((i) => i.subject.match(/Fire safety/));
+    const staleItem = items.find((i) => i.subject.match(/Residents rights/));
+    expect(missing?.severity).toBe("high");
+    expect(staleItem?.severity).toBe("medium");
   });
 });

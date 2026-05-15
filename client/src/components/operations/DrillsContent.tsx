@@ -2,8 +2,10 @@
  * <DrillsContent> — Wave 1 W5 (B5).
  *
  * Records fire / disaster / active-threat drills with shift, scenario,
- * evacuation time, participants, debrief. Cadence calc is Wave 4; Wave 1
- * ships logging only.
+ * evacuation time, participants, debrief. Wave 4 Phase 4.1 swaps the
+ * "Quarter cadence enforcement arrives in a later release" footnote for
+ * a live `<DrillCadencePanel>` that reads the new
+ * `/api/ops/facilities/:fn/drills/cadence` endpoint.
  *
  * Pattern citations (Implementation Contract §2.5):
  *   - Page heading + gradient primary action:    ComplianceContent.tsx:280-286
@@ -15,6 +17,7 @@
  *   - useMutation + invalidate + toast:          ComplianceContent.tsx:88-106
  *   - Date helpers (`toLocalEpochMsWithTime`):   lib/datetime.ts
  *   - <AttachEvidence> for sign-in sheet:        components/operations/AttachEvidence.tsx
+ *   - Inline cadence panel chips (emerald/red):  EmarContent.tsx:55-62
  *
  * Phase 5 §6 corrections covered:
  *   A.2 — evacuation_seconds entered as mm:ss in UI, parsed to int seconds
@@ -25,6 +28,7 @@
  *   POST /api/ops/drills
  *   PUT  /api/ops/drills/:id
  *   DELETE /api/ops/drills/:id
+ *   GET  /api/ops/facilities/:fn/drills/cadence       (Wave 4 W6)
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -412,6 +416,159 @@ function LogDrillDialog({
   );
 }
 
+// ── Drill cadence panel (Wave 4 W6) ──────────────────────────────────────────
+
+interface CadenceShiftRow {
+  shift: "AM" | "PM" | "NOC";
+  required: number;
+  logged: number;
+  deficit: number;
+  status: "ok" | "behind";
+}
+
+interface DrillCadencePayload {
+  facilityNumber: string;
+  quarterStartAt: number;
+  quarterEndAt: number;
+  fire: CadenceShiftRow[];
+  totalRequired: number;
+  totalLogged: number;
+  totalDeficit: number;
+  worst: "ok" | "behind";
+}
+
+function fmtQuarterLabel(startMs: number): string {
+  const d = new Date(startMs);
+  const q = Math.floor(d.getMonth() / 3) + 1;
+  return `Q${q} ${d.getFullYear()}`;
+}
+
+function fmtShortDate(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function DrillCadencePanel({ facilityNumber }: { facilityNumber: string }) {
+  const { data, isLoading, error } = useQuery<{
+    success: boolean;
+    data: DrillCadencePayload;
+  } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/drills/cadence`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div
+        className="rounded-md border border-dashed border-stone-200 bg-stone-50 p-3"
+        data-testid="drill-cadence-loading"
+      >
+        <Skeleton className="h-4 w-40 mb-2" />
+        <div className="grid grid-cols-3 gap-2">
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+        </div>
+      </div>
+    );
+  }
+  if (error || !data?.data || !Array.isArray(data.data.fire)) {
+    return (
+      <div
+        className="rounded-md border border-dashed border-stone-200 bg-stone-50 p-3 text-xs text-muted-foreground flex items-start gap-2"
+        data-testid="drill-cadence-error"
+      >
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>Quarter cadence is unavailable right now.</span>
+      </div>
+    );
+  }
+
+  const p = data.data;
+  const isBehind = p.worst === "behind";
+  const quarterLabel = fmtQuarterLabel(p.quarterStartAt);
+  const containerCls = cn(
+    "rounded-md border border-dashed p-3",
+    isBehind ? "border-amber-300 bg-amber-50/60" : "border-stone-200 bg-stone-50",
+  );
+
+  return (
+    <div className={containerCls} data-testid="drill-cadence-panel">
+      <div className="flex items-start gap-2 text-xs text-muted-foreground mb-2">
+        <Info
+          className={cn(
+            "h-3.5 w-3.5 mt-0.5 shrink-0",
+            isBehind && "text-amber-700",
+          )}
+          aria-hidden
+        />
+        <div className="flex-1">
+          <p className={cn("font-medium", isBehind ? "text-amber-800" : "text-foreground")}>
+            Fire-drill cadence · {quarterLabel}
+          </p>
+          <p className={cn("text-xs mt-0.5", isBehind && "text-amber-700")}>
+            {isBehind ? (
+              <>
+                Behind cadence — log {p.totalDeficit} more drill
+                {p.totalDeficit === 1 ? "" : "s"} before quarter end (
+                {fmtShortDate(p.quarterEndAt)}).
+              </>
+            ) : (
+              <>
+                {p.totalLogged} of {p.totalRequired} required
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+      <div
+        className="grid grid-cols-3 gap-2"
+        data-testid="drill-cadence-shifts"
+      >
+        {p.fire.map((row) => {
+          const ok = row.status === "ok";
+          return (
+            <div
+              key={row.shift}
+              className={cn(
+                "rounded border bg-white p-2 text-center",
+                ok
+                  ? "border-emerald-200"
+                  : "border-red-200 bg-red-50",
+              )}
+              data-testid={`drill-cadence-shift-${row.shift}`}
+            >
+              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">
+                {row.shift}
+              </p>
+              <p className="text-sm font-medium portal-num mt-0.5">
+                {row.logged}
+                <span className="text-muted-foreground"> / {row.required}</span>
+              </p>
+              <span
+                className={cn(
+                  "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] border mt-1 capitalize",
+                  ok
+                    ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                    : "bg-red-100 text-red-700 border-red-200",
+                )}
+                aria-label={`Shift ${row.shift} ${row.status}`}
+              >
+                {ok ? "On track" : "Behind"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
@@ -590,13 +747,7 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
         </>
       )}
 
-      <div className="rounded-md border border-dashed border-stone-200 bg-stone-50 p-3 text-xs text-muted-foreground flex items-start gap-2">
-        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <span>
-          Quarter cadence enforcement arrives in a later release; today you can
-          log drills freely.
-        </span>
-      </div>
+      <DrillCadencePanel facilityNumber={facilityNumber} />
 
       <LogDrillDialog
         open={logOpen}

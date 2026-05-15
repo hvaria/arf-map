@@ -33,6 +33,7 @@ import {
   type OpsEvidenceAttachment,
 } from "./opsSchema";
 import { recordAudit } from "./auditStorage";
+import { bumpVerificationEvidenceCount } from "./postingsStorage";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constraints
@@ -324,6 +325,13 @@ export async function attachEvidence(
     console.error("[evidenceStorage] audit emit failed", err);
   }
 
+  // Wave 4 Phase 4.1 (W6) — bump denormalized evidence_count on the parent
+  // verification row so list reads can render badge counts without a JOIN.
+  // Best-effort only — failure must NOT roll back the attach.
+  if (input.entityType === "ops_posting_verification") {
+    await bumpVerificationEvidenceCount(input.entityId, input.facilityNumber, +1);
+  }
+
   return row;
 }
 
@@ -420,6 +428,12 @@ export async function softDeleteEvidence(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[evidenceStorage] detach audit emit failed", err);
+  }
+
+  // Wave 4 Phase 4.1 (W6) — keep the denormalized evidence_count in sync
+  // with soft-deletes. Best-effort; mirrors the attach hook above.
+  if (existing.entityType === "ops_posting_verification") {
+    await bumpVerificationEvidenceCount(existing.entityId, facilityNumber, -1);
   }
 
   return row;

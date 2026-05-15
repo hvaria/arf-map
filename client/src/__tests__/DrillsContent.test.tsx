@@ -6,7 +6,7 @@
  *   - List render with execution badge.
  *   - Dialog opens, mm:ss parsed to seconds in POST.
  *   - mm:ss validation surfaces inline error.
- *   - "Quarter cadence enforcement" footnote present.
+ *   - Wave 4 W6 — drill cadence panel renders in place of the old footnote.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -98,20 +98,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("DrillsContent — empty + footnote", () => {
-  it("renders the empty state and the permanent quarter-cadence footnote", async () => {
+describe("DrillsContent — empty + cadence panel", () => {
+  it("renders the empty state and the Wave 4 cadence panel below it", async () => {
     const qc = freshClient();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(jsonResponse({ success: true, data: [] })),
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/drills/cadence")) {
+          return Promise.resolve(
+            jsonResponse({
+              success: true,
+              data: {
+                facilityNumber: "197600001",
+                quarterStartAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
+                quarterEndAt: Date.now() + 60 * 24 * 60 * 60 * 1000,
+                fire: [
+                  { shift: "AM", required: 1, logged: 0, deficit: 1, status: "behind" },
+                  { shift: "PM", required: 1, logged: 0, deficit: 1, status: "behind" },
+                  { shift: "NOC", required: 1, logged: 0, deficit: 1, status: "behind" },
+                ],
+                totalRequired: 3,
+                totalLogged: 0,
+                totalDeficit: 3,
+                worst: "behind",
+              },
+            }),
+          );
+        }
+        return Promise.resolve(jsonResponse({ success: true, data: [] }));
+      }),
     );
 
     render(<DrillsContent facilityNumber="197600001" />, { wrapper: wrapper(qc) });
 
     expect(await screen.findByTestId("drill-empty")).toBeInTheDocument();
+    expect(await screen.findByTestId("drill-cadence-panel")).toBeInTheDocument();
     expect(
-      screen.getByText(/Quarter cadence enforcement arrives in a later release/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/Quarter cadence enforcement arrives in a later release/i),
+    ).not.toBeInTheDocument();
   });
 });
 

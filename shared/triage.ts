@@ -18,6 +18,11 @@ export const TRIAGE_SECTIONS = [
   "drills_quarter_deficit",
   "charts_incomplete",
   "controlled_sub_discrepancies_aging",
+  // Wave 4 Phase 4.1 (W6) — Posting verification freshness. Surfaces one
+  // item per stale-or-missing posting catalog entry. Severity = "high" for
+  // missing (status≠current or no verification on file) and "medium" for
+  // stale (status=current but verification older than cadence).
+  "postings_stale_or_missing",
 ] as const;
 export type TriageSection = (typeof TRIAGE_SECTIONS)[number];
 
@@ -72,4 +77,5 @@ export const TRIAGE_SECTION_LABELS: Record<TriageSection, string> = {
   drills_quarter_deficit: "Drill cadence deficit",
   charts_incomplete: "Resident charts incomplete",
   controlled_sub_discrepancies_aging: "Controlled-sub discrepancies aging",
+  postings_stale_or_missing: "Postings stale or missing",
 };

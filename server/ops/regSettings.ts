@@ -72,6 +72,11 @@ export const REG_SETTING_KEYS = {
   DAILY_SUMMARY_INCLUDE_CREDENTIALS:   { default: "true",         placeholder: false },
   DAILY_SUMMARY_INCLUDE_COMPLAINTS:    { default: "true",         placeholder: false },
   DAILY_SUMMARY_INCLUDE_VENDORS:       { default: "true",         placeholder: false },
+  // Wave 4 Phase 4.1 — Obligation auto-expire cron grace period.
+  // Pending obligations whose due_at < now - graceDays*DAY transition to
+  // 'expired'. Operational toggle, not statutory — `placeholder: false`
+  // suppresses the [V] chip. Override via reg-settings UI per facility.
+  OBLIGATION_EXPIRE_GRACE_DAYS:        { default: "1",            placeholder: false },
 } as const;
 
 export type RegSettingKey = keyof typeof REG_SETTING_KEYS;

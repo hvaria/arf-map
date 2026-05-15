@@ -22,6 +22,7 @@ import { bootstrapTrackersSchema } from "./trackers/trackerStorage";
 import { bootstrapMainSchema } from "./db/bootstrap";
 import { stripeWebhookHandler } from "./billing/webhookHandler";
 import { startDailySummaryScheduler } from "./ops/dailySummaryScheduler";
+import { startObligationExpireScheduler } from "./ops/obligationExpireScheduler";
 import type { FacilityAccount } from "@shared/schema";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
@@ -284,6 +285,13 @@ app.use((req, res, next) => {
     // with prod so they don't double-fire the cadence email.
     if (process.env.NODE_ENV === "production") {
       startDailySummaryScheduler();
+    }
+
+    // Wave 4 Phase 4.1 — obligation auto-expire cron. Production only; set
+    // DISABLE_OBLIGATION_EXPIRE=1 in staging/test deployments that share a
+    // DB with prod so they don't double-transition rows.
+    if (process.env.NODE_ENV === "production") {
+      startObligationExpireScheduler();
     }
 
   });

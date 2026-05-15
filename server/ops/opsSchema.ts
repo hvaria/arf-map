@@ -811,6 +811,52 @@ export const OPS_PG_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_ops_pull_facility ON ops_preaudit_pulls(facility_number, generated_at);
   CREATE INDEX IF NOT EXISTS idx_ops_pull_share    ON ops_preaudit_pulls(share_link_id);
+
+  -- ── Wave 4 Phase 4.1 — Posting verification (W6) ───────────────────────────
+  -- Per-facility registry of required postings + a verification log (one row
+  -- per walkthrough check). Bilingual labels supported now (title_es) so the
+  -- UI can switch languages as soon as B12 (definitive list + threshold-
+  -- language rules) is validated; until then the backend tags catalog rows
+  -- seeded from shared/postings.ts defaults with placeholder:true in API
+  -- responses. evidence_count is a denormalized cache the backend bumps on
+  -- attach/detach via ops_evidence_attachments — avoids a JOIN on list reads.
+  -- No FK on catalog_id (matches existing application-level integrity
+  -- convention across the ops schema). The partial unique on
+  -- (facility_number, posting_key) WHERE status='active' allows archive +
+  -- re-add of the same posting_key without violating uniqueness.
+  CREATE TABLE IF NOT EXISTS ops_posting_catalog (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    posting_key     TEXT NOT NULL,
+    title_en        TEXT NOT NULL,
+    title_es        TEXT,
+    location_hint   TEXT,
+    required        INTEGER NOT NULL DEFAULT 1,
+    cadence_days    INTEGER NOT NULL DEFAULT 30,
+    notes           TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_by      TEXT NOT NULL,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_posting_catalog_facility ON ops_posting_catalog(facility_number);
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_ops_posting_catalog_facility_key
+    ON ops_posting_catalog(facility_number, posting_key) WHERE status = 'active';
+
+  CREATE TABLE IF NOT EXISTS ops_posting_verifications (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    catalog_id      BIGINT NOT NULL,
+    posting_key     TEXT NOT NULL,
+    verified_at     BIGINT NOT NULL,
+    verified_by     TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    note            TEXT,
+    evidence_count  INTEGER NOT NULL DEFAULT 0,
+    created_at      BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_posting_verif_facility ON ops_posting_verifications(facility_number, verified_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_posting_verif_catalog  ON ops_posting_verifications(catalog_id, verified_at);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1563,6 +1609,45 @@ export const opsPreauditPulls = pgTable("ops_preaudit_pulls", {
   notes:           text("notes"),
 });
 
+// ── Wave 4 Phase 4.1: Posting verification (W6) ───────────────────────────
+// Per-facility posting catalog + walkthrough verification log. catalog_id
+// on opsPostingVerifications is NOT modeled as a Drizzle FK — matches the
+// existing ops convention of application-level integrity. posting_key is
+// denormalized into the verification row for cheap list reads. status on
+// opsPostingCatalog is 'active' | 'archived' (the partial unique in DDL
+// only constrains active rows so archive + re-add of the same posting_key
+// is allowed). evidence_count is a denormalized counter the backend
+// increments when an ops_evidence_attachment is linked to a verification.
+
+export const opsPostingCatalog = pgTable("ops_posting_catalog", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  postingKey:     text("posting_key").notNull(),
+  titleEn:        text("title_en").notNull(),
+  titleEs:        text("title_es"),
+  locationHint:   text("location_hint"),
+  required:       integer("required").notNull().default(1),
+  cadenceDays:    integer("cadence_days").notNull().default(30),
+  notes:          text("notes"),
+  status:         text("status").notNull().default("active"),
+  createdBy:      text("created_by").notNull(),
+  createdAt:      ts("created_at").notNull(),
+  updatedAt:      ts("updated_at").notNull(),
+});
+
+export const opsPostingVerifications = pgTable("ops_posting_verifications", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  catalogId:      bigint("catalog_id", { mode: "number" }).notNull(),
+  postingKey:     text("posting_key").notNull(),
+  verifiedAt:     ts("verified_at").notNull(),
+  verifiedBy:     text("verified_by").notNull(),
+  status:         text("status").notNull(),
+  note:           text("note"),
+  evidenceCount:  integer("evidence_count").notNull().default(0),
+  createdAt:      ts("created_at").notNull(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1668,3 +1753,9 @@ export type InsertOpsShareLink      = typeof opsShareLinks.$inferInsert;
 
 export type OpsPreauditPull         = typeof opsPreauditPulls.$inferSelect;
 export type InsertOpsPreauditPull   = typeof opsPreauditPulls.$inferInsert;
+
+export type OpsPostingCatalog       = typeof opsPostingCatalog.$inferSelect;
+export type InsertOpsPostingCatalog = typeof opsPostingCatalog.$inferInsert;
+
+export type OpsPostingVerification       = typeof opsPostingVerifications.$inferSelect;
+export type InsertOpsPostingVerification = typeof opsPostingVerifications.$inferInsert;

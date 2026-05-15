@@ -56,6 +56,21 @@ import {
   recordPreauditPull,
 } from "./preauditPullsStorage";
 import {
+  archivePostingCatalogEntry,
+  createPostingCatalogEntry,
+  createPostingVerification,
+  getPostingCatalogEntry,
+  listPostingCatalog,
+  listPostingVerifications,
+  seedDefaultPostings,
+  updatePostingCatalogEntry,
+} from "./postingsStorage";
+import { getDrillCadence } from "./drillCadenceStorage";
+import {
+  POSTING_KEYS,
+  POSTING_VERIFICATION_STATUSES,
+} from "@shared/postings";
+import {
   AUDITOR_AUDIENCES,
   SHARE_LINK_SCOPES,
   PREAUDIT_SECTIONS,
@@ -5169,3 +5184,336 @@ opsRouter.get(
     }
   },
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 4 Phase 4.1 (W6) — Posting verification routes
+//
+// Permission mapping:
+//   GET    /facilities/:fn/postings                         — POSTING:read
+//   POST   /facilities/:fn/postings/seed                    — POSTING:create
+//   POST   /postings                                         — POSTING:create
+//   PUT    /postings/:id                                     — POSTING:update
+//   POST   /postings/:id/archive                             — POSTING:update
+//   GET    /facilities/:fn/postings/:catalogId/verifications — POSTING:read
+//   POST   /postings/:catalogId/verify                       — POSTING:create
+//   GET    /facilities/:fn/drills/cadence                   — DRILL_LOG:read (existing)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const postingCatalogCreateSchema = z
+  .object({
+    postingKey: z.enum(POSTING_KEYS),
+    titleEn: z.string().min(1).max(200),
+    titleEs: z.string().max(200).optional(),
+    locationHint: z.string().max(200).optional(),
+    required: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
+    cadenceDays: z.number().int().positive().max(3650).optional(),
+    notes: z.string().max(4000).optional(),
+  })
+  .strict();
+
+const postingCatalogUpdateSchema = z
+  .object({
+    titleEn: z.string().min(1).max(200).optional(),
+    titleEs: z.string().max(200).nullable().optional(),
+    locationHint: z.string().max(200).nullable().optional(),
+    required: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
+    cadenceDays: z.number().int().positive().max(3650).optional(),
+    notes: z.string().max(4000).nullable().optional(),
+    status: z.enum(["active", "archived"]).optional(),
+  })
+  .strict();
+
+const postingVerifyCreateSchema = z
+  .object({
+    status: z.enum(POSTING_VERIFICATION_STATUSES),
+    verifiedAt: z.number().int().positive().optional(),
+    note: z.string().max(4000).optional(),
+  })
+  .strict();
+
+const postingVerificationListQuerySchema = z
+  .object({
+    catalogId: z.coerce.number().int().positive().optional(),
+    sinceMs: z.coerce.number().int().nonnegative().optional(),
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  })
+  .strict();
+
+// GET /facilities/:facilityNumber/postings
+opsRouter.get(
+  "/facilities/:facilityNumber/postings",
+  requireOpsPermission(OPS_RESOURCES.POSTING, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const includeArchived = req.query.includeArchived === "true"
+        || req.query.includeArchived === "1";
+      const rows = await listPostingCatalog(facilityNumber, { includeArchived });
+      return res.json({ success: true, data: rows });
+    } catch (e) {
+      console.error("[ops] posting list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /facilities/:facilityNumber/postings/seed — idempotent
+opsRouter.post(
+  "/facilities/:facilityNumber/postings/seed",
+  requireOpsPermission(OPS_RESOURCES.POSTING, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const actor = getActor(req);
+      const result = await seedDefaultPostings(facilityNumber, actor);
+      return res.status(201).json({ success: true, data: result });
+    } catch (e) {
+      console.error("[ops] posting seed failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /postings  (body carries facilityNumber)
+opsRouter.post(
+  "/postings",
+  requireOpsPermission(OPS_RESOURCES.POSTING, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Not authenticated" });
+      }
+      const parsed = postingCatalogCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const requiredVal =
+        typeof parsed.data.required === "boolean"
+          ? parsed.data.required ? 1 : 0
+          : parsed.data.required ?? 1;
+      const row = await createPostingCatalogEntry(
+        {
+          facilityNumber,
+          postingKey: parsed.data.postingKey,
+          titleEn: parsed.data.titleEn,
+          titleEs: parsed.data.titleEs ?? null,
+          locationHint: parsed.data.locationHint ?? null,
+          required: requiredVal,
+          cadenceDays: parsed.data.cadenceDays ?? 30,
+          notes: parsed.data.notes ?? null,
+          status: "active",
+          createdBy: actor.id,
+          // createdAt + updatedAt stamped inside storage
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      // Unique-violation (active row with same posting_key already exists)
+      if ((e as { code?: string }).code === "23505") {
+        return res
+          .status(409)
+          .json({ success: false, error: "Posting already exists for this key" });
+      }
+      console.error("[ops] posting create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// PUT /postings/:id
+opsRouter.put(
+  "/postings/:id",
+  requireOpsPermission(OPS_RESOURCES.POSTING, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const parsed = postingCatalogUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const partial: Record<string, unknown> = { ...parsed.data };
+      if (typeof partial.required === "boolean") {
+        partial.required = partial.required ? 1 : 0;
+      }
+      const row = await updatePostingCatalogEntry(id, facilityNumber, partial, actor);
+      if (!row) {
+        return res.status(404).json({ success: false, error: "Posting not found" });
+      }
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] posting update failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /postings/:id/archive
+opsRouter.post(
+  "/postings/:id/archive",
+  requireOpsPermission(OPS_RESOURCES.POSTING, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const actor = getActor(req);
+      const ok = await archivePostingCatalogEntry(id, facilityNumber, actor);
+      if (!ok) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Posting not found or already archived" });
+      }
+      return res.json({ success: true });
+    } catch (e) {
+      console.error("[ops] posting archive failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/postings/:catalogId/verifications
+opsRouter.get(
+  "/facilities/:facilityNumber/postings/:catalogId/verifications",
+  requireOpsPermission(OPS_RESOURCES.POSTING, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const catalogId = parseInt(String(req.params.catalogId), 10);
+      if (!Number.isInteger(catalogId) || catalogId <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid catalog id" });
+      }
+      const parsed = postingVerificationListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      // Verify the catalog row belongs to this facility before listing —
+      // defense in depth against the auditor route shape leaking cross-
+      // tenant verification ids.
+      const catalog = await getPostingCatalogEntry(catalogId, facilityNumber);
+      if (!catalog) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Posting not found" });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await listPostingVerifications(facilityNumber, {
+        catalogId,
+        sinceMs: parsed.data.sinceMs,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] posting verifications list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /postings/:catalogId/verify
+opsRouter.post(
+  "/postings/:catalogId/verify",
+  requireOpsPermission(OPS_RESOURCES.POSTING, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Not authenticated" });
+      }
+      const catalogId = parseInt(String(req.params.catalogId), 10);
+      if (!Number.isInteger(catalogId) || catalogId <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid catalog id" });
+      }
+      const parsed = postingVerifyCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const now = Date.now();
+      const catalog = await getPostingCatalogEntry(catalogId, facilityNumber);
+      if (!catalog) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Posting not found" });
+      }
+      const row = await createPostingVerification(
+        {
+          facilityNumber,
+          catalogId,
+          postingKey: catalog.postingKey,
+          verifiedAt: parsed.data.verifiedAt ?? now,
+          verifiedBy: actor.id,
+          status: parsed.data.status,
+          note: parsed.data.note ?? null,
+          evidenceCount: 0,
+          createdAt: now,
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] posting verify failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/drills/cadence
+opsRouter.get(
+  "/facilities/:facilityNumber/drills/cadence",
+  requireOpsPermission(OPS_RESOURCES.DRILL_LOG, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const cadence = await getDrillCadence(facilityNumber);
+      return res.json({ success: true, data: cadence });
+    } catch (e) {
+      console.error("[ops] drill cadence failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+

@@ -67,6 +67,7 @@ import { TemperatureLogsContent } from "@/components/operations/TemperatureLogsC
 import { VendorsContent } from "@/components/operations/VendorsContent";
 import { ComplaintsContent } from "@/components/operations/ComplaintsContent";
 import { InspectionsContent } from "@/components/operations/InspectionsContent";
+import { PostingsContent } from "@/components/operations/PostingsContent";
 import { AuditTrailViewer } from "@/components/operations/AuditTrailViewer";
 import { DailyTriageList } from "@/components/operations/DailyTriageList";
 import { ShareWithInspectorDialog } from "@/components/operations/ShareWithInspectorDialog";
@@ -341,12 +342,17 @@ function OverviewTab({
   // without an Audit-Readiness sub-tab (incidents, credentials, charts,
   // obligations, controlled subs) stay on Overview — Wave 4 wires the
   // cross-Operations nav via OperationsTab.tsx:1272 `goToSubView`.
-  const SECTION_TO_TAB: Partial<Record<TriageSection, string>> = {
+  // Wave 4 W6 — the BE triage aggregator adds `postings_stale_or_missing`;
+  // route those rows into the new Postings tab. Until the shared union is
+  // widened we declare the map with a string-keyed fallback so the lookup
+  // stays type-safe but resilient to the in-flight contract.
+  const SECTION_TO_TAB: Record<string, string> = {
     temperature_out_of_range_open: "logs",
     vendors_expired: "vendors",
     vendors_expiring: "vendors",
     complaints_open: "complaints",
     drills_quarter_deficit: "drills",
+    postings_stale_or_missing: "postings",
   };
   const handleDeepLink = (item: TriageItem) => {
     const next = SECTION_TO_TAB[item.section];
@@ -617,6 +623,9 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
             <TabsTrigger value="logs" className="flex-1">
               Logs
             </TabsTrigger>
+            <TabsTrigger value="postings" className="flex-1">
+              Postings
+            </TabsTrigger>
             <TabsTrigger value="vendors" className="flex-1">
               Vendors
             </TabsTrigger>
@@ -660,6 +669,10 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
 
           <TabsContent value="logs" className="mt-4">
             <TemperatureLogsContent facilityNumber={facilityNumber} />
+          </TabsContent>
+
+          <TabsContent value="postings" className="mt-4">
+            <PostingsContent facilityNumber={facilityNumber} />
           </TabsContent>
 
           <TabsContent value="vendors" className="mt-4">

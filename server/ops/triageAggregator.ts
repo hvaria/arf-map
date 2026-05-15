@@ -41,11 +41,12 @@ import {
   listVendors,
   listComplaints,
   listTemperatureLogs,
-  listDrillLogs,
   listControlledSubDiscrepancies,
 } from "./opsStorage";
 import { listChartCompleteness } from "./chartCompletenessStorage";
 import { getRegSetting } from "./regSettings";
+import { getPostingRollup, listPostingCatalog } from "./postingsStorage";
+import { getDrillCadence } from "./drillCadenceStorage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PER_SECTION_LIMIT = 10;
@@ -318,41 +319,60 @@ export async function aggregateTriage(
   };
 
   const drillsQuarterDeficitFn: SectionFn = async () => {
-    // Reg setting: required fire drills per shift per quarter (across 3
-    // shifts). If the actual count over the current quarter is short of
-    // the target, surface ONE facility-level item.
-    const perShiftStr = await getRegSetting(
-      facilityNumber,
-      "FIRE_DRILLS_PER_SHIFT_PER_QUARTER",
-    ).catch(() => null);
-    const perShift = safeNum(perShiftStr, 1);
-    const targetTotal = perShift * 3;
-
-    // Quarter start = start of current calendar quarter (UTC).
-    const d = new Date(now);
-    const q = Math.floor(d.getUTCMonth() / 3);
-    const quarterStart = Date.UTC(d.getUTCFullYear(), q * 3, 1);
-
-    const { logs } = await listDrillLogs(facilityNumber, {
-      kind: "fire",
-      sinceMs: quarterStart,
-      page: 1,
-      limit: 100,
-    });
-    const haveCount = logs.length;
-    if (haveCount >= targetTotal) return [];
-    return [
-      {
+    // Wave 4 Phase 4.1 — delegate to the canonical drill cadence calculator
+    // so the quarter math + reg setting + soft-delete filter live in one
+    // place. Emit ONE TriageItem per deficient shift so the FE can show
+    // which shifts need a drill.
+    const cadence = await getDrillCadence(facilityNumber, now);
+    if (cadence.totalDeficit === 0) return [];
+    const items: TriageItem[] = [];
+    for (const cell of cadence.fire) {
+      if (cell.deficit <= 0) continue;
+      items.push({
         section: "drills_quarter_deficit",
-        itemKey: `drill_deficit:${quarterStart}`,
-        subject: "Quarter fire drill deficit",
-        action: `Log drill (${haveCount}/${targetTotal})`,
-        ageDays: daysBetween(now, quarterStart),
+        itemKey: `drill_deficit:${cadence.quarterStartAt}:${cell.shift}`,
+        subject: `Fire drill — ${cell.shift} shift`,
+        action: `Log ${cell.shift} drill (${cell.logged}/${cell.required})`,
+        ageDays: daysBetween(now, cadence.quarterStartAt),
         severity: "medium",
         deepLink: { subView: "audit_readiness/drills" },
-      },
-    ];
+      });
+    }
+    return items;
   };
+
+  const postingsStaleOrMissingFn: SectionFn = async () => {
+    // Wave 4 Phase 4.1 (W6) — emit one TriageItem per stale/missing
+    // posting. Severity: 'high' for missing (no current verification on
+    // file), 'medium' for stale (current but past cadence).
+    const rows = await listPostingCatalog(facilityNumber, {
+      includeArchived: false,
+    });
+    const items: TriageItem[] = [];
+    for (const row of rows) {
+      if (row.freshness === "ok") continue;
+      const sev: TriageSeverity = row.freshness === "missing" ? "high" : "medium";
+      const ageDays = row.latestVerification
+        ? daysBetween(now, row.latestVerification.verifiedAt)
+        : undefined;
+      items.push({
+        section: "postings_stale_or_missing",
+        itemKey: `posting:${row.id}`,
+        subject: `Posting — ${row.titleEn}`,
+        action:
+          row.freshness === "missing"
+            ? `Verify ${row.titleEn}`
+            : `Re-verify ${row.titleEn} (last ${ageDays}d ago)`,
+        ageDays,
+        severity: sev,
+        deepLink: { subView: "audit_readiness/postings", entityId: row.id },
+      });
+    }
+    return items;
+  };
+  // Silence unused-import warning for getPostingRollup (used by routes,
+  // not by the aggregator — kept here so the import surface is symmetric).
+  void getPostingRollup;
 
   const chartsIncompleteFn: SectionFn = async () => {
     const res = await listChartCompleteness(
@@ -425,6 +445,7 @@ export async function aggregateTriage(
     drillsQuarterDeficit,
     chartsIncomplete,
     controlledSubAging,
+    postingsStaleOrMissing,
   ] = await Promise.all([
     safeSection("overdue_obligations", overdueObligationsFn),
     safeSection("incidents_past_sla", incidentsPastSlaFn),
@@ -437,6 +458,7 @@ export async function aggregateTriage(
     safeSection("drills_quarter_deficit", drillsQuarterDeficitFn),
     safeSection("charts_incomplete", chartsIncompleteFn),
     safeSection("controlled_sub_discrepancies_aging", controlledSubAgingFn),
+    safeSection("postings_stale_or_missing", postingsStaleOrMissingFn),
   ]);
 
   const bySection: Record<TriageSection, TriageItem[]> = {
@@ -451,6 +473,7 @@ export async function aggregateTriage(
     drills_quarter_deficit: drillsQuarterDeficit,
     charts_incomplete: chartsIncomplete,
     controlled_sub_discrepancies_aging: controlledSubAging,
+    postings_stale_or_missing: postingsStaleOrMissing,
   };
 
   // Counts come from the UN-sliced arrays so KPI tiles are honest about
@@ -472,6 +495,7 @@ export async function aggregateTriage(
       drills_quarter_deficit: 0,
       charts_incomplete: 0,
       controlled_sub_discrepancies_aging: 0,
+      postings_stale_or_missing: 0,
     },
   );
 
