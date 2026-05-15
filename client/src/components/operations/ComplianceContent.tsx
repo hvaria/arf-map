@@ -242,13 +242,18 @@ function AddObligationDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
+      // dueAt is REQUIRED server-side. We block the submit via isValid
+      // below when it's empty, so by the time we reach here dueAt is set.
+      // Sending `undefined` here (not `null`) lets the schema's int()
+      // gate surface the canonical "dueAt required" error if somehow
+      // the FE guard is bypassed (browser back/forward replay etc.).
       const res = await apiRequest("POST", `/api/ops/obligations`, {
         obligationType: form.obligationType,
         title: form.title,
         description: form.description || undefined,
         severity: form.severity,
         recurrenceRule: recurrenceRule ?? undefined,
-        dueAt: form.dueAt ? toLocalEpochMs(form.dueAt) : null,
+        dueAt: form.dueAt ? toLocalEpochMs(form.dueAt) : undefined,
         assignedTo: form.assignedTo || undefined,
         targetType: "facility",
         targetId: null,
@@ -288,8 +293,13 @@ function AddObligationDialog({
   const errors = {
     obligationType: !form.obligationType ? "Pick an obligation type" : undefined,
     title: !form.title.trim() ? "Title is required" : undefined,
+    // Required field — server rejects without it. Mirror Drills/Tasks
+    // pattern: surface a clear "required" error rather than letting the
+    // user hit submit and bounce off the BE 400.
     dueAt:
-      dueAtMs !== null && dueAtMs < todayMidnight
+      !form.dueAt
+        ? "Pick a due date"
+        : dueAtMs !== null && dueAtMs < todayMidnight
         ? "Due date must be today or later"
         : undefined,
     everyNDays:

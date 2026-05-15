@@ -184,6 +184,27 @@ function parsePagination(query: Record<string, unknown>): { page: number; limit:
   return { page, limit };
 }
 
+/**
+ * Coerce every top-level `null` in an object to `undefined`. Used at the
+ * route→storage boundary when a Zod schema is permissive (`.nullable()`
+ * so the FE can send `null` for "user left blank") but the underlying
+ * storage type is `T | undefined` only. Drizzle treats `null` and
+ * `undefined` the same way when inserting into a nullable column, so
+ * stripping nulls here is a no-op semantically but keeps TS happy.
+ *
+ * The return type strips `| null` from every property so the result can
+ * be passed straight to a storage function whose signature only allows
+ * `T | undefined` per field.
+ */
+type StripNull<T> = { [K in keyof T]: Exclude<T[K], null> };
+function nullsToUndef<T extends Record<string, unknown>>(obj: T): StripNull<T> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(obj)) {
+    out[k] = obj[k] === null ? undefined : obj[k];
+  }
+  return out as StripNull<T>;
+}
+
 function getFacilityNumber(req: Request): string {
   // Passport user object has facilityNumber
   const user = req.user as { facilityNumber?: string } | undefined;
@@ -194,23 +215,26 @@ function getFacilityNumber(req: Request): string {
 // Zod schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
+// All optional-fields use `.nullable().optional()` so FE forms that send
+// `null` for "user left blank" pass validation. Drizzle treats null and
+// undefined identically when inserting into a nullable column.
 const residentSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  dob: z.number().int().optional(),
-  gender: z.string().optional(),
-  ssnLast4: z.string().max(4).optional(),
-  admissionDate: z.number().int().optional(),
-  roomNumber: z.string().optional(),
-  bedNumber: z.string().optional(),
-  primaryDx: z.string().optional(),
-  secondaryDx: z.string().optional(),
-  levelOfCare: z.string().optional(),
-  emergencyContactName: z.string().optional(),
-  emergencyContactPhone: z.string().optional(),
-  emergencyContactRelation: z.string().optional(),
-  fundingSource: z.string().optional(),
-  regionalCenterId: z.string().optional(),
+  dob: z.number().int().nullable().optional(),
+  gender: z.string().nullable().optional(),
+  ssnLast4: z.string().max(4).nullable().optional(),
+  admissionDate: z.number().int().nullable().optional(),
+  roomNumber: z.string().nullable().optional(),
+  bedNumber: z.string().nullable().optional(),
+  primaryDx: z.string().nullable().optional(),
+  secondaryDx: z.string().nullable().optional(),
+  levelOfCare: z.string().nullable().optional(),
+  emergencyContactName: z.string().nullable().optional(),
+  emergencyContactPhone: z.string().nullable().optional(),
+  emergencyContactRelation: z.string().nullable().optional(),
+  fundingSource: z.string().nullable().optional(),
+  regionalCenterId: z.string().nullable().optional(),
   status: z.string().optional(),
 });
 
@@ -218,31 +242,31 @@ const assessmentSchema = z.object({
   assessmentType: z.string().min(1),
   assessedBy: z.string().min(1),
   assessedAt: z.number().int(),
-  bathing: z.number().int().optional(),
-  dressing: z.number().int().optional(),
-  grooming: z.number().int().optional(),
-  toileting: z.number().int().optional(),
-  continence: z.number().int().optional(),
-  eating: z.number().int().optional(),
-  mobility: z.number().int().optional(),
-  transfers: z.number().int().optional(),
-  mealPrep: z.number().int().optional(),
-  housekeeping: z.number().int().optional(),
-  laundry: z.number().int().optional(),
-  transportation: z.number().int().optional(),
-  finances: z.number().int().optional(),
-  communication: z.number().int().optional(),
-  cognitionScore: z.number().int().optional(),
-  behaviorNotes: z.string().optional(),
-  fallRiskLevel: z.string().optional(),
-  vision: z.string().optional(),
-  hearing: z.string().optional(),
-  speech: z.string().optional(),
-  ambulation: z.string().optional(),
-  selfAdministerMeds: z.number().int().optional(),
-  nextDueDate: z.number().int().optional(),
-  licFormNumber: z.string().optional(),
-  rawJson: z.string().optional(),
+  bathing: z.number().int().nullable().optional(),
+  dressing: z.number().int().nullable().optional(),
+  grooming: z.number().int().nullable().optional(),
+  toileting: z.number().int().nullable().optional(),
+  continence: z.number().int().nullable().optional(),
+  eating: z.number().int().nullable().optional(),
+  mobility: z.number().int().nullable().optional(),
+  transfers: z.number().int().nullable().optional(),
+  mealPrep: z.number().int().nullable().optional(),
+  housekeeping: z.number().int().nullable().optional(),
+  laundry: z.number().int().nullable().optional(),
+  transportation: z.number().int().nullable().optional(),
+  finances: z.number().int().nullable().optional(),
+  communication: z.number().int().nullable().optional(),
+  cognitionScore: z.number().int().nullable().optional(),
+  behaviorNotes: z.string().nullable().optional(),
+  fallRiskLevel: z.string().nullable().optional(),
+  vision: z.string().nullable().optional(),
+  hearing: z.string().nullable().optional(),
+  speech: z.string().nullable().optional(),
+  ambulation: z.string().nullable().optional(),
+  selfAdministerMeds: z.number().int().nullable().optional(),
+  nextDueDate: z.number().int().nullable().optional(),
+  licFormNumber: z.string().nullable().optional(),
+  rawJson: z.string().nullable().optional(),
 });
 
 const carePlanSchema = z.object({
@@ -252,7 +276,7 @@ const carePlanSchema = z.object({
   goal: z.string().min(1),
   intervention: z.string().min(1),
   frequency: z.string().min(1),
-  responsibleStaff: z.string().optional(),
+  responsibleStaff: z.string().nullable().optional(),
   status: z.string().optional(),
 });
 
@@ -283,9 +307,9 @@ const manualTaskSchema = z.object({
   taskName:   z.string().min(1, "Task name is required"),
   taskType:   z.string().min(1).default("manual"),
   taskDate:   z.number().int().positive(),                    // Unix ms (start of local day)
-  scheduledTime: z.string().regex(/^\d{1,2}:\d{2}$/).optional(), // "HH:MM" 24h
-  shift:      z.enum(["day", "evening", "night", "AM", "PM", "NOC"]).optional(),
-  assignedTo: z.string().optional(),
+  scheduledTime: z.string().regex(/^\d{1,2}:\d{2}$/).nullable().optional(), // "HH:MM" 24h
+  shift:      z.enum(["day", "evening", "night", "AM", "PM", "NOC"]).nullable().optional(),
+  assignedTo: z.string().nullable().optional(),
 }).strict();
 
 // Medication create/update Zod schemas live in @shared/medication-constants so
@@ -299,9 +323,10 @@ const discontinueMedSchema = z.object({
   reason: z
     .union([z.enum(MEDICATION_DISCONTINUE_REASONS), z.string().min(1)])
     .transform((v) => String(v))
+    .nullable()
     .optional(),
-  reasonNote: z.string().optional(),
-  discontinuedBy: z.string().min(1).optional(),
+  reasonNote: z.string().nullable().optional(),
+  discontinuedBy: z.string().min(1).nullable().optional(),
 });
 
 /**
@@ -324,26 +349,26 @@ const medPassSchema = z.object({
   residentId: z.number().int(),
   facilityNumber: z.string().min(1),
   scheduledDatetime: z.number().int(),
-  administeredDatetime: z.number().int().optional(),
-  administeredBy: z.string().optional(),
-  witnessBy: z.string().optional(),
-  rightResident: z.number().int().optional(),
-  rightMedication: z.number().int().optional(),
-  rightDose: z.number().int().optional(),
-  rightRoute: z.number().int().optional(),
-  rightTime: z.number().int().optional(),
-  rightReason: z.number().int().optional(),
-  rightDocumentation: z.number().int().optional(),
-  rightToRefuse: z.number().int().optional(),
+  administeredDatetime: z.number().int().nullable().optional(),
+  administeredBy: z.string().nullable().optional(),
+  witnessBy: z.string().nullable().optional(),
+  rightResident: z.number().int().nullable().optional(),
+  rightMedication: z.number().int().nullable().optional(),
+  rightDose: z.number().int().nullable().optional(),
+  rightRoute: z.number().int().nullable().optional(),
+  rightTime: z.number().int().nullable().optional(),
+  rightReason: z.number().int().nullable().optional(),
+  rightDocumentation: z.number().int().nullable().optional(),
+  rightToRefuse: z.number().int().nullable().optional(),
   status: z.string().optional(),
-  refusalReason: z.string().optional(),
-  holdReason: z.string().optional(),
-  notes: z.string().optional(),
-  preVitalsBp: z.string().optional(),
-  preVitalsPulse: z.number().int().optional(),
-  preVitalsTemp: z.number().optional(),
-  preVitalsSpo2: z.number().int().optional(),
-  prnReason: z.string().optional(),
+  refusalReason: z.string().nullable().optional(),
+  holdReason: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  preVitalsBp: z.string().nullable().optional(),
+  preVitalsPulse: z.number().int().nullable().optional(),
+  preVitalsTemp: z.number().nullable().optional(),
+  preVitalsSpo2: z.number().int().nullable().optional(),
+  prnReason: z.string().nullable().optional(),
 });
 
 const prnFollowupSchema = z.object({
@@ -360,11 +385,11 @@ const controlledSubCountSchema = z.object({
   witnessedBy: z.string().min(1),
   openingCount: z.number().int(),
   closingCount: z.number().int(),
-  administeredCount: z.number().int().optional(),
-  wastedCount: z.number().int().optional(),
-  discrepancy: z.number().int().optional(),
-  discrepancyNotes: z.string().optional(),
-  resolved: z.number().int().optional(),
+  administeredCount: z.number().int().nullable().optional(),
+  wastedCount: z.number().int().nullable().optional(),
+  discrepancy: z.number().int().nullable().optional(),
+  discrepancyNotes: z.string().nullable().optional(),
+  resolved: z.number().int().nullable().optional(),
 });
 
 const medDestructionSchema = z.object({
@@ -380,70 +405,71 @@ const medDestructionSchema = z.object({
 });
 
 const incidentSchema = z.object({
-  residentId: z.number().int().optional(),
+  residentId: z.number().int().nullable().optional(),
   incidentType: z.string().min(1),
   incidentDate: z.number().int(),
-  incidentTime: z.string().optional(),
-  location: z.string().optional(),
+  incidentTime: z.string().nullable().optional(),
+  location: z.string().nullable().optional(),
   description: z.string().min(1),
-  immediateActionTaken: z.string().optional(),
-  injuryInvolved: z.number().int().optional(),
-  injuryDescription: z.string().optional(),
-  hospitalizationRequired: z.number().int().optional(),
-  hospitalName: z.string().optional(),
+  immediateActionTaken: z.string().nullable().optional(),
+  injuryInvolved: z.number().int().nullable().optional(),
+  injuryDescription: z.string().nullable().optional(),
+  hospitalizationRequired: z.number().int().nullable().optional(),
+  hospitalName: z.string().nullable().optional(),
   reportedBy: z.string().min(1),
-  supervisorNotified: z.number().int().optional(),
-  supervisorNotifiedAt: z.number().int().optional(),
-  familyNotified: z.number().int().optional(),
-  familyNotifiedAt: z.number().int().optional(),
-  physicianNotified: z.number().int().optional(),
-  physicianNotifiedAt: z.number().int().optional(),
-  lic624Submitted: z.number().int().optional(),
-  lic624SubmittedAt: z.number().int().optional(),
-  soc341Required: z.number().int().optional(),
-  soc341Submitted: z.number().int().optional(),
-  rootCause: z.string().optional(),
-  correctiveAction: z.string().optional(),
-  followUpDate: z.number().int().optional(),
-  followUpCompleted: z.number().int().optional(),
+  supervisorNotified: z.number().int().nullable().optional(),
+  supervisorNotifiedAt: z.number().int().nullable().optional(),
+  familyNotified: z.number().int().nullable().optional(),
+  familyNotifiedAt: z.number().int().nullable().optional(),
+  physicianNotified: z.number().int().nullable().optional(),
+  physicianNotifiedAt: z.number().int().nullable().optional(),
+  lic624Submitted: z.number().int().nullable().optional(),
+  lic624SubmittedAt: z.number().int().nullable().optional(),
+  soc341Required: z.number().int().nullable().optional(),
+  soc341Submitted: z.number().int().nullable().optional(),
+  rootCause: z.string().nullable().optional(),
+  correctiveAction: z.string().nullable().optional(),
+  followUpDate: z.number().int().nullable().optional(),
+  followUpCompleted: z.number().int().nullable().optional(),
   status: z.string().optional(),
 });
 
 const leadSchema = z.object({
   contactName: z.string().min(1),
-  contactPhone: z.string().optional(),
-  contactEmail: z.string().email().optional(),
-  contactRelation: z.string().optional(),
+  contactPhone: z.string().nullable().optional(),
+  // Allow empty string ("") and literal null in addition to a valid email.
+  contactEmail: z.union([z.string().email(), z.literal("")]).nullable().optional(),
+  contactRelation: z.string().nullable().optional(),
   prospectName: z.string().min(1),
-  prospectDob: z.number().int().optional(),
-  prospectGender: z.string().optional(),
-  careNeedsSummary: z.string().optional(),
-  fundingSource: z.string().optional(),
-  desiredMoveInDate: z.number().int().optional(),
-  referralSource: z.string().optional(),
-  assignedTo: z.string().optional(),
+  prospectDob: z.number().int().nullable().optional(),
+  prospectGender: z.string().nullable().optional(),
+  careNeedsSummary: z.string().nullable().optional(),
+  fundingSource: z.string().nullable().optional(),
+  desiredMoveInDate: z.number().int().nullable().optional(),
+  referralSource: z.string().nullable().optional(),
+  assignedTo: z.string().nullable().optional(),
   stage: z.string().optional(),
-  lostReason: z.string().optional(),
-  notes: z.string().optional(),
-  lastContactDate: z.number().int().optional(),
-  nextFollowUpDate: z.number().int().optional(),
+  lostReason: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  lastContactDate: z.number().int().nullable().optional(),
+  nextFollowUpDate: z.number().int().nullable().optional(),
 });
 
 const tourSchema = z.object({
   scheduledAt: z.number().int(),
-  conductedBy: z.string().optional(),
-  outcome: z.string().optional(),
-  notes: z.string().optional(),
-  followUpAction: z.string().optional(),
-  completedAt: z.number().int().optional(),
+  conductedBy: z.string().nullable().optional(),
+  outcome: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  followUpAction: z.string().nullable().optional(),
+  completedAt: z.number().int().nullable().optional(),
 }).strict();
 
 const admissionSchema = z.object({
   leadId: z.number().int(),
   facilityNumber: z.string().min(1),
-  moveInDate: z.number().int().optional(),
-  assignedRoom: z.string().optional(),
-  notes: z.string().optional(),
+  moveInDate: z.number().int().nullable().optional(),
+  assignedRoom: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
 });
 
 const licFormSchema = z.object({
@@ -456,17 +482,17 @@ const chargeSchema = z.object({
   chargeType: z.string().min(1),
   description: z.string().min(1),
   amount: z.number(),
-  unit: z.string().optional(),
-  quantity: z.number().optional(),
-  billingPeriodStart: z.number().int().optional(),
-  billingPeriodEnd: z.number().int().optional(),
-  isRecurring: z.number().int().optional(),
-  recurrenceInterval: z.string().optional(),
-  prorated: z.number().int().optional(),
-  prorateFrom: z.number().int().optional(),
-  prorateTo: z.number().int().optional(),
+  unit: z.string().nullable().optional(),
+  quantity: z.number().nullable().optional(),
+  billingPeriodStart: z.number().int().nullable().optional(),
+  billingPeriodEnd: z.number().int().nullable().optional(),
+  isRecurring: z.number().int().nullable().optional(),
+  recurrenceInterval: z.string().nullable().optional(),
+  prorated: z.number().int().nullable().optional(),
+  prorateFrom: z.number().int().nullable().optional(),
+  prorateTo: z.number().int().nullable().optional(),
   source: z.string().optional(),
-  clinicalRefId: z.number().int().optional(),
+  clinicalRefId: z.number().int().nullable().optional(),
 });
 
 const generateInvoiceSchema = z.object({
@@ -483,10 +509,10 @@ const paymentSchema = z.object({
   amount: z.number(),
   paymentDate: z.number().int(),
   paymentMethod: z.string().min(1),
-  referenceNumber: z.string().optional(),
+  referenceNumber: z.string().nullable().optional(),
   type: z.string().optional(),
-  notes: z.string().optional(),
-  recordedBy: z.string().optional(),
+  notes: z.string().nullable().optional(),
+  recordedBy: z.string().nullable().optional(),
 });
 
 // facilityNumber is intentionally NOT in the body schema — the server pulls
@@ -497,12 +523,13 @@ const paymentSchema = z.object({
 const staffSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
+  // Allow empty string for the FE form's "left blank" state.
+  email: z.union([z.string().email(), z.literal("")]).nullable().optional(),
+  phone: z.string().nullable().optional(),
   role: z.string().min(1),
-  hireDate: z.number().int().optional(),
-  licenseNumber: z.string().optional(),
-  licenseExpiry: z.number().int().optional(),
+  hireDate: z.number().int().nullable().optional(),
+  licenseNumber: z.string().nullable().optional(),
+  licenseExpiry: z.number().int().nullable().optional(),
   status: z.string().optional(),
 }).strict();
 
@@ -512,10 +539,10 @@ const shiftSchema = z.object({
   shiftType: z.string().min(1),
   startTime: z.string().min(1),
   endTime: z.string().min(1),
-  isOvertime: z.number().int().optional(),
+  isOvertime: z.number().int().nullable().optional(),
   status: z.string().optional(),
-  coveredById: z.number().int().optional(),
-  notes: z.string().optional(),
+  coveredById: z.number().int().nullable().optional(),
+  notes: z.string().nullable().optional(),
 }).strict();
 
 // Group A contract fix: facilityNumber pulled from session (not body),
@@ -534,9 +561,9 @@ const complianceItemSchema = z.object({
     },
     { message: "Due date must be today or later" },
   ),
-  assignedTo: z.string().optional(),
+  assignedTo: z.string().nullable().optional(),
   status: z.string().optional(),
-  reminderDaysBefore: z.number().int().optional(),
+  reminderDaysBefore: z.number().int().nullable().optional(),
 }).strict();
 
 const completeComplianceSchema = z.object({
@@ -556,7 +583,7 @@ opsRouter.get("/facilities/:facilityNumber/residents", async (req, res) => {
     const result = await ops.listResidents(facilityNumber, { page, limit, status });
     res.json({ success: true, data: result.residents, meta: { total: result.total, page, limit } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -570,7 +597,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id", async (req, res) => {
     if (!resident) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: resident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -583,7 +610,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/assessments", async (re
     const assessments = await ops.listAssessments(id, facilityNumber);
     res.json({ success: true, data: assessments });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -615,7 +642,7 @@ opsRouter.post("/facilities/:facilityNumber/residents/:id/assessments", async (r
     await ops.createDailyTasksFromCarePlan(carePlan.id, residentId, facilityNumber);
     res.status(201).json({ success: true, data: { assessment, carePlan } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -629,7 +656,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/care-plan", async (req,
     if (!plan) return res.status(404).json({ success: false, error: "No active care plan" });
     res.json({ success: true, data: plan });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -644,7 +671,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/daily-tasks", async (re
     const tasks = await ops.getDailyTasks(residentId, facilityNumber, dateParam, shift);
     res.json({ success: true, data: tasks });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -658,7 +685,7 @@ opsRouter.get("/facilities/:facilityNumber/overdue-tasks", async (req, res) => {
     const tasks = await ops.getOverdueTasksForFacility(facilityNumber);
     res.json({ success: true, data: tasks });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -672,7 +699,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", async (re
     const meds = await ops.listMedications(residentId, facilityNumber, status);
     res.json({ success: true, data: meds.map(normalizeMedicationRow) });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -694,7 +721,7 @@ opsRouter.post("/facilities/:facilityNumber/residents/:id/medications", async (r
     );
     res.status(201).json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -708,7 +735,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/incidents", async (req,
     const result = await ops.listIncidents(facilityNumber, { page, limit, residentId });
     res.json({ success: true, data: result.incidents, meta: { total: result.total, page, limit } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -721,7 +748,7 @@ opsRouter.get("/residents", async (req, res) => {
     const result = await ops.listResidents(facilityNumber, { page, limit, status });
     res.json({ success: true, data: result.residents, meta: { total: result.total, page, limit } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -745,7 +772,7 @@ opsRouter.post("/residents", async (req, res) => {
     );
     res.status(201).json({ success: true, data: resident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -759,7 +786,7 @@ opsRouter.get("/residents/:id", async (req, res) => {
     if (!resident) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: resident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -777,7 +804,7 @@ opsRouter.put("/residents/:id", async (req, res) => {
     if (!resident) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: resident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -791,7 +818,7 @@ opsRouter.delete("/residents/:id", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -804,7 +831,7 @@ opsRouter.get("/residents/:id/assessments", async (req, res) => {
     const assessments = await ops.listAssessments(id, facilityNumber);
     res.json({ success: true, data: assessments });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -849,7 +876,7 @@ opsRouter.post("/residents/:id/assessments", async (req, res) => {
 
     res.status(201).json({ success: true, data: { assessment, carePlan } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -866,7 +893,7 @@ opsRouter.put("/assessments/:id", async (req, res) => {
     if (!assessment) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: assessment });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -880,7 +907,7 @@ opsRouter.get("/residents/:id/care-plan", async (req, res) => {
     if (!plan) return res.status(404).json({ success: false, error: "No active care plan" });
     res.json({ success: true, data: plan });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -904,7 +931,7 @@ opsRouter.post("/residents/:id/care-plan", async (req, res) => {
     });
     res.status(201).json({ success: true, data: plan });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -921,7 +948,7 @@ opsRouter.put("/care-plans/:id", async (req, res) => {
     if (!plan) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: plan });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -938,7 +965,7 @@ opsRouter.post("/care-plans/:id/sign", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -955,7 +982,7 @@ opsRouter.get("/residents/:id/tasks", async (req, res) => {
     const tasks = await ops.getDailyTasks(residentId, facilityNumber, dateParam, shift);
     res.json({ success: true, data: tasks });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -973,14 +1000,14 @@ opsRouter.post("/tasks", async (req, res) => {
       taskName:     parsed.data.taskName,
       taskType:     parsed.data.taskType,
       taskDate:     parsed.data.taskDate,
-      scheduledTime: parsed.data.scheduledTime,
-      shift:         parsed.data.shift,
-      assignedTo:    parsed.data.assignedTo,
+      // Storage expects `string | undefined`; coerce any FE-sent null.
+      scheduledTime: parsed.data.scheduledTime ?? undefined,
+      shift:         parsed.data.shift ?? undefined,
+      assignedTo:    parsed.data.assignedTo ?? undefined,
     });
     res.status(201).json({ success: true, data: task });
   } catch (e) {
-    console.error("[ops] POST /tasks failed", e);
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -997,7 +1024,7 @@ opsRouter.put("/tasks/:id/complete", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1014,7 +1041,7 @@ opsRouter.put("/tasks/:id/refuse", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1032,7 +1059,7 @@ opsRouter.get("/residents/:id/medications", async (req, res) => {
     const meds = await ops.listMedications(residentId, facilityNumber, status);
     res.json({ success: true, data: meds.map(normalizeMedicationRow) });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1060,7 +1087,7 @@ opsRouter.post("/residents/:id/medications", async (req, res) => {
     );
     res.status(201).json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1097,7 +1124,7 @@ opsRouter.put("/medications/:id", async (req, res) => {
     if (!med) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1120,7 +1147,7 @@ opsRouter.delete("/medications/:id", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1169,7 +1196,7 @@ opsRouter.get("/facilities/:facilityNumber/med-pass/summary", async (req, res) =
     const data = await ops.getMedPassSummary(facilityNumber, fromMs, toMs);
     return res.json({ success: true, data });
   } catch (e) {
-    return res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1194,7 +1221,7 @@ opsRouter.get("/facilities/:facilityNumber/calendar", async (req, res) => {
     const data = await ops.getCalendarSummary(facilityNumber, fromMs, toMs);
     return res.json({ success: true, data });
   } catch (e) {
-    return res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1224,7 +1251,7 @@ opsRouter.get("/facilities/:facilityNumber/med-pass", async (req, res) => {
     }));
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1240,7 +1267,7 @@ opsRouter.get("/residents/:id/med-pass", async (req, res) => {
     const queue = await ops.getResidentMedPassQueue(residentId, facilityNumber, date);
     res.json({ success: true, data: queue });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1254,7 +1281,7 @@ opsRouter.post("/med-passes", async (req, res) => {
     const medPass = await ops.recordMedPass({ ...parsed.data, createdAt: Date.now() }, getActor(req));
     res.status(201).json({ success: true, data: medPass });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1287,7 +1314,7 @@ opsRouter.put("/med-passes/:id", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1304,7 +1331,7 @@ opsRouter.put("/med-passes/:id/prn-followup", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1318,7 +1345,7 @@ opsRouter.get("/facilities/:facilityNumber/emar-dashboard", async (req, res) => 
     const dashboard = await ops.getMedPassDashboard(facilityNumber, date);
     res.json({ success: true, data: dashboard });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1331,7 +1358,7 @@ opsRouter.get("/facilities/:facilityNumber/med-refusals", async (req, res) => {
     const refusals = await ops.getMedRefusals(facilityNumber, start, end);
     res.json({ success: true, data: refusals });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1344,7 +1371,7 @@ opsRouter.get("/facilities/:facilityNumber/prn-report", async (req, res) => {
     const report = await ops.getPrnReport(facilityNumber, start, end);
     res.json({ success: true, data: report });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1368,7 +1395,7 @@ opsRouter.post("/medications/:id/request-refill", async (req, res) => {
     if (!med) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1379,10 +1406,10 @@ opsRouter.post("/controlled-sub-counts", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const record = await ops.recordControlledSubCount({ ...parsed.data, createdAt: Date.now() });
+    const record = await ops.recordControlledSubCount({ ...nullsToUndef(parsed.data), createdAt: Date.now() });
     res.status(201).json({ success: true, data: record });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1396,7 +1423,7 @@ opsRouter.post("/med-destruction", async (req, res) => {
     const record = await ops.recordMedDestruction({ ...parsed.data, createdAt: Date.now() });
     res.status(201).json({ success: true, data: record });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1416,7 +1443,7 @@ opsRouter.get("/facilities/:facilityNumber/incidents", async (req, res) => {
     const result = await ops.listIncidents(facilityNumber, { page, limit, type, residentId });
     res.json({ success: true, data: result.incidents, meta: { total: result.total, page, limit } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1445,7 +1472,7 @@ opsRouter.post("/incidents", async (req, res) => {
     });
     res.status(201).json({ success: true, data: incident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1463,7 +1490,7 @@ opsRouter.put("/incidents/:id", async (req, res) => {
     if (!incident) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: incident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1497,7 +1524,7 @@ opsRouter.get("/incidents/:id/lic624", async (req, res) => {
       },
     });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1509,7 +1536,7 @@ opsRouter.get("/facilities/:facilityNumber/incident-trends", async (req, res) =>
     const trends = await ops.getIncidentTrends(facilityNumber, days);
     res.json({ success: true, data: trends });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1526,7 +1553,7 @@ opsRouter.get("/facilities/:facilityNumber/leads", async (req, res) => {
     const result = await ops.listLeads(facilityNumber, { page, limit, stage });
     res.json({ success: true, data: result.leads, meta: { total: result.total, page, limit } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1542,7 +1569,7 @@ opsRouter.post("/leads", async (req, res) => {
     const lead = await ops.createLead({ ...parsed.data, facilityNumber, createdAt: now, updatedAt: now });
     res.status(201).json({ success: true, data: lead });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1560,7 +1587,7 @@ opsRouter.put("/leads/:id", async (req, res) => {
     if (!lead) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: lead });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1574,7 +1601,7 @@ opsRouter.get("/leads/:id", async (req, res) => {
     if (!lead) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: lead });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1603,7 +1630,7 @@ opsRouter.post("/leads/:id/tours", async (req, res) => {
     }
     res.status(201).json({ success: true, data: tour });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1626,7 +1653,7 @@ opsRouter.put("/tours/:id", async (req, res) => {
     }
     res.json({ success: true, data: tour });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1655,7 +1682,7 @@ opsRouter.post("/leads/:id/admissions", async (req, res) => {
     await ops.updateLead(leadId, facilityNumber, { stage: "admission_in_progress" });
     res.status(201).json({ success: true, data: admission });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1727,7 +1754,7 @@ opsRouter.get("/facilities/:facilityNumber/leads/:leadId/admissions", async (req
       },
     });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1757,7 +1784,7 @@ opsRouter.put("/leads/:leadId/lic/:form", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found or invalid form" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1779,7 +1806,7 @@ opsRouter.post("/leads/:leadId/convert", async (req, res) => {
     if (!resident) return res.status(404).json({ success: false, error: "Admission not found or lead missing" });
     res.status(201).json({ success: true, data: resident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1811,7 +1838,7 @@ opsRouter.get("/admissions/:id/lic-checklist", async (req, res) => {
       },
     });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1829,7 +1856,7 @@ opsRouter.put("/admissions/:id/lic/:form", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found or invalid form" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1842,7 +1869,7 @@ opsRouter.post("/admissions/:id/convert", async (req, res) => {
     if (!resident) return res.status(404).json({ success: false, error: "Admission not found or lead missing" });
     res.status(201).json({ success: true, data: resident });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1853,7 +1880,7 @@ opsRouter.get("/facilities/:facilityNumber/occupancy", async (req, res) => {
     const occupancy = await ops.getOccupancy(facilityNumber);
     res.json({ success: true, data: occupancy });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1874,7 +1901,7 @@ opsRouter.get("/facilities/:facilityNumber/crm-pipeline", async (req, res) => {
     }
     res.json({ success: true, data: pipeline });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1898,7 +1925,7 @@ opsRouter.get("/residents/:id/billing", async (req, res) => {
 
     res.json({ success: true, data: { charges, invoices } });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1909,10 +1936,10 @@ opsRouter.post("/billing/charges", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const charge = await ops.createCharge({ ...parsed.data, createdAt: Date.now() });
+    const charge = await ops.createCharge({ ...nullsToUndef(parsed.data), createdAt: Date.now() });
     res.status(201).json({ success: true, data: charge });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1956,7 +1983,7 @@ opsRouter.put("/billing/charges/:id", async (req, res) => {
     );
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1970,7 +1997,7 @@ opsRouter.delete("/billing/charges/:id", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -1989,7 +2016,7 @@ opsRouter.post("/billing/invoices/generate", async (req, res) => {
     );
     res.status(201).json({ success: true, data: invoice });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2002,7 +2029,7 @@ opsRouter.get("/billing/invoices/:id", async (req, res) => {
     if (!invoice) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: invoice });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2015,7 +2042,7 @@ opsRouter.put("/billing/invoices/:id/send", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2029,7 +2056,7 @@ opsRouter.post("/billing/payments", async (req, res) => {
     const payment = await ops.recordPayment({ ...parsed.data, createdAt: Date.now() });
     res.status(201).json({ success: true, data: payment });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2040,7 +2067,7 @@ opsRouter.get("/facilities/:facilityNumber/ar-aging", async (req, res) => {
     const aging = await ops.getArAging(facilityNumber);
     res.json({ success: true, data: aging });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2053,7 +2080,7 @@ opsRouter.get("/facilities/:facilityNumber/billing-summary", async (req, res) =>
     const summary = await ops.getBillingSummary(facilityNumber, start, end);
     res.json({ success: true, data: summary });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2069,7 +2096,7 @@ opsRouter.get("/facilities/:facilityNumber/staff", async (req, res) => {
     const staff = await ops.listStaff(facilityNumber, status);
     res.json({ success: true, data: staff });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2092,7 +2119,7 @@ opsRouter.post("/staff", async (req, res) => {
     });
     res.status(201).json({ success: true, data: member });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2110,7 +2137,7 @@ opsRouter.put("/staff/:id", async (req, res) => {
     if (!member) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: member });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2124,7 +2151,7 @@ opsRouter.delete("/staff/:id", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2136,7 +2163,7 @@ opsRouter.get("/facilities/:facilityNumber/schedule", async (req, res) => {
     const shifts = await ops.listShifts(facilityNumber, weekStart);
     res.json({ success: true, data: shifts });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2155,7 +2182,7 @@ opsRouter.post("/shifts", async (req, res) => {
     });
     res.status(201).json({ success: true, data: shift });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2172,7 +2199,7 @@ opsRouter.put("/shifts/:id", async (req, res) => {
     if (!shift) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: shift });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2218,7 +2245,7 @@ opsRouter.get("/facilities/:facilityNumber/compliance", async (req, res) => {
     const items = await obligations.listObligationsAsLegacyCompliance(facilityNumber, status);
     res.json({ success: true, data: items });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2244,7 +2271,7 @@ opsRouter.post("/compliance", async (req, res) => {
     );
     res.status(201).json({ success: true, data: item });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2267,7 +2294,7 @@ opsRouter.put("/compliance/:id", async (req, res) => {
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2283,7 +2310,7 @@ opsRouter.get("/facilities/:facilityNumber/compliance/overdue", async (req, res)
     const items = await obligations.listOverdueObligationsAsLegacy(facilityNumber);
     res.json({ success: true, data: items });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2356,8 +2383,7 @@ opsRouter.get("/facilities/:facilityNumber/calendar/events", async (req, res) =>
       meta: { total: data.length, returned: payload.length, truncated },
     });
   } catch (e) {
-    console.error("[ops] calendar/events failed", e);
-    return res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2368,7 +2394,7 @@ opsRouter.get("/facilities/:facilityNumber/dashboard", async (req, res) => {
     const dashboard = await ops.getFacilityDashboard(facilityNumber);
     res.json({ success: true, data: dashboard });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2386,8 +2412,7 @@ opsRouter.post("/facilities/:facilityNumber/seed-demo", async (req, res) => {
     const result = await ops.seedFacilityDemoData(facilityNumber);
     return res.json({ success: true, data: result });
   } catch (e) {
-    console.error("[ops] seed-demo failed", e);
-    return res.status(500).json({ success: false, error: "Internal error" });
+    return handleRouteError(req, e, res);
   }
 });
 
@@ -2525,8 +2550,7 @@ opsRouter.get(
       const data = await listRegSettings(facilityNumber);
       return res.json({ success: true, data });
     } catch (e) {
-      console.error("[ops] reg-settings list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2568,8 +2592,7 @@ opsRouter.put(
       );
       return res.json({ success: true, data });
     } catch (e) {
-      console.error("[ops] reg-settings update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2584,8 +2607,7 @@ opsRouter.post(
       const result = await seedDefaultsForFacility(facilityNumber);
       return res.json({ success: true, data: result });
     } catch (e) {
-      console.error("[ops] reg-settings seed failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2612,8 +2634,7 @@ opsRouter.get(
       );
       return res.json({ success: true, data });
     } catch (e) {
-      console.error("[ops] evidence list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2707,8 +2728,7 @@ opsRouter.post(
         const status = e.code === "FILE_TOO_LARGE" ? 413 : 400;
         return res.status(status).json({ success: false, error: e.message });
       }
-      console.error("[ops] evidence attach failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2782,8 +2802,7 @@ opsRouter.delete(
       }
       return res.json({ success: true, data: { id: row.id, deletedAt: row.deletedAt } });
     } catch (e) {
-      console.error("[ops] evidence delete failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2820,8 +2839,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] audit-trail list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2857,8 +2875,7 @@ opsRouter.get(
         },
       });
     } catch (e) {
-      console.error("[ops] chart-completeness list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2886,8 +2903,7 @@ opsRouter.get(
       }
       return res.json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] chart-completeness resident failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -2911,6 +2927,45 @@ function parseIdParam(raw: unknown): number | null {
   const n = parseInt(String(raw), 10);
   if (Number.isNaN(n) || n <= 0) return null;
   return n;
+}
+
+// Centralized error responder. Stops the "swallow as Internal error"
+// anti-pattern that hid production failures and made debugging impossible.
+// Behavior:
+//   - Domain errors (matched by message regex in isDomainError) → 400
+//     with the thrown message so the FE toast shows a useful reason.
+//   - Postgres unique-constraint violations (23505) → 409 conflict.
+//   - Everything else → 500 with a structured `code` for the FE to
+//     branch on, plus a `console.error` carrying the request method+path
+//     and the full Error so it surfaces in production logs.
+//
+// Usage: `} catch (e) { return handleRouteError(req, e, res); }`
+export function handleRouteError(req: Request, e: unknown, res: Response) {
+  if (isDomainError(e)) {
+    return res.status(400).json({
+      success: false,
+      code: "DOMAIN_ERROR",
+      error: (e as Error).message,
+    });
+  }
+  // Postgres unique violation. The pg driver exposes `code` on the
+  // thrown error; better-sqlite3 throws SqliteError with a different
+  // shape but production runs on Postgres so this is the hot path.
+  const err = e as { code?: string; constraint?: string; message?: string };
+  if (err && err.code === "23505") {
+    return res.status(409).json({
+      success: false,
+      code: "CONFLICT",
+      error: err.message ?? "Resource already exists",
+    });
+  }
+  // eslint-disable-next-line no-console
+  console.error(`[ops] ${req.method} ${req.originalUrl} failed`, e);
+  return res.status(500).json({
+    success: false,
+    code: "INTERNAL_ERROR",
+    error: "Internal error",
+  });
 }
 
 // Map a thrown Error to the correct HTTP envelope. We treat domain errors
@@ -2952,9 +3007,9 @@ const tempFixtureCreateSchema = z.object({
   fixtureKey: z.string().min(1).max(64),
   fixtureLabel: z.string().min(1).max(120),
   kind: z.string().min(1).max(40),
-  requiredMin: z.number().finite().optional(),
-  requiredMax: z.number().finite().optional(),
-  unit: z.string().max(8).optional(),
+  requiredMin: z.number().finite().nullable().optional(),
+  requiredMax: z.number().finite().nullable().optional(),
+  unit: z.string().max(8).nullable().optional(),
 }).strict();
 
 const tempFixtureUpdateSchema = z.object({
@@ -2971,8 +3026,8 @@ const tempLogCreateSchema = z.object({
   readingValue: z.number().finite(),
   readingAt: z.number().int().positive(),
   // Phase 5 §6.A.1 — free-text, defaults to session user if blank.
-  recordedBy: z.string().trim().max(120).optional(),
-  note: z.string().max(2000).optional(),
+  recordedBy: z.string().trim().max(120).nullable().optional(),
+  note: z.string().max(2000).nullable().optional(),
 }).strict();
 
 const tempLogResolveSchema = z.object({
@@ -2998,8 +3053,7 @@ opsRouter.get(
       const data = await ops.listTemperatureFixtures(facilityNumber, { includeInactive });
       return res.json({ success: true, data });
     } catch (e) {
-      console.error("[ops] temp-fixtures list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3035,11 +3089,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] temp-fixture create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3064,11 +3114,7 @@ opsRouter.put(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] temp-fixture update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3089,8 +3135,7 @@ opsRouter.delete(
       if (!ok) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: { id } });
     } catch (e) {
-      console.error("[ops] temp-fixture delete failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3116,8 +3161,7 @@ opsRouter.get(
       });
       return res.json({ success: true, data: result.logs, meta: { total: result.total, page, limit } });
     } catch (e) {
-      console.error("[ops] temp-logs list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3156,8 +3200,7 @@ opsRouter.post(
         const status = /not found/i.test(msg) ? 404 : 400;
         return res.status(status).json({ success: false, error: msg });
       }
-      console.error("[ops] temp-log create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3187,11 +3230,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] temp-log resolve failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3200,16 +3239,16 @@ opsRouter.post(
 
 const drillCreateSchema = z.object({
   drillKind: z.string().min(1).max(40),
-  scenario: z.string().max(500).optional(),
-  shift: z.string().max(40).optional(),
+  scenario: z.string().max(500).nullable().optional(),
+  shift: z.string().max(40).nullable().optional(),
   executedAt: z.number().int().positive(),
-  leader: z.string().max(120).optional(),
-  participants: z.array(z.string().max(200)).max(200).optional(),
-  residentsInvolved: z.array(z.string().max(200)).max(200).optional(),
+  leader: z.string().max(120).nullable().optional(),
+  participants: z.array(z.string().max(200)).max(200).nullable().optional(),
+  residentsInvolved: z.array(z.string().max(200)).max(200).nullable().optional(),
   // Phase 5 §6.A.2 — FE converts mm:ss to integer seconds before POST.
-  evacuationSeconds: z.number().int().nonnegative().max(86400).optional(),
-  debriefNotes: z.string().max(4000).optional(),
-  correctiveActions: z.array(z.string().max(500)).max(50).optional(),
+  evacuationSeconds: z.number().int().nonnegative().max(86400).nullable().optional(),
+  debriefNotes: z.string().max(4000).nullable().optional(),
+  correctiveActions: z.array(z.string().max(500)).max(50).nullable().optional(),
   status: z.enum(["executed", "completed"]).optional(),
 }).strict();
 
@@ -3243,8 +3282,7 @@ opsRouter.get(
       const decoded = result.logs.map((r) => ops.decodeDrillLog(r));
       return res.json({ success: true, data: decoded, meta: { total: result.total, page, limit } });
     } catch (e) {
-      console.error("[ops] drills list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3283,11 +3321,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: ops.decodeDrillLog(row) });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] drill create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3307,15 +3341,11 @@ opsRouter.put(
       if (!parsed.success) {
         return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
       }
-      const row = await ops.updateDrillLog(id, facilityNumber, parsed.data, getActor(req));
+      const row = await ops.updateDrillLog(id, facilityNumber, nullsToUndef(parsed.data), getActor(req));
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: ops.decodeDrillLog(row) });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] drill update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3335,8 +3365,7 @@ opsRouter.delete(
       if (!ok) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: { id } });
     } catch (e) {
-      console.error("[ops] drill delete failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3346,12 +3375,12 @@ opsRouter.delete(
 const vendorCreateSchema = z.object({
   vendorName: z.string().min(1).max(200),
   vendorType: z.string().min(1).max(60),
-  contactName: z.string().max(200).optional(),
-  contactPhone: z.string().max(40).optional(),
-  contactEmail: z.string().email().max(200).optional().or(z.literal("")),
+  contactName: z.string().max(200).nullable().optional(),
+  contactPhone: z.string().max(40).nullable().optional(),
+  contactEmail: z.union([z.string().email().max(200), z.literal("")]).nullable().optional(),
   coiExpiresAt: z.number().int().nonnegative().nullable().optional(),
   licenseExpiresAt: z.number().int().nonnegative().nullable().optional(),
-  notes: z.string().max(2000).optional(),
+  notes: z.string().max(2000).nullable().optional(),
 }).strict();
 
 const vendorUpdateSchema = z.object({
@@ -3394,8 +3423,7 @@ opsRouter.get(
       });
       return res.json({ success: true, data: result.vendors, meta: { total: result.total, page, limit } });
     } catch (e) {
-      console.error("[ops] vendors list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3432,11 +3460,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] vendor create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3460,11 +3484,7 @@ opsRouter.put(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] vendor update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3484,8 +3504,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] vendor archive failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3499,13 +3518,13 @@ const complaintCreateSchema = z.object({
   complainantType: z.enum(COMPLAINANT_TYPES),
   // Anonymous handling (Phase 5 §6.A.3) — these may be empty strings or
   // omitted entirely when complainantType === "anonymous".
-  complainantName: z.string().trim().max(200).optional(),
-  complainantRelation: z.string().trim().max(120).optional(),
+  complainantName: z.string().trim().max(200).nullable().optional(),
+  complainantRelation: z.string().trim().max(120).nullable().optional(),
   nature: z.string().min(1).max(2000),
-  intakeNotes: z.string().max(4000).optional(),
-  assignedTo: z.string().max(120).optional(),
+  intakeNotes: z.string().max(4000).nullable().optional(),
+  assignedTo: z.string().max(120).nullable().optional(),
   // §6.B.2 — free-text external reference (ombudsman / regulator / internal #).
-  externalRef: z.string().max(500).optional(),
+  externalRef: z.string().max(500).nullable().optional(),
 }).strict();
 
 const complaintUpdateSchema = z.object({
@@ -3548,8 +3567,7 @@ opsRouter.get(
       });
       return res.json({ success: true, data: result.complaints, meta: { total: result.total, page, limit } });
     } catch (e) {
-      console.error("[ops] complaints list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3569,8 +3587,7 @@ opsRouter.get(
       if (!result) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: result });
     } catch (e) {
-      console.error("[ops] complaint get failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3608,11 +3625,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] complaint create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3636,11 +3649,7 @@ opsRouter.put(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] complaint update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3664,8 +3673,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] complaint note add failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3694,11 +3702,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] complaint resolve failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3718,11 +3722,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] complaint close failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3731,10 +3731,10 @@ opsRouter.post(
 
 const inspectionCreateSchema = z.object({
   inspectorOrg: z.string().min(1).max(120),
-  inspectorName: z.string().max(200).optional(),
+  inspectorName: z.string().max(200).nullable().optional(),
   purpose: z.string().min(1).max(60),
   visitAt: z.number().int().positive(),
-  findingsJson: z.string().max(16_000).optional(),
+  findingsJson: z.string().max(16_000).nullable().optional(),
 }).strict();
 
 const inspectionUpdateSchema = z.object({
@@ -3754,7 +3754,7 @@ const inspectionListQuerySchema = z.object({
 
 const citationCreateSchema = z.object({
   citationTitle: z.string().min(1).max(200),
-  detail: z.string().max(4000).optional(),
+  detail: z.string().max(4000).nullable().optional(),
   dueAt: z.number().int().positive().nullable().optional(),
 }).strict();
 
@@ -3780,8 +3780,7 @@ opsRouter.get(
       });
       return res.json({ success: true, data: result.inspections, meta: { total: result.total, page, limit } });
     } catch (e) {
-      console.error("[ops] inspections list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3801,8 +3800,7 @@ opsRouter.get(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] inspection get failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3837,11 +3835,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] inspection create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3865,11 +3859,7 @@ opsRouter.put(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] inspection update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3889,11 +3879,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] inspection close failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3926,11 +3912,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] citation create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -3954,11 +3936,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] citation close failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4006,8 +3984,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit, recentDestructions },
       });
     } catch (e) {
-      console.error("[ops] controlled-sub list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4036,11 +4013,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] controlled-sub resolve failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4133,8 +4106,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] staff-credentials list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4155,8 +4127,7 @@ opsRouter.get(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] staff-credential get failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4200,11 +4171,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] staff-credential create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4247,11 +4214,7 @@ opsRouter.put(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] staff-credential update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4272,8 +4235,7 @@ opsRouter.delete(
       if (!ok) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: { id, deleted: true } });
     } catch (e) {
-      console.error("[ops] staff-credential delete failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4308,8 +4270,7 @@ opsRouter.get(
         meta: { withinDays, count: data.length },
       });
     } catch (e) {
-      console.error("[ops] credentials expiring list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4341,11 +4302,7 @@ opsRouter.post(
       if (e instanceof Error && /staff not found/i.test(e.message)) {
         return res.status(404).json({ success: false, error: e.message });
       }
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] credentials evaluate-shift failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4389,8 +4346,7 @@ opsRouter.get(
       if (!data) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data });
     } catch (e) {
-      console.error("[ops] incident checklist failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4422,11 +4378,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] incident close failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4458,11 +4410,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] incident reopen failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4483,8 +4431,7 @@ opsRouter.get(
       });
       return res.json({ success: true, data });
     } catch (e) {
-      console.error("[ops] incidents past-sla failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4503,9 +4450,9 @@ const obligationCreateSchema = z.object({
   targetType: z.enum(OBLIGATION_TARGETS).optional(),
   targetId: z.number().int().positive().nullable().optional(),
   title: z.string().min(1, "Title is required").max(200),
-  description: z.string().max(4000).optional(),
+  description: z.string().max(4000).nullable().optional(),
   dueAt: z.number().int({ message: "dueAt required" }),
-  assignedTo: z.string().max(200).optional(),
+  assignedTo: z.string().max(200).nullable().optional(),
   severity: z.enum(OBLIGATION_SEVERITIES).optional(),
   status: z.enum(OBLIGATION_STATUSES).optional(),
   evidenceRequired: z.number().int().min(0).max(1).optional(),
@@ -4520,10 +4467,10 @@ const obligationCreateSchema = z.object({
     ])
     .nullable()
     .optional(),
-  reminderDaysBefore: z.number().int().nonnegative().max(365).optional(),
+  reminderDaysBefore: z.number().int().nonnegative().max(365).nullable().optional(),
   sourceEntityType: z.string().max(64).nullable().optional(),
   sourceEntityId: z.number().int().nullable().optional(),
-  notes: z.string().max(8000).optional(),
+  notes: z.string().max(8000).nullable().optional(),
 }).strict();
 
 const obligationUpdateSchema = z.object({
@@ -4613,8 +4560,7 @@ opsRouter.get(
         },
       });
     } catch (e) {
-      console.error("[ops] obligation list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4635,8 +4581,7 @@ opsRouter.get(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] obligation get failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4686,11 +4631,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] obligation create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4720,11 +4661,7 @@ opsRouter.put(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] obligation update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4755,11 +4692,7 @@ opsRouter.post(
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: row });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] obligation transition failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4790,11 +4723,7 @@ opsRouter.post(
       if (!result) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: result });
     } catch (e) {
-      if (isDomainError(e)) {
-        return res.status(400).json({ success: false, error: (e as Error).message });
-      }
-      console.error("[ops] obligation complete failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4815,8 +4744,7 @@ opsRouter.delete(
       if (!ok) return res.status(404).json({ success: false, error: "Not found" });
       return res.json({ success: true, data: { id, deleted: true } });
     } catch (e) {
-      console.error("[ops] obligation delete failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4834,8 +4762,7 @@ opsRouter.post(
       );
       return res.json({ success: true, data: result });
     } catch (e) {
-      console.error("[ops] obligation backfill failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4875,8 +4802,7 @@ opsRouter.get(
       });
       return res.json({ success: true, data });
     } catch (e) {
-      console.error("[ops] triage aggregate failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4909,8 +4835,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] notifications list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -4934,8 +4859,7 @@ opsRouter.post(
       });
       return res.json({ success: true, data: result });
     } catch (e) {
-      console.error("[ops] daily-summary test-send failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5040,8 +4964,7 @@ opsRouter.post(
       if (e instanceof ShareLinkDurationError) {
         return res.status(400).json({ success: false, error: e.message });
       }
-      console.error("[ops] share-link create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5072,8 +4995,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] share-link list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5107,8 +5029,7 @@ opsRouter.post(
       }
       return res.json({ success: true });
     } catch (e) {
-      console.error("[ops] share-link revoke failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5215,8 +5136,7 @@ opsRouter.post(
       };
       return res.status(201).json({ success: true, data: result });
     } catch (e) {
-      console.error("[ops] preaudit-pull create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5246,8 +5166,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] preaudit-pull list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5270,11 +5189,11 @@ const postingCatalogCreateSchema = z
   .object({
     postingKey: z.enum(POSTING_KEYS),
     titleEn: z.string().min(1).max(200),
-    titleEs: z.string().max(200).optional(),
-    locationHint: z.string().max(200).optional(),
+    titleEs: z.string().max(200).nullable().optional(),
+    locationHint: z.string().max(200).nullable().optional(),
     required: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
     cadenceDays: z.number().int().positive().max(3650).optional(),
-    notes: z.string().max(4000).optional(),
+    notes: z.string().max(4000).nullable().optional(),
   })
   .strict();
 
@@ -5293,8 +5212,8 @@ const postingCatalogUpdateSchema = z
 const postingVerifyCreateSchema = z
   .object({
     status: z.enum(POSTING_VERIFICATION_STATUSES),
-    verifiedAt: z.number().int().positive().optional(),
-    note: z.string().max(4000).optional(),
+    verifiedAt: z.number().int().positive().nullable().optional(),
+    note: z.string().max(4000).nullable().optional(),
   })
   .strict();
 
@@ -5319,8 +5238,7 @@ opsRouter.get(
       const rows = await listPostingCatalog(facilityNumber, { includeArchived });
       return res.json({ success: true, data: rows });
     } catch (e) {
-      console.error("[ops] posting list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5336,8 +5254,7 @@ opsRouter.post(
       const result = await seedDefaultPostings(facilityNumber, actor);
       return res.status(201).json({ success: true, data: result });
     } catch (e) {
-      console.error("[ops] posting seed failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5391,8 +5308,7 @@ opsRouter.post(
           .status(409)
           .json({ success: false, error: "Posting already exists for this key" });
       }
-      console.error("[ops] posting create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5430,8 +5346,7 @@ opsRouter.put(
       }
       return res.json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] posting update failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5461,8 +5376,7 @@ opsRouter.post(
       }
       return res.json({ success: true });
     } catch (e) {
-      console.error("[ops] posting archive failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5508,8 +5422,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] posting verifications list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5562,8 +5475,7 @@ opsRouter.post(
       );
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] posting verify failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5578,8 +5490,7 @@ opsRouter.get(
       const cadence = await getDrillCadence(facilityNumber);
       return res.json({ success: true, data: cadence });
     } catch (e) {
-      console.error("[ops] drill cadence failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5670,9 +5581,9 @@ const trustLedgerCreateSchema = z
     description: z.string().min(1).max(500),
     transactedAt: z.number().int().positive(),
     recordedBy: z.string().min(1).max(120),
-    witnessedBy: z.string().min(1).max(120).optional(),
-    notes: z.string().max(2000).optional(),
-    receiptUri: z.string().max(2000).optional(),
+    witnessedBy: z.string().min(1).max(120).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+    receiptUri: z.string().max(2000).nullable().optional(),
   })
   .strict();
 
@@ -5713,8 +5624,7 @@ opsRouter.get(
       });
       return res.json({ success: true, data: rows });
     } catch (e) {
-      console.error("[ops] trust accounts list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5737,8 +5647,7 @@ opsRouter.get(
       }
       return res.json({ success: true, data: row });
     } catch (e) {
-      console.error("[ops] trust account get failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5767,8 +5676,7 @@ opsRouter.post(
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
       if (handleTrustDomainError(res, e)) return;
-      console.error("[ops] trust account create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5793,8 +5701,7 @@ opsRouter.post(
       return res.json({ success: true, data: row });
     } catch (e) {
       if (handleTrustDomainError(res, e)) return;
-      console.error("[ops] trust account close failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5837,8 +5744,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] trust ledger list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5862,12 +5768,11 @@ opsRouter.post(
           .json({ success: false, error: parsed.error.errors[0].message });
       }
       const actor = getActor(req);
-      const row = await appendLedgerEntry(facilityNumber, id, parsed.data, actor);
+      const row = await appendLedgerEntry(facilityNumber, id, nullsToUndef(parsed.data), actor);
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
       if (handleTrustDomainError(res, e)) return;
-      console.error("[ops] trust ledger append failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5895,8 +5800,7 @@ opsRouter.post(
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
       if (handleTrustDomainError(res, e)) return;
-      console.error("[ops] trust ledger reverse failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5917,8 +5821,7 @@ opsRouter.get(
       return res.json({ success: true, data });
     } catch (e) {
       if (handleTrustDomainError(res, e)) return;
-      console.error("[ops] trust reconcile failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5943,8 +5846,7 @@ opsRouter.post(
       return res.json({ success: true, data: row });
     } catch (e) {
       if (handleTrustDomainError(res, e)) return;
-      console.error("[ops] trust repair balance failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -5979,8 +5881,7 @@ opsRouter.post(
       return res.status(201).json({ success: true, data: row });
     } catch (e) {
       if (handleTrustDomainError(res, e)) return;
-      console.error("[ops] trust statement create failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
@@ -6009,8 +5910,7 @@ opsRouter.get(
         meta: { total: result.total, page, limit },
       });
     } catch (e) {
-      console.error("[ops] trust statement list failed", e);
-      return res.status(500).json({ success: false, error: "Internal error" });
+      return handleRouteError(req, e, res);
     }
   },
 );
