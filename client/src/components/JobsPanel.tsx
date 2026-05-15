@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Briefcase, MapPin, DollarSign, Clock, ChevronRight, CheckCircle2 } from "lucide-react";
+import { Briefcase, MapPin, DollarSign, Clock, ChevronRight, CheckCircle2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import type { FacilityPin } from "@shared/schema";
@@ -17,6 +17,10 @@ interface SeekerInterest {
   id: number;
   jobId: number | null;
   status: string;
+}
+
+interface SeekerProfileTags {
+  jobTypes: string[] | null;
 }
 
 interface DbJob {
@@ -119,24 +123,39 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
     }
   }, []);
 
-  // DB jobs from the facility portal — single source of truth now that the
-  // pin payload no longer carries embedded jobPostings. Facility metadata
-  // (name, city) is looked up by facility number against any pins that
-  // happen to be loaded; rows for unloaded pins simply show no facility
-  // line until the user pans the map to include them.
-  const { data: dbJobs = [], isLoading } = useQuery<DbJob[]>({
-    queryKey: ["/api/jobs"],
-    staleTime: 60000,
-  });
-
-  // "Applied" indicator — only fetched when the viewer is a logged-in
-  // job seeker. Anonymous viewers and facility-portal users (different
-  // auth session) see no badge: `me` is null for them, so the interests
-  // query is disabled and `appliedJobIds` stays empty. This is per-user
-  // state and never leaks across sessions.
+  // "Applied" indicator + tag filter — both gated on the seeker session
+  // (anonymous viewers + facility-portal users see all jobs and no
+  // Applied badges, identical to the pre-feature behavior).
   const { data: me } = useQuery<JobSeekerAuth | null>({
     queryKey: ["/api/jobseeker/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 60000,
+  });
+
+  // Tag filter — read the seeker's `jobTypes` chips from their profile
+  // (same shared cache used by ProfileEditor, the apply modal, etc.).
+  // Default UX: when a signed-in seeker has tags, the feed is filtered
+  // to matching jobs. The seeker can toggle the filter off via the
+  // pill at the top of the list — preference is held in component
+  // state, no persistence (a fresh visit defaults to filtered).
+  const { data: seekerProfile } = useQuery<SeekerProfileTags | null>({
+    queryKey: ["/api/jobseeker/profile"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!me,
+    staleTime: 60000,
+  });
+  const seekerTags = useMemo(() => seekerProfile?.jobTypes ?? [], [seekerProfile?.jobTypes]);
+  const [filterEnabled, setFilterEnabled] = useState(true);
+  const activeTags = filterEnabled && seekerTags.length > 0 ? seekerTags : [];
+  const tagsParam = activeTags.join(",");
+
+  // DB jobs — server-side filtered when `activeTags` is non-empty. Cache
+  // key includes the tag string so toggling the filter cleanly refetches
+  // rather than reusing the unfiltered list.
+  const { data: dbJobs = [], isLoading } = useQuery<DbJob[]>({
+    queryKey: tagsParam
+      ? [`/api/jobs?tags=${encodeURIComponent(tagsParam)}`]
+      : ["/api/jobs"],
     staleTime: 60000,
   });
   const { data: myInterests = [] } = useQuery<SeekerInterest[]>({
@@ -184,6 +203,54 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
         )}
       </div>
 
+      {/* Tag filter pill — only renders for signed-in seekers who have
+          tags on their profile. Default state filters the feed to
+          matching roles; the seeker can pop the filter off (× chip) to
+          see all jobs again, or re-enable it from the "Show all jobs"
+          subtitle. */}
+      {seekerTags.length > 0 && (
+        <div
+          className="px-3 py-2 shrink-0 border-b"
+          style={{ borderColor: "var(--portal-border-subtle)", background: "#FAFAF9" }}
+        >
+          {filterEnabled ? (
+            <div className="flex items-start gap-2">
+              <span className="text-[11px] text-stone-500 shrink-0 pt-0.5">
+                Matching:
+              </span>
+              <div className="flex flex-wrap gap-1 flex-1 min-w-0">
+                {seekerTags.map((t) => (
+                  <span
+                    key={t}
+                    className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setFilterEnabled(false)}
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-stone-500 hover:text-stone-800 transition-colors shrink-0"
+                title="Show all jobs"
+                aria-label="Clear filter and show all jobs"
+              >
+                <X className="h-3 w-3" />
+                Clear
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setFilterEnabled(true)}
+              className="text-[11px] font-medium text-indigo-700 hover:underline"
+            >
+              Match my profile ({seekerTags.length})
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Scrollable list */}
       <div className="flex-1 overflow-y-auto overscroll-contain">
         <div className="p-3 space-y-2">
@@ -194,9 +261,28 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
           ) : jobs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Briefcase className="h-7 w-7 mb-3 text-stone-300" />
-              <p className="text-[13px] font-medium text-stone-700">No jobs posted yet</p>
+              <p className="text-[13px] font-medium text-stone-700">
+                {filterEnabled && seekerTags.length > 0
+                  ? "No jobs match your profile yet"
+                  : "No jobs posted yet"}
+              </p>
               <p className="text-[12px] mt-1 text-center px-4 leading-relaxed">
-                Check back soon — facilities post new openings here.
+                {filterEnabled && seekerTags.length > 0 ? (
+                  <>
+                    Nothing currently posted for{" "}
+                    {seekerTags.slice(0, 3).join(", ")}
+                    {seekerTags.length > 3 ? ` +${seekerTags.length - 3}` : ""}.{" "}
+                    <button
+                      type="button"
+                      onClick={() => setFilterEnabled(false)}
+                      className="font-medium text-indigo-700 hover:underline"
+                    >
+                      Show all jobs
+                    </button>
+                  </>
+                ) : (
+                  "Check back soon — facilities post new openings here."
+                )}
               </p>
             </div>
           ) : (

@@ -7,6 +7,7 @@ import { storage } from "./storage";
 import { authRateLimiter } from "./middleware/rateLimiter";
 import { hashPassword } from "./auth";
 import { parseSalary } from "./services/payParser";
+import { jobMatchesTags, parseTagsParam } from "./services/jobMatch";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
 import { jobseekerAuthRouter } from "./routes/jobseekerAuth";
 import { adminEtlRouter } from "./routes/adminEtl";
@@ -635,8 +636,12 @@ export async function registerRoutes(server: Server, app: Express) {
       if (err) return next(err);
       if (!user) {
         if (info?.message === "EMAIL_NOT_VERIFIED") {
-          // Look up the email so the client can show the OTP screen pre-filled
-          const account = await storage.getFacilityAccountByUsername(req.body.username ?? "");
+          // Look up the email so the client can show the OTP screen pre-filled.
+          // Identifier may be either a username or an email (login accepts both).
+          const identifier = (req.body.username ?? "") as string;
+          const account = identifier.includes("@")
+            ? await storage.getFacilityAccountByEmail(identifier)
+            : await storage.getFacilityAccountByUsername(identifier);
           return res.status(403).json({
             message: "Please verify your email before logging in.",
             code: "EMAIL_NOT_VERIFIED",
@@ -726,11 +731,16 @@ export async function registerRoutes(server: Server, app: Express) {
       }
 
       const hashed = await hashPassword(newPassword);
-      // NOTE: intentionally do NOT reset failedLoginCount here so lockout persists after reset
+      // Clear the failed-login counter on successful OTP-backed reset. The
+      // OTP itself proves email control, so the lockout's brute-force
+      // protection has already been satisfied via a stronger factor — leaving
+      // the counter pinned at the lockout threshold would trap legitimate
+      // users who reset *because* they got locked out.
       await storage.updateFacilityAccount(account.id, {
         password: hashed,
         verificationToken: null,
         verificationExpiry: null,
+        failedLoginCount: 0,
       });
 
       await pool.query(
@@ -788,10 +798,17 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ── Public job listings ──────────────────────────────────────────────────────
 
-  app.get("/api/jobs", async (_req, res) => {
+  app.get("/api/jobs", async (req, res) => {
+    // Optional tag filter from the signed-in seeker's profile chips
+    // (?tags=Caregiver,DSP). Empty / missing tags returns the full
+    // feed, so anonymous + facility callers are unaffected.
+    const tags = parseTagsParam(req.query.tags);
     const jobs = await storage.getAllJobPostings();
+    const matched = tags.length > 0
+      ? jobs.filter((jp) => jobMatchesTags(jp, tags))
+      : jobs;
     res.json(
-      jobs.map((jp) => {
+      matched.map((jp) => {
         const { payMin, payMax } = parseSalary(jp.salary);
         return {
           ...jp,
