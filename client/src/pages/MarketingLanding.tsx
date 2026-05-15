@@ -76,6 +76,7 @@ export default function MarketingLanding() {
         onPrimary={() => navigate(primaryHref)}
         primaryLabel={primaryCta}
         sessionsReady={sessionsReady}
+        isAuthed={Boolean(authedTarget)}
       />
 
       <Hero
@@ -288,11 +289,15 @@ function NavBar({
   onPrimary,
   primaryLabel,
   sessionsReady,
+  isAuthed,
 }: {
   onSignIn: () => void;
   onPrimary: () => void;
   primaryLabel: string;
   sessionsReady: boolean;
+  /** When true, hide the secondary "Sign in" link — the primary CTA is
+   *  already "Go to your portal", which makes a separate Sign in redundant. */
+  isAuthed: boolean;
 }) {
   return (
     <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#FFF8F1]/85 border-b border-stone-200/70">
@@ -325,13 +330,15 @@ function NavBar({
         </nav>
 
         <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={onSignIn}
-            className="hidden sm:inline-flex text-[13px] font-semibold text-stone-600 hover:text-[#E8864A] px-2 py-2 rounded-md transition-colors"
-          >
-            Sign in
-          </button>
+          {!isAuthed && (
+            <button
+              type="button"
+              onClick={onSignIn}
+              className="hidden sm:inline-flex text-[13px] font-semibold text-stone-600 hover:text-[#E8864A] px-2 py-2 rounded-md transition-colors"
+            >
+              Sign in
+            </button>
+          )}
           <button
             type="button"
             onClick={onPrimary}
