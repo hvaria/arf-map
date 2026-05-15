@@ -23,7 +23,9 @@ import { cn } from "@/lib/utils";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-of-interest
 import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
-import { FacilityDetailsTab } from "@/components/facility/FacilityDetailsTab";
+import { FacilityDetailsTab, type FacilityProfileEnvelope } from "@/components/facility/FacilityDetailsTab";
+import { FacilityAvatar } from "@/components/facility/FacilityAvatar";
+import { normalizeRawType } from "@shared/taxonomy";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -1016,13 +1018,33 @@ function Dashboard({ user }: { user: SessionUser }) {
   // off it directly rather than loading the entire CA facilities dataset
   // via useFacilities() just to map by number.
   const { data: publicData } = useQuery<{
-    facility: { name?: string | null; city?: string | null } | null;
+    facility: { name?: string | null; city?: string | null; facilityType?: string | null } | null;
     overrides: FacilityOverride | null;
   }>({
     queryKey: [`/api/facilities/${user.facilityNumber}/public`],
     queryFn: getQueryFn({ on401: "throw" }),
   });
   const facility = publicData?.facility ?? null;
+
+  // Profile envelope — drives the facility avatar in the header. Shares the
+  // exact query key used by <FacilityDetailsTab> so React Query dedupes;
+  // there is no extra network call.
+  const { data: profileEnvelope } = useQuery<FacilityProfileEnvelope | null>({
+    queryKey: ["/api/facility/profile"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 60_000,
+  });
+  const logoOverride = profileEnvelope?.overrides ?? null;
+  const headerLogoUrl = logoOverride?.logoStorageUri
+    ? `/api/facility/profile/logo?t=${logoOverride.logoUpdatedAt ?? 0}`
+    : null;
+  const facilityDisplayName = facility?.name ?? `Facility #${user.facilityNumber}`;
+  // Friendly facility-type label, e.g. "Adult Residential Facility". Falls
+  // back to the raw DB string if not in the taxonomy, then hides the
+  // segment entirely if neither is available.
+  const facilityTypeLabel = facility?.facilityType
+    ? (normalizeRawType(facility.facilityType)?.displayLabel ?? facility.facilityType)
+    : null;
 
   // Listing-completeness banner now lives inside <FacilityDetailsTab>,
   // which owns the /api/facility/profile envelope (and its full set of
@@ -1076,17 +1098,25 @@ function Dashboard({ user }: { user: SessionUser }) {
         className="sticky top-16 z-20 bg-white border-b"
         style={{ borderColor: "var(--portal-border-subtle)" }}
       >
-        <div className="max-w-7xl mx-auto px-4 lg:px-6 py-2 flex items-baseline gap-3">
-          <h1
-            className="text-base font-semibold text-stone-900 truncate"
-            data-testid="facility-identity-name"
-          >
-            {facility?.name ?? `Facility #${user.facilityNumber}`}
-          </h1>
-          <span className="text-xs text-stone-500 truncate">
-            <span className="portal-num">Lic. {user.facilityNumber}</span>
-            {facility?.city ? ` · ${facility.city}` : ""}
-          </span>
+        <div className="max-w-7xl mx-auto px-4 lg:px-6 py-2 flex items-center gap-3">
+          <FacilityAvatar
+            logoUrl={headerLogoUrl}
+            facilityName={facilityDisplayName}
+            size="md"
+          />
+          <div className="min-w-0 flex-1">
+            <h1
+              className="text-base font-semibold text-stone-900 truncate leading-tight"
+              data-testid="facility-identity-name"
+            >
+              {facilityDisplayName}
+            </h1>
+            <p className="text-xs text-stone-500 truncate mt-0.5">
+              <span className="portal-num">Lic. {user.facilityNumber}</span>
+              {facilityTypeLabel ? ` · ${facilityTypeLabel}` : ""}
+              {facility?.city ? ` · ${facility.city}` : ""}
+            </p>
+          </div>
         </div>
         <nav
           aria-label="Facility portal sections"
