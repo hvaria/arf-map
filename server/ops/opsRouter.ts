@@ -236,6 +236,7 @@ const residentSchema = z.object({
   fundingSource: z.string().nullable().optional(),
   regionalCenterId: z.string().nullable().optional(),
   status: z.string().optional(),
+  dischargeDate: z.number().int().nullable().optional(),
 });
 
 const assessmentSchema = z.object({

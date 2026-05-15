@@ -21,7 +21,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Pencil, Plus, Check, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ArrowLeft, Pencil, Plus, Check, X, UserMinus, UserCheck } from "lucide-react";
 import { MedicationFormDialog, type MedicationFormValue } from "@/components/medications/MedicationFormDialog";
 import {
   DISCONTINUE_REASON_LABELS,
@@ -31,6 +32,7 @@ import {
 import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
 import { ChartCompletenessPanel } from "@/components/operations/ChartCompletenessBanner";
 import { useChartCompletenessForResident } from "@/hooks/useChartCompleteness";
+import { useIsWritable } from "@/context/AuditorContext";
 
 interface Resident {
   id: number;
@@ -630,6 +632,748 @@ function ReportIncidentInlineDialog({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EditResidentDialog
+// Mirrors <AddResidentDialog> (ResidentsContent.tsx:66-260) for field set +
+// Select enums. Submits PUT /api/ops/residents/:id with the partial diff so
+// the server's residentSchema.partial() validation accepts the body.
+//
+// Pattern citations (Implementation Contract §2.5):
+//   - Dialog shape + Cancel/Primary footer: AssessmentDialog above (line 122)
+//   - Form Select enums (gender / levelOfCare / fundingSource):
+//       ResidentsContent.tsx:171-244
+//   - Optimistic update + rollback: ComplaintDetail.tsx:141-163
+//   - useMutation + invalidate + toast: ComplianceContent.tsx:88-106
+// ─────────────────────────────────────────────────────────────────────────────
+interface EditResidentForm {
+  firstName: string;
+  lastName: string;
+  dob: string;
+  gender: string;
+  ssnLast4: string;
+  admissionDate: string;
+  roomNumber: string;
+  bedNumber: string;
+  primaryDx: string;
+  secondaryDx: string;
+  levelOfCare: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  emergencyContactRelation: string;
+  fundingSource: string;
+  regionalCenterId: string;
+}
+
+function toDateInput(ms: number | null | undefined): string {
+  if (!ms || !Number.isFinite(ms)) return "";
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function residentToForm(r: Resident): EditResidentForm {
+  return {
+    firstName: r.firstName ?? "",
+    lastName: r.lastName ?? "",
+    dob: toDateInput(r.dob),
+    gender: r.gender ?? "",
+    ssnLast4: (r as unknown as { ssnLast4?: string | null }).ssnLast4 ?? "",
+    admissionDate: toDateInput(r.admissionDate),
+    roomNumber: r.roomNumber ?? "",
+    bedNumber: (r as unknown as { bedNumber?: string | null }).bedNumber ?? "",
+    primaryDx: r.primaryDx ?? "",
+    secondaryDx: (r as unknown as { secondaryDx?: string | null }).secondaryDx ?? "",
+    levelOfCare: r.levelOfCare ?? "",
+    emergencyContactName: r.emergencyContactName ?? "",
+    emergencyContactPhone: r.emergencyContactPhone ?? "",
+    emergencyContactRelation:
+      (r as unknown as { emergencyContactRelation?: string | null }).emergencyContactRelation ?? "",
+    fundingSource: r.fundingSource ?? "",
+    regionalCenterId:
+      (r as unknown as { regionalCenterId?: string | null }).regionalCenterId ?? "",
+  };
+}
+
+function EditResidentDialog({
+  open,
+  onOpenChange,
+  resident,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  resident: Resident;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [form, setForm] = useState<EditResidentForm>(() => residentToForm(resident));
+  const [errors, setErrors] = useState<Partial<Record<keyof EditResidentForm, string>>>({});
+
+  useEffect(() => {
+    if (open) {
+      setForm(residentToForm(resident));
+      setErrors({});
+    }
+  }, [open, resident]);
+
+  const set = <K extends keyof EditResidentForm>(k: K, v: EditResidentForm[K]) => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setErrors((e) => ({ ...e, [k]: undefined }));
+  };
+
+  function validate(): boolean {
+    const errs: Partial<Record<keyof EditResidentForm, string>> = {};
+    if (!form.firstName.trim()) errs.firstName = "First name is required.";
+    if (!form.lastName.trim()) errs.lastName = "Last name is required.";
+    if (form.ssnLast4 && !/^\d{4}$/.test(form.ssnLast4))
+      errs.ssnLast4 = "Must be exactly 4 digits.";
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
+  const residentKey = [
+    `/api/ops/facilities/${facilityNumber}/residents/${resident.id}`,
+  ] as const;
+  const listKey = [`/api/ops/facilities/${facilityNumber}/residents`] as const;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      // Send a diff so we only PUT changed fields — keeps the audit log
+      // narrow and avoids re-writing fields the user didn't touch.
+      const original = residentToForm(resident);
+      const body: Record<string, unknown> = {};
+      const passthrough: Array<keyof EditResidentForm> = [
+        "firstName",
+        "lastName",
+        "gender",
+        "ssnLast4",
+        "roomNumber",
+        "bedNumber",
+        "primaryDx",
+        "secondaryDx",
+        "levelOfCare",
+        "emergencyContactName",
+        "emergencyContactPhone",
+        "emergencyContactRelation",
+        "fundingSource",
+        "regionalCenterId",
+      ];
+      for (const k of passthrough) {
+        if (form[k] !== original[k]) body[k] = form[k] || null;
+      }
+      if (form.dob !== original.dob) {
+        body.dob = form.dob ? new Date(form.dob).getTime() : null;
+      }
+      if (form.admissionDate !== original.admissionDate) {
+        body.admissionDate = form.admissionDate
+          ? new Date(form.admissionDate).getTime()
+          : null;
+      }
+      const res = await apiRequest("PUT", `/api/ops/residents/${resident.id}`, body);
+      return res.json();
+    },
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: residentKey });
+      const prev = qc.getQueryData<{ success: boolean; data: Resident }>(residentKey);
+      if (prev?.data) {
+        const merged: Resident = {
+          ...prev.data,
+          firstName: form.firstName,
+          lastName: form.lastName,
+          dob: form.dob ? new Date(form.dob).getTime() : prev.data.dob,
+          gender: form.gender,
+          admissionDate: form.admissionDate
+            ? new Date(form.admissionDate).getTime()
+            : prev.data.admissionDate,
+          roomNumber: form.roomNumber,
+          primaryDx: form.primaryDx,
+          levelOfCare: form.levelOfCare,
+          emergencyContactName: form.emergencyContactName,
+          emergencyContactPhone: form.emergencyContactPhone,
+          fundingSource: form.fundingSource,
+        };
+        qc.setQueryData(residentKey, { ...prev, data: merged });
+      }
+      return { prev };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(residentKey, ctx.prev);
+      toast({ title: "Couldn't save changes", description: err.message, variant: "destructive" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: residentKey });
+      qc.invalidateQueries({ queryKey: listKey });
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/dashboard`],
+      });
+      toast({ title: "Resident updated" });
+      onOpenChange(false);
+    },
+  });
+
+  const submit = () => {
+    if (!validate() || mutation.isPending) return;
+    mutation.mutate();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit Resident</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-firstName">First Name <span className="text-destructive">*</span></Label>
+              <Input
+                id="edit-firstName"
+                value={form.firstName}
+                onChange={(e) => set("firstName", e.target.value)}
+                aria-invalid={!!errors.firstName}
+              />
+              {errors.firstName && <p className="text-xs text-destructive">{errors.firstName}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-lastName">Last Name <span className="text-destructive">*</span></Label>
+              <Input
+                id="edit-lastName"
+                value={form.lastName}
+                onChange={(e) => set("lastName", e.target.value)}
+                aria-invalid={!!errors.lastName}
+              />
+              {errors.lastName && <p className="text-xs text-destructive">{errors.lastName}</p>}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Date of Birth</Label>
+              <Input type="date" value={form.dob} onChange={(e) => set("dob", e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Gender</Label>
+              <Select value={form.gender} onValueChange={(v) => set("gender", v)}>
+                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="female">Female</SelectItem>
+                  <SelectItem value="male">Male</SelectItem>
+                  <SelectItem value="non_binary">Non-binary</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                  <SelectItem value="unspecified">Unspecified</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>SSN (last 4)</Label>
+              <Input
+                inputMode="numeric"
+                maxLength={4}
+                value={form.ssnLast4}
+                onChange={(e) => set("ssnLast4", e.target.value.replace(/\D/g, "").slice(0, 4))}
+                aria-invalid={!!errors.ssnLast4}
+                placeholder="1234"
+              />
+              {errors.ssnLast4 && <p className="text-xs text-destructive">{errors.ssnLast4}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Admission Date</Label>
+              <Input
+                type="date"
+                value={form.admissionDate}
+                onChange={(e) => set("admissionDate", e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Room Number</Label>
+              <Input value={form.roomNumber} onChange={(e) => set("roomNumber", e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Bed Number</Label>
+              <Input value={form.bedNumber} onChange={(e) => set("bedNumber", e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Primary Diagnosis</Label>
+            <Textarea
+              rows={2}
+              value={form.primaryDx}
+              onChange={(e) => set("primaryDx", e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Secondary Diagnosis</Label>
+            <Textarea
+              rows={2}
+              value={form.secondaryDx}
+              onChange={(e) => set("secondaryDx", e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Level of Care</Label>
+              <Select value={form.levelOfCare} onValueChange={(v) => set("levelOfCare", v)}>
+                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="personal_care">Personal Care</SelectItem>
+                  <SelectItem value="assisted_living">Assisted Living</SelectItem>
+                  <SelectItem value="memory_care">Memory Care</SelectItem>
+                  <SelectItem value="skilled_nursing">Skilled Nursing</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Funding Source</Label>
+              <Select value={form.fundingSource} onValueChange={(v) => set("fundingSource", v)}>
+                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private_pay">Private Pay</SelectItem>
+                  <SelectItem value="medi_cal">Medi-Cal</SelectItem>
+                  <SelectItem value="medicare">Medicare</SelectItem>
+                  <SelectItem value="insurance">Insurance</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Emergency Contact Name</Label>
+              <Input
+                value={form.emergencyContactName}
+                onChange={(e) => set("emergencyContactName", e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Emergency Contact Phone</Label>
+              <Input
+                value={form.emergencyContactPhone}
+                onChange={(e) => set("emergencyContactPhone", e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Emergency Contact Relation</Label>
+              <Input
+                value={form.emergencyContactRelation}
+                onChange={(e) => set("emergencyContactRelation", e.target.value)}
+                placeholder="e.g. Daughter"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Regional Center ID</Label>
+              <Input
+                value={form.regionalCenterId}
+                onChange={(e) => set("regionalCenterId", e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={submit}
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discharge / Reactivate confirm dialogs
+//
+// Pattern citations:
+//   - AlertDialog shape: DiscontinueMedDialog above (line 268)
+//   - Optimistic update of single-resident query: same as EditResidentDialog
+//
+// API note: the server's residentSchema (server/ops/opsRouter.ts:221) does
+// NOT include `dischargeDate`; we only PUT { status }. dischargeDate is set
+// server-side by soft-delete; for an explicit Discharge action via PUT, we
+// rely on the server's existing column default + manual back-fill if needed.
+// Flagged in the FE handoff.
+// ─────────────────────────────────────────────────────────────────────────────
+function DischargeResidentDialog({
+  open,
+  onOpenChange,
+  resident,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  resident: Resident;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const residentKey = [
+    `/api/ops/facilities/${facilityNumber}/residents/${resident.id}`,
+  ] as const;
+  const listKey = [`/api/ops/facilities/${facilityNumber}/residents`] as const;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/ops/residents/${resident.id}`, {
+        status: "discharged",
+      });
+      return res.json();
+    },
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: residentKey });
+      const prev = qc.getQueryData<{ success: boolean; data: Resident }>(residentKey);
+      if (prev?.data) {
+        qc.setQueryData(residentKey, {
+          ...prev,
+          data: { ...prev.data, status: "discharged" },
+        });
+      }
+      return { prev };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(residentKey, ctx.prev);
+      toast({ title: "Couldn't discharge", description: err.message, variant: "destructive" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: residentKey });
+      qc.invalidateQueries({ queryKey: listKey });
+      toast({ title: "Resident discharged" });
+      onOpenChange(false);
+    },
+  });
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Discharge {resident.firstName} {resident.lastName}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            The resident will be marked discharged. Their chart, medications, and history remain
+            readable for audit purposes.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={mutation.isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={mutation.isPending}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={(e) => {
+              e.preventDefault();
+              mutation.mutate();
+            }}
+          >
+            {mutation.isPending ? "Discharging..." : "Discharge"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function ReactivateResidentDialog({
+  open,
+  onOpenChange,
+  resident,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  resident: Resident;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const residentKey = [
+    `/api/ops/facilities/${facilityNumber}/residents/${resident.id}`,
+  ] as const;
+  const listKey = [`/api/ops/facilities/${facilityNumber}/residents`] as const;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/ops/residents/${resident.id}`, {
+        status: "active",
+      });
+      return res.json();
+    },
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: residentKey });
+      const prev = qc.getQueryData<{ success: boolean; data: Resident }>(residentKey);
+      if (prev?.data) {
+        qc.setQueryData(residentKey, {
+          ...prev,
+          data: { ...prev.data, status: "active" },
+        });
+      }
+      return { prev };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(residentKey, ctx.prev);
+      toast({ title: "Couldn't reactivate", description: err.message, variant: "destructive" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: residentKey });
+      qc.invalidateQueries({ queryKey: listKey });
+      toast({ title: "Resident reactivated" });
+      onOpenChange(false);
+    },
+  });
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Reactivate {resident.firstName} {resident.lastName}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            The resident will return to the active roster.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={mutation.isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={mutation.isPending}
+            onClick={(e) => {
+              e.preventDefault();
+              mutation.mutate();
+            }}
+          >
+            {mutation.isPending ? "Reactivating..." : "Reactivate"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EditCarePlanDialog
+// Mirrors <CreateCarePlanDialog> (line 341) for shape; adds status Select +
+// optional responsibleStaff / reviewDate. Submits PUT /api/ops/care-plans/:id.
+//
+// Pattern citations:
+//   - CreateCarePlanDialog form layout: line 341
+//   - useMutation + invalidate + toast: ComplianceContent.tsx:88-106
+// ─────────────────────────────────────────────────────────────────────────────
+function EditCarePlanDialog({
+  open,
+  onOpenChange,
+  carePlan,
+  facilityNumber,
+  residentId,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  carePlan: CarePlan;
+  facilityNumber: string;
+  residentId: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    goal: carePlan.goal ?? "",
+    intervention: carePlan.intervention ?? "",
+    frequency: carePlan.frequency ?? "Daily",
+    responsibleStaff: (carePlan as unknown as { responsibleStaff?: string | null }).responsibleStaff ?? "",
+    reviewDate: toDateInput(
+      (carePlan as unknown as { reviewDate?: number | null }).reviewDate ?? null,
+    ),
+    status: carePlan.status ?? "active",
+  });
+
+  useEffect(() => {
+    if (open) {
+      setForm({
+        goal: carePlan.goal ?? "",
+        intervention: carePlan.intervention ?? "",
+        frequency: carePlan.frequency ?? "Daily",
+        responsibleStaff:
+          (carePlan as unknown as { responsibleStaff?: string | null }).responsibleStaff ?? "",
+        reviewDate: toDateInput(
+          (carePlan as unknown as { reviewDate?: number | null }).reviewDate ?? null,
+        ),
+        status: carePlan.status ?? "active",
+      });
+    }
+  }, [open, carePlan]);
+
+  const planKey = [
+    `/api/ops/facilities/${facilityNumber}/residents/${residentId}/care-plan`,
+  ] as const;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
+        goal: form.goal.trim(),
+        intervention: form.intervention.trim(),
+        frequency: form.frequency.trim(),
+        status: form.status,
+      };
+      if (form.responsibleStaff.trim()) body.responsibleStaff = form.responsibleStaff.trim();
+      if (form.reviewDate) body.reviewDate = new Date(form.reviewDate).getTime();
+      const res = await apiRequest("PUT", `/api/ops/care-plans/${carePlan.id}`, body);
+      return res.json();
+    },
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: planKey });
+      const prev = qc.getQueryData<{ success: boolean; data: CarePlan }>(planKey);
+      if (prev?.data) {
+        qc.setQueryData(planKey, {
+          ...prev,
+          data: {
+            ...prev.data,
+            goal: form.goal,
+            intervention: form.intervention,
+            frequency: form.frequency,
+            status: form.status,
+          },
+        });
+      }
+      return { prev };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(planKey, ctx.prev);
+      toast({ title: "Couldn't save care plan", description: err.message, variant: "destructive" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: planKey });
+      toast({ title: "Care plan updated" });
+      onOpenChange(false);
+    },
+  });
+
+  const canSubmit =
+    form.goal.trim().length > 0 &&
+    form.intervention.trim().length > 0 &&
+    form.frequency.trim().length > 0 &&
+    !mutation.isPending;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit Care Plan</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Goal <span className="text-destructive">*</span></Label>
+            <Textarea
+              value={form.goal}
+              onChange={(e) => setForm((f) => ({ ...f, goal: e.target.value }))}
+              rows={2}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Intervention <span className="text-destructive">*</span></Label>
+            <Textarea
+              value={form.intervention}
+              onChange={(e) => setForm((f) => ({ ...f, intervention: e.target.value }))}
+              rows={2}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Frequency <span className="text-destructive">*</span></Label>
+              <Input
+                value={form.frequency}
+                onChange={(e) => setForm((f) => ({ ...f, frequency: e.target.value }))}
+                placeholder="e.g. Daily"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Status</Label>
+              <Select
+                value={form.status}
+                onValueChange={(v) => setForm((f) => ({ ...f, status: v }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="under_review">Under Review</SelectItem>
+                  <SelectItem value="archived">Archived</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Responsible Staff</Label>
+              <Input
+                value={form.responsibleStaff}
+                onChange={(e) => setForm((f) => ({ ...f, responsibleStaff: e.target.value }))}
+                placeholder="Staff name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Review Date</Label>
+              <Input
+                type="date"
+                value={form.reviewDate}
+                onChange={(e) => setForm((f) => ({ ...f, reviewDate: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={() => mutation.mutate()}
+              disabled={!canSubmit}
+            >
+              {mutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status badge palette — emerald=active, amber=on_leave, slate=discharged
+// (reuses the same tone vocabulary as ResidentsContent.tsx:34-38, but
+// rendered here as a chip on the profile header).
+// ─────────────────────────────────────────────────────────────────────────────
+const STATUS_CHIP_CLASSES: Record<string, string> = {
+  active: "bg-emerald-100 text-emerald-700 border-emerald-200",
+  on_leave: "bg-amber-100 text-amber-700 border-amber-200",
+  discharged: "bg-slate-100 text-slate-700 border-slate-200",
+};
+
+function ResidentStatusChip({ status }: { status: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border capitalize",
+        STATUS_CHIP_CLASSES[status] ?? "bg-slate-100 text-slate-700 border-slate-200",
+      )}
+      data-testid="resident-status-chip"
+    >
+      {status?.replace(/_/g, " ")}
+    </span>
+  );
+}
+
 export function ResidentProfileContent({
   facilityNumber,
   residentId,
@@ -641,15 +1385,20 @@ export function ResidentProfileContent({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const isWritable = useIsWritable();
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [medFormOpen, setMedFormOpen] = useState(false);
   const [medFormMode, setMedFormMode] = useState<"create" | "edit">("create");
   const [medFormInitial, setMedFormInitial] = useState<MedicationFormValue | undefined>(undefined);
   const [discontinueTarget, setDiscontinueTarget] = useState<Medication | null>(null);
   const [createCarePlanOpen, setCreateCarePlanOpen] = useState(false);
+  const [editCarePlanOpen, setEditCarePlanOpen] = useState(false);
   const [addTaskOpen, setAddTaskOpen] = useState(false);
   const [reportIncidentOpen, setReportIncidentOpen] = useState(false);
   const [signOpen, setSignOpen] = useState<null | "resident" | "family">(null);
+  const [editResidentOpen, setEditResidentOpen] = useState(false);
+  const [dischargeOpen, setDischargeOpen] = useState(false);
+  const [reactivateOpen, setReactivateOpen] = useState(false);
   const residentIdStr = String(residentId);
 
   const { data: residentEnvelope, isLoading } = useQuery<{ success: boolean; data: Resident } | null>({
@@ -788,19 +1537,74 @@ export function ResidentProfileContent({
         </button>
       )}
 
-      <div className="flex items-center gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">
-            {resident.firstName} {resident.lastName}
-          </h1>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-xl font-semibold">
+              {resident.firstName} {resident.lastName}
+            </h1>
+            <ResidentStatusChip status={resident.status ?? "active"} />
+          </div>
           <p className="text-sm text-muted-foreground">
             Room {resident.roomNumber} &middot; Admitted {new Date(resident.admissionDate).toLocaleDateString()}
           </p>
         </div>
-        <Badge variant={resident.status === "active" ? "default" : "secondary"} className="ml-auto">
-          {resident.status}
-        </Badge>
+        {isWritable && (
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEditResidentOpen(true)}
+              aria-label="Edit resident"
+              data-testid="resident-edit-trigger"
+            >
+              <Pencil className="h-3.5 w-3.5 mr-1.5" />
+              Edit
+            </Button>
+            {resident.status === "discharged" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setReactivateOpen(true)}
+                data-testid="resident-reactivate-trigger"
+              >
+                <UserCheck className="h-3.5 w-3.5 mr-1.5" />
+                Reactivate
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setDischargeOpen(true)}
+                className="text-destructive hover:text-destructive"
+                data-testid="resident-discharge-trigger"
+              >
+                <UserMinus className="h-3.5 w-3.5 mr-1.5" />
+                Discharge
+              </Button>
+            )}
+          </div>
+        )}
       </div>
+
+      <EditResidentDialog
+        open={editResidentOpen}
+        onOpenChange={setEditResidentOpen}
+        resident={resident}
+        facilityNumber={facilityNumber}
+      />
+      <DischargeResidentDialog
+        open={dischargeOpen}
+        onOpenChange={setDischargeOpen}
+        resident={resident}
+        facilityNumber={facilityNumber}
+      />
+      <ReactivateResidentDialog
+        open={reactivateOpen}
+        onOpenChange={setReactivateOpen}
+        resident={resident}
+        facilityNumber={facilityNumber}
+      />
 
       <Tabs defaultValue="profile">
         <TabsList className="w-full overflow-x-auto">
@@ -875,16 +1679,37 @@ export function ResidentProfileContent({
           ) : (
             <>
               <div className="rounded-lg border overflow-hidden">
-                <div className="px-4 py-3 border-b flex items-center justify-between">
+                <div className="px-4 py-3 border-b flex items-center justify-between gap-2">
                   <span className="text-sm font-medium">Active Care Plan</span>
-                  <Badge variant={carePlan.status === "active" ? "default" : "secondary"}>
-                    {carePlan.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={carePlan.status === "active" ? "default" : "secondary"}>
+                      {carePlan.status}
+                    </Badge>
+                    {isWritable && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2"
+                        onClick={() => setEditCarePlanOpen(true)}
+                        aria-label="Edit care plan"
+                        data-testid="careplan-edit-trigger"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <FieldRow label="Goal" value={carePlan.goal} />
                 <FieldRow label="Intervention" value={carePlan.intervention} />
                 <FieldRow label="Frequency" value={carePlan.frequency} />
               </div>
+              <EditCarePlanDialog
+                open={editCarePlanOpen}
+                onOpenChange={setEditCarePlanOpen}
+                carePlan={carePlan}
+                facilityNumber={facilityNumber}
+                residentId={residentIdStr}
+              />
               <div className="flex gap-2 flex-wrap">
                 <Button
                   size="sm"
@@ -1007,39 +1832,44 @@ export function ResidentProfileContent({
                   <div key={m.id} className="rounded-lg p-3" style={{ border: '1px solid #E0E7FF', background: '#F0F4FF' }}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium text-sm">{m.drugName}</span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-xs h-7 px-2"
-                          onClick={() => {
-                            setMedFormMode("edit");
-                            setMedFormInitial({
-                              id: m.id,
-                              drugName: m.drugName,
-                              dosage: m.dosage,
-                              route: m.route,
-                              frequency: (m.frequency as MedicationFormValue["frequency"]) ?? "",
-                              frequencyRaw: m.frequencyRaw,
-                              scheduledTimes: m.scheduledTimesArray ?? [],
-                              prescriberName: m.prescriberName ?? "",
-                            });
-                            setMedFormOpen(true);
-                          }}
-                          aria-label={`Edit ${m.drugName}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive text-xs"
-                          onClick={() => setDiscontinueTarget(m)}
-                          disabled={discontinueMedMutation.isPending}
-                        >
-                          Discontinue
-                        </Button>
-                      </div>
+                      {isWritable && (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-xs h-7 px-2"
+                            onClick={() => {
+                              setMedFormMode("edit");
+                              setMedFormInitial({
+                                id: m.id,
+                                drugName: m.drugName,
+                                dosage: m.dosage,
+                                route: m.route,
+                                frequency: (m.frequency as MedicationFormValue["frequency"]) ?? "",
+                                frequencyRaw: m.frequencyRaw,
+                                scheduledTimes: m.scheduledTimesArray ?? [],
+                                prescriberName: m.prescriberName ?? "",
+                              });
+                              setMedFormOpen(true);
+                            }}
+                            aria-label={`Edit ${m.drugName}`}
+                            data-testid={`med-edit-${m.id}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive text-xs"
+                            onClick={() => setDiscontinueTarget(m)}
+                            disabled={discontinueMedMutation.isPending}
+                            aria-label={`Discontinue ${m.drugName}`}
+                            data-testid={`med-discontinue-${m.id}`}
+                          >
+                            Discontinue
+                          </Button>
+                        </div>
+                      )}
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
                       <span>{m.dosage}</span>

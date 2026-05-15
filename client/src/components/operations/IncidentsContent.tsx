@@ -28,7 +28,7 @@
  * follow-up) reuse the EXISTING PUT /api/ops/incidents/:id endpoint — no
  * parallel mutation endpoints introduced.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -56,6 +56,7 @@ import {
   Minus,
   RotateCcw,
   Lock,
+  Pencil,
 } from "lucide-react";
 import { useIsWritable } from "@/context/AuditorContext";
 
@@ -1062,13 +1063,268 @@ function IncidentChecklistPanel({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EditIncidentDialog (non-lifecycle basic fields)
+//
+// Edits incidentType, incidentDate, incidentTime, location, description,
+// immediateActionTaken, injuryInvolved, injuryDescription,
+// hospitalizationRequired, hospitalName, reportedBy. The W4 close/reopen
+// lifecycle is NOT touched here — closed incidents must be reopened via the
+// dedicated dialog before they can be edited.
+//
+// Pattern citations:
+//   - <ReportIncidentDialog> form layout: line 213 above
+//   - FormField + onSubmitKey + Enter hint: components/operations/FormField.tsx
+//   - Optimistic update + rollback: CloseIncidentDialog above (line 547)
+// ─────────────────────────────────────────────────────────────────────────────
+function EditIncidentDialog({
+  open,
+  onOpenChange,
+  incident,
+  facilityNumber,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  incident: Incident;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const initialFor = (i: Incident) => ({
+    incidentType: i.incidentType ?? "",
+    incidentDate: i.incidentDate
+      ? new Date(i.incidentDate).toISOString().slice(0, 10)
+      : "",
+    incidentTime: i.incidentTime ?? "",
+    location: i.location ?? "",
+    description: i.description ?? "",
+    immediateActionTaken: i.immediateActionTaken ?? "",
+    injuryInvolved: !!i.injuryInvolved,
+    injuryDescription:
+      (i as unknown as { injuryDescription?: string | null }).injuryDescription ?? "",
+    hospitalizationRequired:
+      !!(i as unknown as { hospitalizationRequired?: boolean | number }).hospitalizationRequired,
+    hospitalName:
+      (i as unknown as { hospitalName?: string | null }).hospitalName ?? "",
+    reportedBy: i.reportedBy ?? "",
+  });
+
+  const [form, setForm] = useState(() => initialFor(incident));
+  const [showErrors, setShowErrors] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setForm(initialFor(incident));
+      setShowErrors(false);
+    }
+  }, [open, incident]);
+
+  const listKey = [`/api/ops/facilities/${facilityNumber}/incidents`] as const;
+  const detailKey = [`/api/ops/incidents/${incident.id}/checklist`] as const;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        incidentType: form.incidentType,
+        incidentDate: form.incidentDate ? toLocalEpochMs(form.incidentDate) : incident.incidentDate,
+        incidentTime: form.incidentTime,
+        location: form.location,
+        description: form.description.trim(),
+        immediateActionTaken: form.immediateActionTaken.trim(),
+        injuryInvolved: form.injuryInvolved ? 1 : 0,
+        injuryDescription: form.injuryDescription.trim() || null,
+        hospitalizationRequired: form.hospitalizationRequired ? 1 : 0,
+        hospitalName: form.hospitalName.trim() || null,
+        reportedBy: form.reportedBy,
+      };
+      const res = await apiRequest("PUT", `/api/ops/incidents/${incident.id}`, body);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: listKey });
+      qc.invalidateQueries({ queryKey: detailKey });
+      toast({ title: "Incident updated" });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't save", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const errors = {
+    incidentType: !form.incidentType ? "Pick the incident type" : undefined,
+    incidentDate: !form.incidentDate ? "When did it happen?" : undefined,
+    description: form.description.trim().length === 0 ? "Describe what happened" : undefined,
+  };
+  const isValid = !errors.incidentType && !errors.incidentDate && !errors.description;
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit incident details</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4" onKeyDown={onSubmitKey(submit)}>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField
+              label="Incident Type"
+              required
+              error={showErrors ? errors.incidentType : undefined}
+            >
+              <Select
+                value={form.incidentType}
+                onValueChange={(v) => setForm((f) => ({ ...f, incidentType: v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectContent>
+                  {INCIDENT_TYPES.map((t) => (
+                    <SelectItem key={t} value={t} className="capitalize">
+                      {t.replace(/_/g, " ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label="Reported By">
+              <Input
+                value={form.reportedBy}
+                onChange={(e) => setForm((f) => ({ ...f, reportedBy: e.target.value }))}
+              />
+            </FormField>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField
+              label="Date"
+              required
+              error={showErrors ? errors.incidentDate : undefined}
+            >
+              <Input
+                type="date"
+                value={form.incidentDate}
+                onChange={(e) => setForm((f) => ({ ...f, incidentDate: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="Time">
+              <Input
+                type="time"
+                value={form.incidentTime}
+                onChange={(e) => setForm((f) => ({ ...f, incidentTime: e.target.value }))}
+              />
+            </FormField>
+          </div>
+          <FormField label="Location">
+            <Input
+              value={form.location}
+              onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+              placeholder="e.g. Dining room"
+            />
+          </FormField>
+          <FormField
+            label="Description"
+            required
+            error={showErrors ? errors.description : undefined}
+          >
+            <Textarea
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              className="resize-none min-h-[80px]"
+            />
+          </FormField>
+          <FormField label="Immediate Action Taken">
+            <Textarea
+              value={form.immediateActionTaken}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, immediateActionTaken: e.target.value }))
+              }
+              className="resize-none min-h-[60px]"
+            />
+          </FormField>
+          <div className="space-y-3 border rounded-lg p-3">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="edit-injury"
+                checked={form.injuryInvolved}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, injuryInvolved: !!v }))}
+              />
+              <label htmlFor="edit-injury" className="text-sm cursor-pointer">
+                Injury involved
+              </label>
+            </div>
+            {form.injuryInvolved && (
+              <FormField label="Injury Description">
+                <Textarea
+                  value={form.injuryDescription}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, injuryDescription: e.target.value }))
+                  }
+                  className="resize-none min-h-[60px]"
+                />
+              </FormField>
+            )}
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="edit-hospitalization"
+                checked={form.hospitalizationRequired}
+                onCheckedChange={(v) =>
+                  setForm((f) => ({ ...f, hospitalizationRequired: !!v }))
+                }
+              />
+              <label htmlFor="edit-hospitalization" className="text-sm cursor-pointer">
+                Hospitalization required
+              </label>
+            </div>
+            {form.hospitalizationRequired && (
+              <FormField label="Hospital Name">
+                <Input
+                  value={form.hospitalName}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, hospitalName: e.target.value }))
+                  }
+                  placeholder="Receiving hospital"
+                />
+              </FormField>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="gradient"
+              onClick={submit}
+              disabled={mutation.isPending}
+              data-testid="incident-edit-save"
+            >
+              {mutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilityNumber: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const isWritable = useIsWritable();
   const [expanded, setExpanded] = useState(false);
   const [rootCause, setRootCause] = useState(incident.rootCause ?? "");
   const [correctiveAction, setCorrectiveAction] = useState(incident.correctiveAction ?? "");
   const [status, setStatus] = useState(incident.status ?? "open");
+  const [editOpen, setEditOpen] = useState(false);
+  const isClosed = (incident.status ?? "").toLowerCase() === "closed";
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -1133,7 +1389,21 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
 
       {expanded && (
         <div className="border-t p-4 space-y-4 text-sm">
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-2">
+            {isWritable && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setEditOpen(true)}
+                disabled={isClosed}
+                title={isClosed ? "Reopen to edit" : "Edit incident details"}
+                aria-label="Edit incident details"
+                data-testid="incident-edit-trigger"
+              >
+                <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                Edit details
+              </Button>
+            )}
             <AuditTrailButton
               entityType="ops_incident"
               entityId={incident.id}
@@ -1141,6 +1411,13 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
               labelText="History"
             />
           </div>
+          <EditIncidentDialog
+            open={editOpen}
+            onOpenChange={setEditOpen}
+            incident={incident}
+            facilityNumber={facilityNumber}
+          />
+
 
           <div>
             <p className="text-muted-foreground text-xs mb-0.5">Location</p>
