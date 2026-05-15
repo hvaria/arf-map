@@ -60,14 +60,14 @@ export default function MarketingLanding() {
   const primaryHref = authedTarget ?? "/map";
 
   return (
-    <div className="relative min-h-screen w-full bg-[#0A0E13] text-[#F5EFE7] selection:bg-[#E8864A] selection:text-[#0A0E13] overflow-x-hidden">
-      {/* Page-wide ambient gradient so the dark canvas has depth, not flatness */}
+    <div className="relative min-h-screen w-full bg-[#FFF8F1] text-stone-900 selection:bg-[#FBEEE5] selection:text-[#7A2E0B] overflow-x-hidden">
+      {/* Page-wide ambient warm wash so the cream canvas has depth, not flatness */}
       <div
         aria-hidden="true"
         className="fixed inset-0 pointer-events-none -z-10"
         style={{
           background:
-            "radial-gradient(80% 50% at 50% 0%, rgba(232,134,74,0.08) 0%, rgba(10,14,19,0) 60%)",
+            "radial-gradient(80% 50% at 50% 0%, rgba(232,134,74,0.10) 0%, rgba(255,248,241,0) 60%)",
         }}
       />
 
@@ -109,17 +109,17 @@ function scrollToId(id: string) {
  * ──────────────────────────────────────────────────────────────────────── */
 
 const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 24 },
+  hidden: { opacity: 0, y: 28 },
   show: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.7, ease: [0.16, 1, 0.3, 1] },
+    transition: { duration: 1.0, ease: [0.16, 1, 0.3, 1] },
   },
 };
 
 const stagger: Variants = {
   hidden: {},
-  show: { transition: { staggerChildren: 0.08, delayChildren: 0.05 } },
+  show: { transition: { staggerChildren: 0.12, delayChildren: 0.08 } },
 };
 
 /** Scroll-triggered stagger container — children must use `FadeUp` to opt in. */
@@ -183,7 +183,8 @@ function Tilt3D({
   const reduce = useReducedMotion();
   const px = useMotionValue(0); // normalized -0.5 to 0.5
   const py = useMotionValue(0);
-  const springConf = { stiffness: 180, damping: 22, mass: 0.4 };
+  // Softer spring so the tilt feels deliberate rather than snappy.
+  const springConf = { stiffness: 120, damping: 24, mass: 0.6 };
   const rotateX = useSpring(useTransform(py, [-0.5, 0.5], [max, -max]), springConf);
   const rotateY = useSpring(useTransform(px, [-0.5, 0.5], [-max, max]), springConf);
   // Glare position in % across the surface
@@ -253,7 +254,7 @@ function AmbientOrbs() {
           filter: "blur(40px)",
         }}
         animate={reduce ? undefined : { y: [0, 24, 0], x: [0, 12, 0] }}
-        transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         className="absolute -bottom-40 -right-24 w-[36rem] h-[36rem] rounded-full"
@@ -263,7 +264,7 @@ function AmbientOrbs() {
           filter: "blur(40px)",
         }}
         animate={reduce ? undefined : { y: [0, -20, 0], x: [0, -16, 0] }}
-        transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: 32, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[28rem] h-[28rem] rounded-full"
@@ -273,7 +274,7 @@ function AmbientOrbs() {
           filter: "blur(30px)",
         }}
         animate={reduce ? undefined : { scale: [1, 1.08, 1] }}
-        transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }}
+        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
       />
     </div>
   );
@@ -294,7 +295,7 @@ function NavBar({
   sessionsReady: boolean;
 }) {
   return (
-    <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#0A0E13]/85 border-b border-white/[0.06]">
+    <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#FFF8F1]/85 border-b border-stone-200/70">
       <div className="max-w-[1400px] mx-auto px-6 sm:px-10 h-20 flex items-center justify-between gap-8">
         <a
           href="#/"
@@ -304,7 +305,7 @@ function NavBar({
           <BrandLogo size={80} />
         </a>
 
-        <nav className="hidden md:flex items-center gap-9 text-[13px] font-medium text-[#A8B0BA]">
+        <nav className="hidden md:flex items-center gap-9 text-[13px] font-medium text-stone-600">
           {[
             ["Mission", "mission"],
             ["For Caregivers", "for-caregivers"],
@@ -327,7 +328,7 @@ function NavBar({
           <button
             type="button"
             onClick={onSignIn}
-            className="hidden sm:inline-flex text-[13px] font-semibold text-[#A8B0BA] hover:text-[#E8864A] px-2 py-2 rounded-md transition-colors"
+            className="hidden sm:inline-flex text-[13px] font-semibold text-stone-600 hover:text-[#E8864A] px-2 py-2 rounded-md transition-colors"
           >
             Sign in
           </button>
@@ -359,7 +360,7 @@ function Hero({
   onLearn: () => void;
 }) {
   return (
-    <section className="relative -mt-20 min-h-[100svh] overflow-hidden bg-[#0A0E13]">
+    <section className="relative -mt-20 min-h-[100svh] overflow-hidden bg-[#FFF8F1]">
       {/* Full-bleed dark map — single fixed Koreatown coordinate, bleeds
           across the whole hero behind the copy and the brand mark. */}
       <HeroMap />
@@ -372,8 +373,8 @@ function Hero({
         className="absolute inset-0 pointer-events-none"
         style={{
           background: `
-            linear-gradient(90deg, rgba(10,14,19,0.96) 0%, rgba(10,14,19,0.75) 35%, rgba(10,14,19,0.25) 65%, rgba(10,14,19,0.55) 100%),
-            linear-gradient(180deg, rgba(10,14,19,0.55) 0%, rgba(10,14,19,0) 25%, rgba(10,14,19,0) 65%, rgba(10,14,19,1) 100%)
+            linear-gradient(90deg, rgba(255,248,241,0.96) 0%, rgba(255,248,241,0.75) 35%, rgba(255,248,241,0.25) 65%, rgba(255,248,241,0.55) 100%),
+            linear-gradient(180deg, rgba(255,248,241,0.55) 0%, rgba(255,248,241,0) 25%, rgba(255,248,241,0) 65%, rgba(255,248,241,1) 100%)
           `,
         }}
       />
@@ -387,8 +388,8 @@ function Hero({
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[rgba(232,134,74,0.12)] text-[#FFB07A] text-xs font-semibold tracking-wide uppercase border border-[rgba(232,134,74,0.3)]"
+              transition={{ duration: 0.8, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[rgba(232,134,74,0.12)] text-[#C25A2E] text-xs font-semibold tracking-wide uppercase border border-[rgba(232,134,74,0.3)]"
             >
               <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
               A new standard for residential care
@@ -397,8 +398,8 @@ function Hero({
             <motion.h1
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.2 }}
-              className="mt-5 font-black tracking-tight text-[#F5EFE7] leading-[1.05]"
+              transition={{ duration: 1.0, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              className="mt-5 font-black tracking-tight text-stone-900 leading-[1.05]"
               style={{ fontSize: "clamp(2.25rem, 4.6vw, 4rem)" }}
             >
               Care is a calling.
@@ -419,8 +420,8 @@ function Hero({
             <motion.p
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.35 }}
-              className="mt-6 text-lg sm:text-xl text-[#A8B0BA] max-w-xl mx-auto lg:mx-0 leading-relaxed"
+              transition={{ duration: 1.0, delay: 0.65, ease: [0.16, 1, 0.3, 1] }}
+              className="mt-6 text-lg sm:text-xl text-stone-600 max-w-xl mx-auto lg:mx-0 leading-relaxed"
             >
               Neighbourhood Care Finder connects caregivers and licensed
               residential homes across California — one shared standard, one
@@ -431,7 +432,7 @@ function Hero({
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.5 }}
+              transition={{ duration: 1.0, delay: 0.9, ease: [0.16, 1, 0.3, 1] }}
               className="mt-8 flex flex-col sm:flex-row items-center gap-3 justify-center lg:justify-start"
             >
               <GlowButton onClick={onPrimary}>
@@ -441,7 +442,7 @@ function Hero({
               <button
                 type="button"
                 onClick={onLearn}
-                className="inline-flex items-center justify-center gap-2 w-full sm:w-auto text-[#F5EFE7] hover:text-[#FFB07A] hover:border-[rgba(232,134,74,0.5)] font-semibold px-6 py-3.5 rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-md transition-colors text-base"
+                className="inline-flex items-center justify-center gap-2 w-full sm:w-auto text-stone-900 hover:text-[#C25A2E] hover:border-[rgba(232,134,74,0.5)] font-semibold px-6 py-3.5 rounded-xl border border-stone-200 bg-white/[0.03] backdrop-blur-md transition-colors text-base"
               >
                 Read our mission
               </button>
@@ -450,8 +451,8 @@ function Hero({
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ duration: 0.8, delay: 0.8 }}
-              className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 justify-center lg:justify-start text-xs text-[#6B7480]"
+              transition={{ duration: 1.2, delay: 1.25 }}
+              className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 justify-center lg:justify-start text-xs text-stone-500"
             >
               <div className="flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-[#E8864A]" aria-hidden="true" />
@@ -502,7 +503,7 @@ function GlowButton({
             filter: "blur(18px)",
           }}
           animate={{ opacity: [0.55, 0.9, 0.55] }}
-          transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
+          transition={{ duration: 3.8, repeat: Infinity, ease: "easeInOut" }}
         />
       )}
       <button
@@ -570,10 +571,35 @@ function HeroMap() {
   }, []);
 
   return (
-    <div ref={mapContainer} className="absolute inset-0" aria-hidden="true" />
+    // Map fades in smoothly on mount — this is the first beat of the brand
+    // reveal sequence ("map outline appearing first, clean and elegant").
+    <motion.div
+      ref={mapContainer}
+      className="absolute inset-0"
+      aria-hidden="true"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }}
+    />
   );
 }
 
+/**
+ * Animation timeline (seconds after `reveal` flips true):
+ *
+ *   0.0 – 1.6  HeroMap fades in (handled inside HeroMap, this matches it)
+ *   1.6 – 5.0  Building marker → orange dot morph, clockwise (8 × 0.45s
+ *              stagger × 0.55s morph). Each marker is a small dim rect that
+ *              cross-fades into the orange facility dot.
+ *   5.4 – 6.4  Center heart entrance + warm halo fade-in.
+ *   6.5 – 8.3  Thin lines draw inward from each outer point to the center
+ *              heart, clockwise, smooth ease.
+ *   8.3+       Final lockup — balanced and still.
+ *
+ * Outer points stay as orange dots (the brand-logo form). No looping
+ * animations after the reveal lands. Tilt3D is the only ongoing
+ * interaction (cursor-driven tilt).
+ */
 function AnimatedBrandMark() {
   const reduce = useReducedMotion();
   const [reveal, setReveal] = useState(false);
@@ -597,13 +623,27 @@ function AnimatedBrandMark() {
     });
   }, []);
 
-  const baseDelay = reduce ? 0 : 0.5;
-  const step = reduce ? 0 : 0.1;
+  // Phase start times + per-element duration / stagger. Reduced-motion users
+  // get the final lockup at t≈0.001s with no motion in between.
+  const fast = reduce;
+  const T_BUILD = fast ? 0 : 1.6; // building→dot morph starts
+  const D_BUILD = fast ? 0.001 : 0.55;
+  const S_BUILD = fast ? 0 : 0.45;
+  // Small beat (~0.4s) between the last dot landing and the center heart
+  // entering, so the reveal feels deliberate and the eye registers the
+  // ring of dots before the heart appears at the center.
+  const T_CENTER =
+    fast ? 0 : T_BUILD + S_BUILD * 7 + D_BUILD * 0.6 + 0.4; // ~5.4
+  const D_CENTER = fast ? 0.001 : 1.0;
+  const T_LINE = fast ? 0 : T_CENTER + D_CENTER * 1.1; // ~6.5
+  const D_LINE = fast ? 0.001 : 0.6;
+  const S_LINE = fast ? 0 : 0.22;
 
   return (
     <Tilt3D max={5} className="relative w-full max-w-[560px] aspect-square">
-      {/* Soft warm glow behind so the mark feels lit from within */}
-      <div
+      {/* Soft warm glow behind — fades in alongside the map outline so the
+          mark always sits in a lit pool. */}
+      <motion.div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none"
         style={{
@@ -612,9 +652,12 @@ function AnimatedBrandMark() {
           filter: "blur(30px)",
           transform: "translateZ(-30px)",
         }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: reveal ? 1 : 0 }}
+        transition={{ duration: fast ? 0.001 : 1.8, ease: "easeOut" }}
       />
-      {/* Floating drop-shadow under the mark — fades into the dark canvas */}
-      <div
+      {/* Floating drop-shadow under the mark */}
+      <motion.div
         aria-hidden="true"
         className="absolute left-[15%] right-[15%] bottom-2 h-12 rounded-full pointer-events-none"
         style={{
@@ -623,13 +666,16 @@ function AnimatedBrandMark() {
           filter: "blur(18px)",
           transform: "translateZ(-60px)",
         }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: reveal ? 1 : 0 }}
+        transition={{ duration: fast ? 0.001 : 1.8, ease: "easeOut" }}
       />
 
       <svg
         viewBox="0 0 400 400"
         className="relative w-full h-full"
         role="img"
-        aria-label="Neighbourhood Care Finder mark: a heart at the center with eight facility points spaced clockwise around it, set on a map of California."
+        aria-label="Neighbourhood Care Finder mark: a heart at the center with eight facility points connected clockwise around it, on a dark map of California."
       >
         <defs>
           <radialGradient id="heartGlow" cx="50%" cy="50%" r="50%">
@@ -647,115 +693,49 @@ function AnimatedBrandMark() {
           </linearGradient>
         </defs>
 
-        {/* Continuous ripple rings — the platform radiating outward. Three
-            staggered rings expand from the heart and fade as they reach the
-            panel edge, on a long repeat for ambient motion. */}
-        {!reduce &&
-          [0, 1, 2].map((i) => (
-            <motion.circle
-              key={`ripple-${i}`}
-              cx={center.x}
-              cy={center.y}
-              fill="none"
-              stroke="#E8864A"
-              strokeWidth={1.2}
-              initial={{ r: 20, opacity: 0 }}
-              animate={{ r: 195, opacity: [0, 0.55, 0] }}
-              transition={{
-                duration: 4.5,
-                repeat: Infinity,
-                delay: 1.5 + i * 1.5,
-                ease: "easeOut",
-                times: [0, 0.18, 1],
-              }}
-            />
-          ))}
-
-        {/* Connecting spokes */}
+        {/* ── Phase 2 ──  Building markers cross-fade into orange dots,
+            clockwise. The rect is the "building", the circle group is the
+            facility dot. They overlap in time so the building seems to morph
+            into a dot rather than just swap. */}
         {dots.map((d, i) => {
-          const delay = baseDelay + i * step;
-          const dx = d.x - center.x;
-          const dy = d.y - center.y;
-          const len = Math.hypot(dx, dy);
-          const startTrim = 36;
-          const endTrim = 9;
-          const sx = center.x + (dx / len) * startTrim;
-          const sy = center.y + (dy / len) * startTrim;
-          const ex = d.x - (dx / len) * endTrim;
-          const ey = d.y - (dy / len) * endTrim;
-          const dash = Math.hypot(ex - sx, ey - sy);
+          const delayBuild = T_BUILD + i * S_BUILD;
+          // Building rect: appears → peaks → dissolves
           return (
-            <motion.line
-              key={`spoke-${i}`}
-              x1={sx}
-              y1={sy}
-              x2={ex}
-              y2={ey}
-              stroke="#E8864A"
-              strokeOpacity={0.95}
-              strokeWidth={2.5}
-              strokeLinecap="round"
-              strokeDasharray={dash}
-              initial={{ strokeDashoffset: dash }}
+            <motion.rect
+              key={`bldg-${i}`}
+              x={d.x - 7}
+              y={d.y - 7}
+              width={14}
+              height={14}
+              rx={1.5}
+              // Slightly lighter than the dark-matter style's building tone
+              // so it reads as a building landmark on the map without looking
+              // like a foreign SVG element. No stroke — the dark map's
+              // building rendering doesn't use one either.
+              fill="#3A4350"
+              initial={{ opacity: 0, scale: 0.5 }}
               animate={
-                reveal ? { strokeDashoffset: 0 } : { strokeDashoffset: dash }
+                reveal
+                  ? { opacity: [0, 0.95, 0.95, 0], scale: [0.5, 1, 1, 0.75] }
+                  : { opacity: 0, scale: 0.5 }
               }
               transition={{
-                duration: reduce ? 0.001 : 0.4,
-                delay,
-                ease: "easeOut",
+                duration: D_BUILD,
+                delay: delayBuild,
+                times: [0, 0.35, 0.6, 1],
+                ease: [0.16, 1, 0.3, 1],
+              }}
+              style={{
+                transformOrigin: `${d.x}px ${d.y}px`,
+                transformBox: "fill-box",
               }}
             />
           );
         })}
 
-        {/* Heart halo */}
-        <circle cx={center.x} cy={center.y} r={72} fill="url(#heartGlow)" />
-
-        {/* Heart entrance + breathing loop */}
-        <motion.g
-          initial={false}
-          animate={
-            reveal && !reduce
-              ? { scale: [1, 1.07, 1, 1.05, 1] }
-              : { scale: 1 }
-          }
-          transition={
-            reveal && !reduce
-              ? {
-                  duration: 1.6,
-                  delay: 2.4,
-                  repeat: Infinity,
-                  repeatDelay: 1.0,
-                  ease: "easeInOut",
-                  times: [0, 0.18, 0.36, 0.54, 1],
-                }
-              : { duration: 0 }
-          }
-          style={{ transformOrigin: `${center.x}px ${center.y}px` }}
-        >
-          <motion.g
-            initial={{ scale: 0, opacity: 0 }}
-            animate={
-              reveal
-                ? { scale: [0, 1.2, 1], opacity: 1 }
-                : { scale: 0, opacity: 0 }
-            }
-            transition={{
-              duration: reduce ? 0.001 : 0.75,
-              delay: reduce ? 0 : 0.15,
-              times: [0, 0.65, 1],
-              ease: "easeOut",
-            }}
-            style={{ transformOrigin: `${center.x}px ${center.y}px` }}
-          >
-            <BrandHeart cx={center.x} cy={center.y} />
-          </motion.g>
-        </motion.g>
-
-        {/* Facility dots */}
         {dots.map((d, i) => {
-          const delay = baseDelay + i * step + 0.2;
+          // Dot scales in from 0, landing as the building rect dissolves.
+          const delayDot = T_BUILD + i * S_BUILD + D_BUILD * 0.5;
           return (
             <motion.g
               key={`dot-${i}`}
@@ -764,8 +744,8 @@ function AnimatedBrandMark() {
                 reveal ? { scale: 1, opacity: 1 } : { scale: 0, opacity: 0 }
               }
               transition={{
-                duration: reduce ? 0.001 : 0.35,
-                delay,
+                duration: fast ? 0.001 : 0.55,
+                delay: delayDot,
                 ease: [0.16, 1, 0.3, 1],
               }}
               style={{ transformOrigin: `${d.x}px ${d.y}px` }}
@@ -790,45 +770,86 @@ function AnimatedBrandMark() {
           );
         })}
 
-        {/* Inbound particle stream — small lights travel from each facility
-            point toward the heart. Visualizes "connections flowing back to
-            the platform." Loops continuously after the entrance settles. */}
-        {!reduce &&
-          reveal &&
-          dots.map((d, i) => {
-            // Particle starts ~15% out from the dot and dies ~15% from the heart.
-            const dx = center.x - d.x;
-            const dy = center.y - d.y;
-            const startX = d.x + dx * 0.15;
-            const startY = d.y + dy * 0.15;
-            const endX = d.x + dx * 0.82;
-            const endY = d.y + dy * 0.82;
-            return (
-              <motion.circle
-                key={`particle-${i}`}
-                r={2}
-                fill="#FFD7B0"
-                initial={{ cx: startX, cy: startY, opacity: 0 }}
-                animate={{
-                  cx: [startX, endX],
-                  cy: [startY, endY],
-                  opacity: [0, 1, 1, 0],
-                }}
-                transition={{
-                  duration: 2.4,
-                  delay: 3.0 + i * 0.32,
-                  repeat: Infinity,
-                  repeatDelay: 2.6,
-                  ease: "easeIn",
-                  times: [0, 0.18, 0.78, 1],
-                }}
-              />
-            );
-          })}
+        {/* ── Phase 4 ──  Connection lines draw inward from each outer dot
+            to the center heart, clockwise. Soft easing, thin stroke. Drawn
+            BELOW the dots and center heart so the line endings tuck under
+            the marker shapes. */}
+        {dots.map((d, i) => {
+          const delay = T_LINE + i * S_LINE;
+          // Line origin sits just outside the outer dot, and terminates
+          // just outside the center heart's silhouette.
+          const dx = center.x - d.x;
+          const dy = center.y - d.y;
+          const len = Math.hypot(dx, dy);
+          const startTrim = 12;
+          const endTrim = 38;
+          const sx = d.x + (dx / len) * startTrim;
+          const sy = d.y + (dy / len) * startTrim;
+          const ex = center.x - (dx / len) * endTrim;
+          const ey = center.y - (dy / len) * endTrim;
+          const dash = Math.hypot(ex - sx, ey - sy);
+          return (
+            <motion.line
+              key={`line-${i}`}
+              x1={sx}
+              y1={sy}
+              x2={ex}
+              y2={ey}
+              stroke="#E8864A"
+              strokeOpacity={0.9}
+              strokeWidth={1.8}
+              strokeLinecap="round"
+              strokeDasharray={dash}
+              initial={{ strokeDashoffset: dash }}
+              animate={
+                reveal ? { strokeDashoffset: 0 } : { strokeDashoffset: dash }
+              }
+              transition={{
+                duration: D_LINE,
+                delay,
+                ease: [0.4, 0, 0.2, 1],
+              }}
+            />
+          );
+        })}
+
+        {/* ── Phase 3 ──  Center heart halo + heart entrance. No heartbeat
+            loop — once the heart lands, it stays still. */}
+        <motion.circle
+          cx={center.x}
+          cy={center.y}
+          r={72}
+          fill="url(#heartGlow)"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: reveal ? 1 : 0 }}
+          transition={{
+            duration: fast ? 0.001 : 1.0,
+            delay: T_CENTER,
+            ease: "easeOut",
+          }}
+        />
+        <motion.g
+          initial={{ scale: 0, opacity: 0 }}
+          animate={
+            reveal
+              ? { scale: [0, 1.18, 1], opacity: 1 }
+              : { scale: 0, opacity: 0 }
+          }
+          transition={{
+            duration: D_CENTER,
+            delay: T_CENTER,
+            times: [0, 0.6, 1],
+            ease: [0.16, 1.2, 0.3, 1],
+          }}
+          style={{ transformOrigin: `${center.x}px ${center.y}px` }}
+        >
+          <BrandHeart cx={center.x} cy={center.y} />
+        </motion.g>
       </svg>
     </Tilt3D>
   );
 }
+
 
 function BrandHeart({ cx, cy }: { cx: number; cy: number }) {
   return (
@@ -864,8 +885,8 @@ function SectionShell({
   return (
     <section
       id={id}
-      className={`relative border-t border-white/5 ${
-        surface === "elev" ? "bg-[#0F1419]" : "bg-[#0A0E13]"
+      className={`relative border-t border-stone-200/70 ${
+        surface === "elev" ? "bg-white" : "bg-[#FFF8F1]"
       } overflow-hidden`}
     >
       {withOrbs && <AmbientOrbs />}
@@ -883,14 +904,14 @@ function Mission() {
       <div className="max-w-4xl mx-auto px-6 sm:px-10 py-24 sm:py-32 text-center">
         <StaggerSection>
           <FadeUp>
-            <p className="portal-eyebrow text-[#FFB07A]">Our mission</p>
+            <p className="portal-eyebrow text-[#C25A2E]">Our mission</p>
           </FadeUp>
           <FadeUp>
             <h2
               className="mt-4 font-bold leading-tight"
               style={{ fontSize: "clamp(1.875rem, 3.3vw, 2.75rem)" }}
             >
-              <span className="text-[#F5EFE7]">
+              <span className="text-stone-900">
                 The care industry runs on people, paper, and hope.
               </span>
               <br />
@@ -907,7 +928,7 @@ function Mission() {
             </h2>
           </FadeUp>
 
-          <div className="mt-12 space-y-6 text-lg text-[#A8B0BA] leading-relaxed max-w-2xl mx-auto">
+          <div className="mt-12 space-y-6 text-lg text-stone-600 leading-relaxed max-w-2xl mx-auto">
             <FadeUp>
               <p>
                 Residential care is one of the most human industries in the
@@ -927,7 +948,7 @@ function Mission() {
               </p>
             </FadeUp>
             <FadeUp>
-              <p className="text-[#FFB07A] font-semibold">
+              <p className="text-[#C25A2E] font-semibold">
                 Care is a calling. It&rsquo;s time the industry that runs on it
                 felt like a calling too.
               </p>
@@ -973,22 +994,22 @@ function ForCaregivers({ onCta }: { onCta: () => void }) {
 
           <div className="lg:col-span-7 order-1 lg:order-2">
             <FadeUp>
-              <p className="portal-eyebrow text-[#FFB07A]">For caregivers</p>
+              <p className="portal-eyebrow text-[#C25A2E]">For caregivers</p>
             </FadeUp>
             <FadeUp>
               <h2
-                className="mt-3 font-bold text-[#F5EFE7] leading-tight"
+                className="mt-3 font-bold text-stone-900 leading-tight"
                 style={{ fontSize: "clamp(1.75rem, 3vw, 2.5rem)" }}
               >
                 Your work changes lives.
                 <br />
-                <span className="text-[#FFB07A]">
+                <span className="text-[#C25A2E]">
                   Your career should change too.
                 </span>
               </h2>
             </FadeUp>
             <FadeUp>
-              <p className="mt-6 text-lg text-[#A8B0BA] leading-relaxed">
+              <p className="mt-6 text-lg text-stone-600 leading-relaxed">
                 Caregivers, DSPs, nurses, med techs, house managers — the
                 people who hold the residential care system together are
                 usually the last to be heard. We built the job-seeker side of
@@ -1045,18 +1066,18 @@ function ForOperators({ onCta }: { onCta: () => void }) {
         <StaggerSection className="grid lg:grid-cols-12 gap-12 items-center">
           <div className="lg:col-span-7">
             <FadeUp>
-              <p className="portal-eyebrow text-[#FFB07A]">
+              <p className="portal-eyebrow text-[#C25A2E]">
                 For facility operators
               </p>
             </FadeUp>
             <FadeUp>
               <h2
-                className="mt-3 font-bold text-[#F5EFE7] leading-tight"
+                className="mt-3 font-bold text-stone-900 leading-tight"
                 style={{ fontSize: "clamp(1.75rem, 3vw, 2.5rem)" }}
               >
                 You opened your home to
                 <br />
-                <span className="text-[#FFB07A]">
+                <span className="text-[#C25A2E]">
                   other people&rsquo;s parents,
                 </span>
                 <br />
@@ -1064,7 +1085,7 @@ function ForOperators({ onCta }: { onCta: () => void }) {
               </h2>
             </FadeUp>
             <FadeUp>
-              <p className="mt-6 text-lg text-[#A8B0BA] leading-relaxed">
+              <p className="mt-6 text-lg text-stone-600 leading-relaxed">
                 We built the operations side of Neighbourhood Care Finder so
                 that the people running ARFs and RCFEs can keep loving the
                 work. eMAR, trackers, incidents, CRM, staff, compliance —
@@ -1185,14 +1206,14 @@ function QuoteCard({
 
       {/* Glass-morphism panel */}
       <div
-        className="relative h-full rounded-3xl overflow-hidden border border-white/10"
+        className="relative h-full rounded-3xl overflow-hidden border border-stone-200"
         style={{
           background:
-            "linear-gradient(160deg, rgba(28,36,46,0.85) 0%, rgba(15,20,25,0.7) 100%)",
+            "linear-gradient(160deg, rgba(255,255,255,0.95) 0%, rgba(250,250,249,0.85) 100%)",
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
           boxShadow:
-            "inset 0 1px 0 rgba(255,255,255,0.08), 0 30px 60px -25px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,176,122,0.05)",
+            "inset 0 1px 0 rgba(255,255,255,0.7), 0 24px 50px -22px rgba(28,25,23,0.18), 0 0 0 1px rgba(232,134,74,0.10)",
         }}
       >
         {/* Top reflective edge — sells the "panel under light" cue */}
@@ -1232,10 +1253,10 @@ function QuoteCard({
             >
               {icon}
             </div>
-            <p className="mt-7 text-2xl font-black text-[#F5EFE7] leading-tight">
+            <p className="mt-7 text-2xl font-black text-stone-900 leading-tight">
               {quote}
             </p>
-            <p className="mt-4 text-sm text-[#A8B0BA]">{caption}</p>
+            <p className="mt-4 text-sm text-stone-600">{caption}</p>
           </div>
         </div>
       </div>
@@ -1257,7 +1278,7 @@ function SectionCta({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-2 text-sm font-semibold text-[#F5EFE7] bg-gradient-to-br from-[#E8864A] to-[#C25A2E] hover:from-[#F09659] hover:to-[#D4693A] px-5 py-3 rounded-xl transition-colors shadow-[0_0_0_1px_rgba(255,176,122,0.3),0_10px_24px_-10px_rgba(232,134,74,0.6)]"
+      className="inline-flex items-center gap-2 text-sm font-semibold text-stone-900 bg-gradient-to-br from-[#E8864A] to-[#C25A2E] hover:from-[#F09659] hover:to-[#D4693A] px-5 py-3 rounded-xl transition-colors shadow-[0_0_0_1px_rgba(255,176,122,0.3),0_10px_24px_-10px_rgba(232,134,74,0.6)]"
     >
       {label}
       <ArrowRight className="w-4 h-4" aria-hidden="true" />
@@ -1297,20 +1318,20 @@ function TheStandard() {
       <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-24 sm:py-32">
         <StaggerSection>
           <FadeUp>
-            <p className="portal-eyebrow text-[#FFB07A]">The standard</p>
+            <p className="portal-eyebrow text-[#C25A2E]">The standard</p>
           </FadeUp>
           <FadeUp className="max-w-3xl">
             <h2
-              className="mt-3 font-bold text-[#F5EFE7] leading-tight"
+              className="mt-3 font-bold text-stone-900 leading-tight"
               style={{ fontSize: "clamp(1.75rem, 3vw, 2.5rem)" }}
             >
               The residential care industry doesn&rsquo;t need another vendor.
               <br />
-              <span className="text-[#FFB07A]">It needs a standard.</span>
+              <span className="text-[#C25A2E]">It needs a standard.</span>
             </h2>
           </FadeUp>
           <FadeUp className="max-w-3xl">
-            <p className="mt-6 text-lg text-[#A8B0BA] leading-relaxed">
+            <p className="mt-6 text-lg text-stone-600 leading-relaxed">
               Four principles guide every feature, every conversation, every
               line of code we ship. They&rsquo;re what we mean when we say
               we&rsquo;re standardizing this industry from the inside out.
@@ -1377,14 +1398,14 @@ function PillarCard({
 
       {/* Glass panel */}
       <div
-        className="relative h-full rounded-2xl p-6 border border-white/10 group-hover:border-[rgba(232,134,74,0.4)] transition-colors overflow-hidden"
+        className="relative h-full rounded-2xl p-6 border border-stone-200 group-hover:border-[rgba(232,134,74,0.4)] transition-colors overflow-hidden"
         style={{
           background:
-            "linear-gradient(160deg, rgba(28,36,46,0.85) 0%, rgba(15,20,25,0.7) 100%)",
+            "linear-gradient(160deg, rgba(255,255,255,0.95) 0%, rgba(250,250,249,0.85) 100%)",
           backdropFilter: "blur(16px)",
           WebkitBackdropFilter: "blur(16px)",
           boxShadow:
-            "inset 0 1px 0 rgba(255,255,255,0.06), 0 20px 40px -20px rgba(0,0,0,0.6)",
+            "inset 0 1px 0 rgba(255,255,255,0.85), 0 18px 36px -18px rgba(28,25,23,0.18)",
         }}
       >
         {/* Top reflective edge */}
@@ -1412,13 +1433,13 @@ function PillarCard({
           {icon}
         </div>
         <h3
-          className="relative mt-5 text-lg font-bold text-[#F5EFE7]"
+          className="relative mt-5 text-lg font-bold text-stone-900"
           style={{ transform: "translateZ(16px)" }}
         >
           {title}
         </h3>
         <p
-          className="relative mt-2 text-sm text-[#A8B0BA] leading-relaxed"
+          className="relative mt-2 text-sm text-stone-600 leading-relaxed"
           style={{ transform: "translateZ(8px)" }}
         >
           {body}
@@ -1438,7 +1459,7 @@ function Connection() {
       <div className="max-w-5xl mx-auto px-6 sm:px-10 py-24 sm:py-32 text-center">
         <StaggerSection>
           <FadeUp>
-            <p className="portal-eyebrow text-[#FFB07A]">
+            <p className="portal-eyebrow text-[#C25A2E]">
               Why both sides matter
             </p>
           </FadeUp>
@@ -1447,7 +1468,7 @@ function Connection() {
               className="mt-3 font-bold leading-tight"
               style={{ fontSize: "clamp(1.875rem, 3.3vw, 2.75rem)" }}
             >
-              <span className="text-[#F5EFE7]">
+              <span className="text-stone-900">
                 A great home is nothing without great people.
               </span>
               <br />
@@ -1463,7 +1484,7 @@ function Connection() {
             </h2>
           </FadeUp>
           <FadeUp>
-            <p className="mt-8 text-lg text-[#A8B0BA] leading-relaxed max-w-2xl mx-auto">
+            <p className="mt-8 text-lg text-stone-600 leading-relaxed max-w-2xl mx-auto">
               That&rsquo;s why we built both sides under one roof. Every job
               seeker on our platform sees the same facilities every operator
               can claim. Every operator on our platform draws from the same
@@ -1479,7 +1500,7 @@ function Connection() {
           </FadeUp>
 
           <FadeUp>
-            <div className="mt-10 inline-flex items-center gap-3 px-5 py-3 rounded-full bg-[rgba(232,134,74,0.1)] text-[#FFB07A] border border-[rgba(232,134,74,0.3)]">
+            <div className="mt-10 inline-flex items-center gap-3 px-5 py-3 rounded-full bg-[rgba(232,134,74,0.1)] text-[#C25A2E] border border-[rgba(232,134,74,0.3)]">
               <Heart className="w-4 h-4" aria-hidden="true" />
               <span className="text-sm font-semibold">
                 Built so the people who care can find each other.
@@ -1509,9 +1530,9 @@ function RippleHeart({ reduce }: { reduce: boolean | null }) {
             initial={{ opacity: 0.6, scale: 0.5 }}
             animate={{ opacity: 0, scale: 1.6 }}
             transition={{
-              duration: 3,
+              duration: 4.5,
               repeat: Infinity,
-              delay,
+              delay: delay * 1.5,
               ease: "easeOut",
             }}
           />
@@ -1533,9 +1554,9 @@ function RippleHeart({ reduce }: { reduce: boolean | null }) {
             : { scale: [1, 1.08, 1, 1.05, 1] }
         }
         transition={{
-          duration: 1.6,
+          duration: 2.3,
           repeat: Infinity,
-          repeatDelay: 0.8,
+          repeatDelay: 1.4,
           ease: "easeInOut",
           times: [0, 0.18, 0.36, 0.54, 1],
         }}
@@ -1599,7 +1620,7 @@ function FinalCta({
             </h2>
           </FadeUp>
           <FadeUp>
-            <p className="mt-5 text-lg text-[#A8B0BA] max-w-xl mx-auto leading-relaxed">
+            <p className="mt-5 text-lg text-stone-600 max-w-xl mx-auto leading-relaxed">
               Whether you give care or run a home that gives it — there&rsquo;s
               a place for you on the map.
             </p>
@@ -1624,12 +1645,12 @@ function FinalCta({
 function Footer() {
   const year = new Date().getFullYear();
   return (
-    <footer className="border-t border-white/5 bg-[#0A0E13]">
+    <footer className="border-t border-stone-200/70 bg-[#FFF8F1]">
       <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <BrandLogo size={80} />
         </div>
-        <div className="text-xs text-[#6B7480] text-left sm:text-right space-y-1.5 leading-relaxed">
+        <div className="text-xs text-stone-500 text-left sm:text-right space-y-1.5 leading-relaxed">
           <p>
             © {year} Neighbourhood Care Finder. Serving California&rsquo;s
             licensed adult residential care community.
@@ -1640,7 +1661,7 @@ function Footer() {
               href="https://www.openstreetmap.org/copyright"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[#A8B0BA] transition-colors underline-offset-2 hover:underline"
+              className="hover:text-stone-600 transition-colors underline-offset-2 hover:underline"
             >
               OpenStreetMap
             </a>{" "}
@@ -1649,7 +1670,7 @@ function Footer() {
               href="https://carto.com/attributions"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[#A8B0BA] transition-colors underline-offset-2 hover:underline"
+              className="hover:text-stone-600 transition-colors underline-offset-2 hover:underline"
             >
               CARTO
             </a>
@@ -1676,10 +1697,10 @@ function Bullet({ title, body }: { title: string; body: string }) {
         aria-hidden="true"
       />
       <div>
-        <p className="font-semibold text-[#F5EFE7] group-hover:text-[#FFB07A] transition-colors">
+        <p className="font-semibold text-stone-900 group-hover:text-[#C25A2E] transition-colors">
           {title}
         </p>
-        <p className="mt-1 text-sm text-[#A8B0BA] leading-relaxed">{body}</p>
+        <p className="mt-1 text-sm text-stone-600 leading-relaxed">{body}</p>
       </div>
     </div>
   );
