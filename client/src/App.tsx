@@ -14,6 +14,7 @@ import DashboardPage from "./pages/jobseeker/DashboardPage";
 import JobDetailPage from "./pages/jobs/JobDetailPage";
 import NotesPage from "./pages/notes/NotesPage";
 import MarketingLanding from "./pages/MarketingLanding";
+import AuditorPage from "./pages/AuditorPage";
 import NotFound from "./pages/not-found";
 
 // /facility-portal is the only canonical operations route. All `/portal/*`
@@ -62,6 +63,10 @@ function AppRouter() {
         {/* Job seeker auth + dashboard routes */}
         <Route path="/jobseeker/login" component={LoginPage} />
         <Route path="/jobseeker/dashboard" component={DashboardPage} />
+        {/* Wave 3 Phase 3.2 — Read-only auditor shell. Token-validated via
+            /api/ops/auditor/me; expired/revoked tokens render a friendly
+            placeholder. Hash-routed so the URL is `/#/auditor/{token}`. */}
+        <Route path="/auditor/:token" component={AuditorPage} />
         {/* Legacy /portal/* deep-links → /facility-portal so saved bookmarks
             and shared links keep working. */}
         <Route path="/portal" component={RedirectToFacilityPortal} />

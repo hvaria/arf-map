@@ -69,6 +69,11 @@ import { ComplaintsContent } from "@/components/operations/ComplaintsContent";
 import { InspectionsContent } from "@/components/operations/InspectionsContent";
 import { AuditTrailViewer } from "@/components/operations/AuditTrailViewer";
 import { DailyTriageList } from "@/components/operations/DailyTriageList";
+import { ShareWithInspectorDialog } from "@/components/operations/ShareWithInspectorDialog";
+import { PreAuditPullDialog } from "@/components/operations/PreAuditPullDialog";
+import { useIsWritable } from "@/context/AuditorContext";
+import { Button } from "@/components/ui/button";
+import { ExternalLink, Download } from "lucide-react";
 import type { TriageItem, TriageSection } from "@shared/triage";
 
 interface Props {
@@ -163,6 +168,7 @@ function OverviewTab({
   onOpenSettings: () => void;
   onSwitchTab: (tab: string) => void;
 }) {
+  const isWritable = useIsWritable();
   const complaintsQ = useQuery<{ success: boolean; data: ComplaintLite[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/complaints`],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -516,14 +522,16 @@ function OverviewTab({
         </div>
       </div>
 
-      <div className="text-right">
-        <button
-          onClick={onOpenSettings}
-          className="text-sm font-medium text-primary hover:underline"
-        >
-          Open Reg Settings ⚙
-        </button>
-      </div>
+      {isWritable && (
+        <div className="text-right">
+          <button
+            onClick={onOpenSettings}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Open Reg Settings ⚙
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -532,6 +540,12 @@ function OverviewTab({
 
 export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
   const [tab, setTab] = useState<string>("overview");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [pullOpen, setPullOpen] = useState(false);
+  // Wave 3 Phase 3.2 — the header actions are admin-only. Inside the
+  // /#/auditor/:token shell the AuditorProvider sets writable=false and
+  // the buttons disappear.
+  const isWritable = useIsWritable();
 
   return (
     <div className="space-y-4">
@@ -545,11 +559,51 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
         </button>
       )}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
           Audit Readiness
         </h1>
+        {isWritable && (
+          <div
+            className="flex items-center gap-2"
+            data-testid="audit-readiness-header-actions"
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShareOpen(true)}
+              data-testid="audit-readiness-share-trigger"
+            >
+              <ExternalLink className="h-4 w-4 mr-1.5" />
+              Share with inspector
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setPullOpen(true)}
+              data-testid="audit-readiness-pull-trigger"
+            >
+              <Download className="h-4 w-4 mr-1.5" />
+              Pre-audit pull
+            </Button>
+          </div>
+        )}
       </div>
+
+      {isWritable && (
+        <>
+          <ShareWithInspectorDialog
+            open={shareOpen}
+            onOpenChange={setShareOpen}
+            facilityNumber={facilityNumber}
+          />
+          <PreAuditPullDialog
+            open={pullOpen}
+            onOpenChange={setPullOpen}
+            facilityNumber={facilityNumber}
+          />
+        </>
+      )}
 
       <div className="portal-tabs">
         <Tabs value={tab} onValueChange={setTab}>
@@ -581,13 +635,15 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
               <History className="h-3.5 w-3.5 mr-1" />
               Audit trail
             </TabsTrigger>
-            <TabsTrigger
-              value="settings"
-              className="flex-1"
-              aria-label="Reg Settings"
-            >
-              <Settings className="h-3.5 w-3.5" />
-            </TabsTrigger>
+            {isWritable && (
+              <TabsTrigger
+                value="settings"
+                className="flex-1"
+                aria-label="Reg Settings"
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="overview" className="mt-4">
@@ -622,9 +678,11 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
             <AuditTrailViewer facilityNumber={facilityNumber} />
           </TabsContent>
 
-          <TabsContent value="settings" className="mt-4">
-            <RegSettingsContent facilityNumber={facilityNumber} />
-          </TabsContent>
+          {isWritable && (
+            <TabsContent value="settings" className="mt-4">
+              <RegSettingsContent facilityNumber={facilityNumber} />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </div>

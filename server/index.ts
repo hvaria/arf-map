@@ -13,6 +13,7 @@ import { pool } from "./db/index";
 import connectPgSimple from "connect-pg-simple";
 import { getCachedFacilities, autoSeedIfEmpty } from "./services/facilitiesService";
 import { opsRouter } from "./ops/opsRouter";
+import { auditorRouter } from "./ops/auditorRouter";
 import { bootstrapOpsSchema } from "./ops/opsStorage";
 import { bootstrapNotesSchema } from "./ops/notesStorage";
 import { bootstrapTrackersSchema } from "./trackers/trackerStorage";
@@ -221,6 +222,14 @@ app.use((req, res, next) => {
   // The Tracker Module is mounted UNDER opsRouter (at /trackers) so it
   // inherits opsRouter's requireFacilityAuth instead of running auth twice.
   // Effective URL: /api/ops/trackers/... — unchanged for clients.
+  //
+  // Wave 3 Phase 3.2 — auditor share-link router. Mounted at
+  // /api/ops/auditor BEFORE the facility-Passport opsRouter so the
+  // prefix matches first; opsRouter's requireFacilityAuth never sees
+  // auditor traffic. Auth on the auditor router is requireAuditorToken
+  // (a parallel auth path), with blockAuditorMutations enforcing
+  // read-only at the middleware layer.
+  app.use("/api/ops/auditor", auditorRouter);
   app.use("/api/ops", opsRouter);
 
   await registerRoutes(httpServer, app);

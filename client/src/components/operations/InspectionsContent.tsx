@@ -62,6 +62,7 @@ import {
   ChevronRight,
   Trash2,
 } from "lucide-react";
+import { useIsWritable } from "@/context/AuditorContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -763,6 +764,8 @@ function InspectionDetail({
 export function InspectionsContent({ facilityNumber }: { facilityNumber: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
+  // Wave 3 Phase 3.2 — admin sees write actions; auditor session does not.
+  const isWritable = useIsWritable();
 
   const { data, isLoading, error } = useQuery<{ success: boolean; data: InspectionRow[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/inspections`],
@@ -802,15 +805,17 @@ export function InspectionsContent({ facilityNumber }: { facilityNumber: string 
         <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
           Inspections
         </h1>
-        <Button
-          size="sm"
-          variant="gradient"
-          onClick={() => setAddOpen(true)}
-          data-testid="inspection-add-trigger"
-        >
-          <Plus className="h-4 w-4 mr-1.5" />
-          Log inspection
-        </Button>
+        {isWritable && (
+          <Button
+            size="sm"
+            variant="gradient"
+            onClick={() => setAddOpen(true)}
+            data-testid="inspection-add-trigger"
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            Log inspection
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-3">
@@ -874,10 +879,12 @@ export function InspectionsContent({ facilityNumber }: { facilityNumber: string 
           <p className="text-sm text-muted-foreground mb-3">
             No inspections logged. Log past visits to build a closed-loop history.
           </p>
-          <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Log inspection
-          </Button>
+          {isWritable && (
+            <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Log inspection
+            </Button>
+          )}
         </div>
       ) : (
         <>

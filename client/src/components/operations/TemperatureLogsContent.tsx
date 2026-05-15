@@ -60,6 +60,7 @@ import {
   AlertTriangle,
   Clock,
 } from "lucide-react";
+import { useIsWritable } from "@/context/AuditorContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -676,6 +677,8 @@ export function TemperatureLogsContent({ facilityNumber }: { facilityNumber: str
   const [addFixtureOpen, setAddFixtureOpen] = useState(false);
   const [resolveTarget, setResolveTarget] = useState<TempLog | null>(null);
   const [initialFixtureId, setInitialFixtureId] = useState<number | undefined>();
+  // Wave 3 Phase 3.2 — admin sees write actions; auditor session does not.
+  const isWritable = useIsWritable();
 
   const fixturesQuery = useQuery<{ success: boolean; data: TempFixture[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/temp-fixtures`],
@@ -734,18 +737,20 @@ export function TemperatureLogsContent({ facilityNumber }: { facilityNumber: str
         <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
           Temperature Logs
         </h1>
-        <Button
-          size="sm"
-          variant="gradient"
-          onClick={() => {
-            setInitialFixtureId(undefined);
-            setRecordOpen(true);
-          }}
-          disabled={fixtures.length === 0}
-        >
-          <Plus className="h-4 w-4 mr-1.5" />
-          Record reading
-        </Button>
+        {isWritable && (
+          <Button
+            size="sm"
+            variant="gradient"
+            onClick={() => {
+              setInitialFixtureId(undefined);
+              setRecordOpen(true);
+            }}
+            disabled={fixtures.length === 0}
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            Record reading
+          </Button>
+        )}
       </div>
 
       {/* Summary tiles */}
@@ -823,10 +828,12 @@ export function TemperatureLogsContent({ facilityNumber }: { facilityNumber: str
           <p className="text-sm text-muted-foreground mb-3">
             Add the first fixture you log daily — typically Fridge, Freezer, and Hot Water.
           </p>
-          <Button size="sm" variant="gradient" onClick={() => setAddFixtureOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Add fixture
-          </Button>
+          {isWritable && (
+            <Button size="sm" variant="gradient" onClick={() => setAddFixtureOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Add fixture
+            </Button>
+          )}
         </div>
       ) : (
         <>
@@ -898,18 +905,20 @@ export function TemperatureLogsContent({ facilityNumber }: { facilityNumber: str
                           Missing today
                         </span>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setInitialFixtureId(fixture.id);
-                          setRecordOpen(true);
-                        }}
-                        data-testid={`temp-record-trigger-${fixture.id}`}
-                      >
-                        Record
-                      </Button>
-                      {oor && latest && (
+                      {isWritable && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setInitialFixtureId(fixture.id);
+                            setRecordOpen(true);
+                          }}
+                          data-testid={`temp-record-trigger-${fixture.id}`}
+                        >
+                          Record
+                        </Button>
+                      )}
+                      {isWritable && oor && latest && (
                         <Button
                           size="sm"
                           variant="destructive"
@@ -926,15 +935,17 @@ export function TemperatureLogsContent({ facilityNumber }: { facilityNumber: str
             })}
           </ul>
           <div className="pt-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setAddFixtureOpen(true)}
-              data-testid="temp-add-fixture"
-            >
-              <Plus className="h-4 w-4 mr-1.5" />
-              Add fixture
-            </Button>
+            {isWritable && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddFixtureOpen(true)}
+                data-testid="temp-add-fixture"
+              >
+                <Plus className="h-4 w-4 mr-1.5" />
+                Add fixture
+              </Button>
+            )}
           </div>
         </>
       )}

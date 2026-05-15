@@ -66,6 +66,12 @@ export const OPS_RESOURCES = {
   // write paths via a transparent shim in `opsRouter.ts`. Admin gets full
   // CRUD; auditor is read-only (consistent with W3/W4 patterns).
   OBLIGATION: "ops_obligation",
+  // Wave 3 Phase 3.2 — share-link admin operations. Auditor role does
+  // NOT appear in the matrix below for these resources: auditor traffic
+  // never uses the facility-Passport ROLE_PERMISSIONS path, it has its
+  // own parallel auth (requireAuditorToken) on a separate router.
+  SHARE_LINK: "ops_share_link",
+  PREAUDIT_PULL: "ops_preaudit_pull",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -144,6 +150,22 @@ const ADMIN_ALL: Permission[] = [
   {
     resource: OPS_RESOURCES.OBLIGATION,
     actions: ["read", "create", "update", "delete"],
+  },
+  // Wave 3 Phase 3.2 — share-link admin operations. Mint, list, revoke.
+  // No `delete` — revocation is the terminal action and is gated by
+  // `update`. The auditor session that consumes the minted token is a
+  // separate auth path (requireAuditorToken) and is NOT modeled in this
+  // matrix; the row is omitted from AUDITOR_READ_ONLY below by design.
+  {
+    resource: OPS_RESOURCES.SHARE_LINK,
+    actions: ["read", "create", "update"],
+  },
+  // Wave 3 Phase 3.2 — W2 pre-audit pull. `create` mints the bundle (and
+  // optionally a share-link). `read` lists past pulls for the admin
+  // history view.
+  {
+    resource: OPS_RESOURCES.PREAUDIT_PULL,
+    actions: ["read", "create"],
   },
 ];
 

@@ -51,6 +51,7 @@ import {
 } from "@/components/operations/AttachEvidence";
 import { ComplaintDetail } from "@/components/operations/ComplaintDetail";
 import { Plus, MessageSquare, ChevronRight } from "lucide-react";
+import { useIsWritable } from "@/context/AuditorContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -381,6 +382,8 @@ function LogComplaintDialog({
 export function ComplaintsContent({ facilityNumber }: { facilityNumber: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
+  // Wave 3 Phase 3.2 — admin sees write actions; auditor session does not.
+  const isWritable = useIsWritable();
 
   const { data, isLoading, error } = useQuery<{ success: boolean; data: ComplaintRow[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/complaints`],
@@ -424,10 +427,12 @@ export function ComplaintsContent({ facilityNumber }: { facilityNumber: string }
         <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
           Complaints
         </h1>
-        <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)} data-testid="complaint-add-trigger">
-          <Plus className="h-4 w-4 mr-1.5" />
-          Log complaint
-        </Button>
+        {isWritable && (
+          <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)} data-testid="complaint-add-trigger">
+            <Plus className="h-4 w-4 mr-1.5" />
+            Log complaint
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-3">
@@ -466,10 +471,12 @@ export function ComplaintsContent({ facilityNumber }: { facilityNumber: string }
           <p className="text-sm text-muted-foreground mb-3">
             No complaints logged. Log walk-up concerns here too.
           </p>
-          <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Log complaint
-          </Button>
+          {isWritable && (
+            <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Log complaint
+            </Button>
+          )}
         </div>
       ) : (
         <>

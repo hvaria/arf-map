@@ -55,6 +55,7 @@ import {
   type AttachEvidenceHandle,
 } from "@/components/operations/AttachEvidence";
 import { Plus, Siren, Info } from "lucide-react";
+import { useIsWritable } from "@/context/AuditorContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -415,6 +416,8 @@ function LogDrillDialog({
 
 export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
   const [logOpen, setLogOpen] = useState(false);
+  // Wave 3 Phase 3.2 — admin sees write actions; auditor session does not.
+  const isWritable = useIsWritable();
 
   const { data, isLoading, error } = useQuery<{ success: boolean; data: DrillLog[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/drills`],
@@ -459,10 +462,12 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
         <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
           Drills
         </h1>
-        <Button size="sm" variant="gradient" onClick={() => setLogOpen(true)} data-testid="drill-log-trigger">
-          <Plus className="h-4 w-4 mr-1.5" />
-          Log drill
-        </Button>
+        {isWritable && (
+          <Button size="sm" variant="gradient" onClick={() => setLogOpen(true)} data-testid="drill-log-trigger">
+            <Plus className="h-4 w-4 mr-1.5" />
+            Log drill
+          </Button>
+        )}
       </div>
 
       {/* Summary tiles */}
@@ -521,10 +526,12 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
           <p className="text-sm text-muted-foreground mb-3">
             No drills logged yet. Most facilities log fire drills monthly.
           </p>
-          <Button size="sm" variant="gradient" onClick={() => setLogOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Log your first drill
-          </Button>
+          {isWritable && (
+            <Button size="sm" variant="gradient" onClick={() => setLogOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Log your first drill
+            </Button>
+          )}
         </div>
       ) : (
         <>

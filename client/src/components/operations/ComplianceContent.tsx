@@ -72,6 +72,7 @@ import {
   Link2,
   MoreHorizontal,
 } from "lucide-react";
+import { useIsWritable } from "@/context/AuditorContext";
 import {
   OBLIGATION_TYPES,
   OBLIGATION_TYPE_LABELS,
@@ -511,6 +512,8 @@ export function ComplianceContent({
   const qc = useQueryClient();
   const sessionQ = useSession();
   const sessionUser = sessionQ.data?.username ?? "system";
+  // Wave 3 Phase 3.2 — admin sees write actions; auditor session does not.
+  const isWritable = useIsWritable();
 
   const queryKey = [`/api/ops/facilities/${facilityNumber}/obligations`];
 
@@ -652,10 +655,12 @@ export function ComplianceContent({
         <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
           Compliance
         </h1>
-        <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
-          <Plus className="h-4 w-4 mr-1.5" />
-          Add Item
-        </Button>
+        {isWritable && (
+          <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4 mr-1.5" />
+            Add Item
+          </Button>
+        )}
       </div>
 
       {/* Summary bar — preserved tone palette from legacy ComplianceContent. */}

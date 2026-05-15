@@ -57,6 +57,7 @@ import {
   RotateCcw,
   Lock,
 } from "lucide-react";
+import { useIsWritable } from "@/context/AuditorContext";
 
 interface Resident {
   id: number;
@@ -1212,6 +1213,8 @@ export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: s
   const [reportOpen, setReportOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  // Wave 3 Phase 3.2 — admin sees write actions; auditor session does not.
+  const isWritable = useIsWritable();
 
   const { data: incidentsEnvelope, isLoading, error } = useQuery<{ success: boolean; data: Incident[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`],
@@ -1245,10 +1248,12 @@ export function IncidentsContent({ facilityNumber, onBack }: { facilityNumber: s
 
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Incidents</h1>
-        <Button size="sm" variant="gradient" onClick={() => setReportOpen(true)}>
-          <Plus className="h-4 w-4 mr-1.5" />
-          Report Incident
-        </Button>
+        {isWritable && (
+          <Button size="sm" variant="gradient" onClick={() => setReportOpen(true)}>
+            <Plus className="h-4 w-4 mr-1.5" />
+            Report Incident
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">

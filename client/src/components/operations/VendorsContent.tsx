@@ -54,6 +54,7 @@ import {
   type AttachEvidenceHandle,
 } from "@/components/operations/AttachEvidence";
 import { Plus, Building2 } from "lucide-react";
+import { useIsWritable } from "@/context/AuditorContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -320,6 +321,8 @@ export function VendorsContent({ facilityNumber }: { facilityNumber: string }) {
   const [limit, setLimit] = useState(PAGE_LIMIT);
   const { toast } = useToast();
   const qc = useQueryClient();
+  // Wave 3 Phase 3.2 — admin sees write actions; auditor session does not.
+  const isWritable = useIsWritable();
 
   // Compose query URL — vendors endpoint accepts expiringWithinDays + paging.
   const queryUrl = useMemo(() => {
@@ -397,10 +400,12 @@ export function VendorsContent({ facilityNumber }: { facilityNumber: string }) {
         <h1 className="text-xl font-semibold" style={{ color: "#1E1B4B" }}>
           Vendors
         </h1>
-        <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)} data-testid="vendor-add-trigger">
-          <Plus className="h-4 w-4 mr-1.5" />
-          Add vendor
-        </Button>
+        {isWritable && (
+          <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)} data-testid="vendor-add-trigger">
+            <Plus className="h-4 w-4 mr-1.5" />
+            Add vendor
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-3">
@@ -457,10 +462,12 @@ export function VendorsContent({ facilityNumber }: { facilityNumber: string }) {
           <p className="text-sm text-muted-foreground mb-3">
             No vendors yet. Start with your pharmacy and food vendor.
           </p>
-          <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Add vendor
-          </Button>
+          {isWritable && (
+            <Button size="sm" variant="gradient" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Add vendor
+            </Button>
+          )}
         </div>
       ) : (
         <>

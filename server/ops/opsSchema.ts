@@ -756,6 +756,61 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_notif_facility ON ops_notification_log(facility_number, scheduled_for);
   CREATE INDEX IF NOT EXISTS idx_ops_notif_status   ON ops_notification_log(delivery_status, scheduled_for);
   CREATE INDEX IF NOT EXISTS idx_ops_notif_kind     ON ops_notification_log(kind, scheduled_for);
+
+  -- ── Wave 3 Phase 3.2 — Auditor share-link + W2 pre-audit pull ──────────────
+  -- Time-bounded read-only access tokens. An admin mints a token, hands the
+  -- /#/auditor/{token} URL to an inspector, and the inspector gets a stripped
+  -- read-only shell over the facility's audit-readiness surfaces. Per Phase 1
+  -- §9 pain "state called and I had 10 minutes." All mutation routes refuse
+  -- a share-link session. Tokens are random 32-char URL-safe; uniqueness is
+  -- enforced via the separate UNIQUE INDEX below rather than an inline
+  -- UNIQUE column constraint (CREATE TABLE IF NOT EXISTS won't add the
+  -- constraint to a pre-existing table on bootstrap re-run, so we keep
+  -- additive-only behavior). idx_ops_share_active is partial on
+  -- revoked_at IS NULL — the only hot lookup is "active, not-yet-expired."
+  CREATE TABLE IF NOT EXISTS ops_share_links (
+    id              BIGSERIAL PRIMARY KEY,
+    facility_number TEXT NOT NULL,
+    token           TEXT NOT NULL,
+    audience        TEXT NOT NULL,
+    audience_label  TEXT,
+    scope           TEXT NOT NULL DEFAULT 'audit_readiness',
+    expires_at      BIGINT NOT NULL,
+    visit_count     INTEGER NOT NULL DEFAULT 0,
+    last_visit_at   BIGINT,
+    revoked_at      BIGINT,
+    revoked_by      TEXT,
+    created_by      TEXT NOT NULL,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_ops_share_token    ON ops_share_links(token);
+  CREATE INDEX        IF NOT EXISTS idx_ops_share_facility  ON ops_share_links(facility_number, created_at);
+  CREATE INDEX        IF NOT EXISTS idx_ops_share_active    ON ops_share_links(expires_at) WHERE revoked_at IS NULL;
+
+  -- W2 pre-audit pulls. Audit history of who pulled what, for which audience,
+  -- over which window, and how it was delivered. sections_json and
+  -- totals_json are JSON-as-TEXT (same convention as triage_snapshot above).
+  -- share_link_id is intentionally NOT a FOREIGN KEY (matches existing
+  -- application-level integrity convention); it correlates to
+  -- ops_share_links.id only when delivery_method='share_link'.
+  CREATE TABLE IF NOT EXISTS ops_preaudit_pulls (
+    id                BIGSERIAL PRIMARY KEY,
+    facility_number   TEXT NOT NULL,
+    audience          TEXT NOT NULL,
+    audience_label    TEXT,
+    window_start_at   BIGINT NOT NULL,
+    window_end_at     BIGINT NOT NULL,
+    sections_json     TEXT,
+    totals_json       TEXT,
+    generated_by      TEXT NOT NULL,
+    generated_at      BIGINT NOT NULL,
+    delivery_method   TEXT NOT NULL,
+    share_link_id     BIGINT,
+    notes             TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_pull_facility ON ops_preaudit_pulls(facility_number, generated_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_pull_share    ON ops_preaudit_pulls(share_link_id);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1463,6 +1518,51 @@ export const opsNotificationLog = pgTable("ops_notification_log", {
   createdAt:        ts("created_at").notNull(),
 });
 
+// ── Wave 3 Phase 3.2: Auditor share-links + W2 pre-audit pulls ────────────
+// Share-links are read-only, time-bounded, audience-tagged tokens. The
+// route layer treats a share-link session as a hard read-only role — every
+// mutation handler refuses these sessions. visit_count + last_visit_at are
+// bumped on each accepted GET so admins can see "this token was opened 3
+// times" before issuing a new one. token uniqueness is enforced via the
+// DDL UNIQUE INDEX (see OPS_PG_SCHEMA_SQL); Drizzle's column-level .unique()
+// would have written DDL that conflicts with our additive bootstrap.
+// shareLinkId on opsPreauditPulls is NOT modeled as a FK at the Drizzle
+// level either — matches existing application-level integrity convention
+// across the ops schema.
+
+export const opsShareLinks = pgTable("ops_share_links", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  token:          text("token").notNull(),
+  audience:       text("audience").notNull(),
+  audienceLabel:  text("audience_label"),
+  scope:          text("scope").notNull().default("audit_readiness"),
+  expiresAt:      ts("expires_at").notNull(),
+  visitCount:     integer("visit_count").notNull().default(0),
+  lastVisitAt:    ts("last_visit_at"),
+  revokedAt:      ts("revoked_at"),
+  revokedBy:      text("revoked_by"),
+  createdBy:      text("created_by").notNull(),
+  createdAt:      ts("created_at").notNull(),
+  updatedAt:      ts("updated_at").notNull(),
+});
+
+export const opsPreauditPulls = pgTable("ops_preaudit_pulls", {
+  id:              serial("id").primaryKey(),
+  facilityNumber:  text("facility_number").notNull(),
+  audience:        text("audience").notNull(),
+  audienceLabel:   text("audience_label"),
+  windowStartAt:   ts("window_start_at").notNull(),
+  windowEndAt:     ts("window_end_at").notNull(),
+  sectionsJson:    text("sections_json"),
+  totalsJson:      text("totals_json"),
+  generatedBy:     text("generated_by").notNull(),
+  generatedAt:     ts("generated_at").notNull(),
+  deliveryMethod:  text("delivery_method").notNull(),
+  shareLinkId:     bigint("share_link_id", { mode: "number" }),
+  notes:           text("notes"),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1562,3 +1662,9 @@ export type InsertOpsObligation         = typeof opsObligations.$inferInsert;
 
 export type OpsNotificationLogEntry       = typeof opsNotificationLog.$inferSelect;
 export type InsertOpsNotificationLogEntry = typeof opsNotificationLog.$inferInsert;
+
+export type OpsShareLink            = typeof opsShareLinks.$inferSelect;
+export type InsertOpsShareLink      = typeof opsShareLinks.$inferInsert;
+
+export type OpsPreauditPull         = typeof opsPreauditPulls.$inferSelect;
+export type InsertOpsPreauditPull   = typeof opsPreauditPulls.$inferInsert;

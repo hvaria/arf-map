@@ -45,6 +45,24 @@ import { listAuditForFacility } from "./auditStorage";
 import * as obligations from "./obligationsStorage";
 import { aggregateTriage } from "./triageAggregator";
 import {
+  createShareLink,
+  listShareLinks,
+  revokeShareLink,
+  ShareLinkDurationError,
+} from "./shareLinksStorage";
+import {
+  generatePreauditBundle,
+  listPreauditPulls,
+  recordPreauditPull,
+} from "./preauditPullsStorage";
+import {
+  AUDITOR_AUDIENCES,
+  SHARE_LINK_SCOPES,
+  PREAUDIT_SECTIONS,
+  DEFAULT_SHARE_LINK_DURATION_DAYS,
+  MAX_SHARE_LINK_DURATION_DAYS,
+} from "@shared/auditor";
+import {
   listNotifications,
   type NotificationKind,
   type DeliveryStatus,
@@ -4858,6 +4876,295 @@ opsRouter.post(
       return res.json({ success: true, data: result });
     } catch (e) {
       console.error("[ops] daily-summary test-send failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 3 Phase 3.2 — Auditor share-links + W2 pre-audit pulls (admin side)
+//
+// The AUDITOR session that *consumes* a minted token uses a separate router
+// mounted at /api/ops/auditor with `requireAuditorToken` instead of the
+// facility-Passport guard. See server/ops/auditorRouter.ts. The endpoints
+// below are the *admin* side: mint a token, list them, revoke; mint a
+// pre-audit bundle, list past pulls.
+//
+// Permission mapping:
+//   POST /facilities/:fn/share-links             — SHARE_LINK:create
+//   GET  /facilities/:fn/share-links             — SHARE_LINK:read
+//   POST /share-links/:id/revoke                 — SHARE_LINK:update
+//   POST /facilities/:fn/preaudit-pull           — PREAUDIT_PULL:create
+//   GET  /facilities/:fn/preaudit-pulls          — PREAUDIT_PULL:read
+// ─────────────────────────────────────────────────────────────────────────────
+
+const shareLinkCreateSchema = z
+  .object({
+    audience: z.enum(AUDITOR_AUDIENCES),
+    audienceLabel: z.string().max(200).optional(),
+    scope: z.enum(SHARE_LINK_SCOPES).optional(),
+    durationDays: z
+      .number()
+      .positive()
+      .max(MAX_SHARE_LINK_DURATION_DAYS)
+      .optional(),
+  })
+  .strict();
+
+const shareLinkListQuerySchema = z
+  .object({
+    includeRevoked: z.coerce.boolean().optional(),
+    includeExpired: z.coerce.boolean().optional(),
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  })
+  .strict();
+
+const preauditPullSchema = z
+  .object({
+    audience: z.enum(AUDITOR_AUDIENCES),
+    audienceLabel: z.string().max(200).optional(),
+    windowStartAt: z.number().int().nonnegative(),
+    windowEndAt: z.number().int().positive(),
+    sections: z.array(z.enum(PREAUDIT_SECTIONS)).min(1).max(PREAUDIT_SECTIONS.length),
+    deliveryMethod: z.enum(["download", "share_link"]),
+    shareDurationDays: z
+      .number()
+      .positive()
+      .max(MAX_SHARE_LINK_DURATION_DAYS)
+      .optional(),
+  })
+  .strict()
+  .refine((v) => v.windowStartAt < v.windowEndAt, {
+    message: "windowStartAt must be < windowEndAt",
+  });
+
+const preauditPullListQuerySchema = z
+  .object({
+    sinceMs: z.coerce.number().int().nonnegative().optional(),
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  })
+  .strict();
+
+// POST /facilities/:facilityNumber/share-links
+opsRouter.post(
+  "/facilities/:facilityNumber/share-links",
+  requireOpsPermission(OPS_RESOURCES.SHARE_LINK, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = shareLinkCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await createShareLink(
+        {
+          facilityNumber,
+          audience: parsed.data.audience,
+          audienceLabel: parsed.data.audienceLabel,
+          scope: parsed.data.scope,
+          durationDays:
+            parsed.data.durationDays ?? DEFAULT_SHARE_LINK_DURATION_DAYS,
+          createdBy: actor.id,
+        },
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (e instanceof ShareLinkDurationError) {
+        return res.status(400).json({ success: false, error: e.message });
+      }
+      console.error("[ops] share-link create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/share-links
+opsRouter.get(
+  "/facilities/:facilityNumber/share-links",
+  requireOpsPermission(OPS_RESOURCES.SHARE_LINK, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = shareLinkListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await listShareLinks(facilityNumber, {
+        includeRevoked: parsed.data.includeRevoked,
+        includeExpired: parsed.data.includeExpired,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] share-link list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /share-links/:id/revoke
+// The facility scope is enforced inside revokeShareLink via the tenant
+// WHERE — no `:facilityNumber` URL param needed here.
+opsRouter.post(
+  "/share-links/:id/revoke",
+  requireOpsPermission(OPS_RESOURCES.SHARE_LINK, "update"),
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      if (!facilityNumber) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Not authenticated" });
+      }
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid id" });
+      }
+      const actor = getActor(req);
+      const ok = await revokeShareLink(id, facilityNumber, actor.id, actor);
+      if (!ok) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Share link not found" });
+      }
+      return res.json({ success: true });
+    } catch (e) {
+      console.error("[ops] share-link revoke failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /facilities/:facilityNumber/preaudit-pull
+//
+// Body: PreauditPullSpec. Returns PreauditPullResult. When delivery is
+// 'download', the bundle is returned inline. When 'share_link', a share
+// link is minted alongside and the bundle is NOT returned inline (the
+// auditor pulls it back via /api/ops/auditor/preaudit-pull/:id).
+opsRouter.post(
+  "/facilities/:facilityNumber/preaudit-pull",
+  requireOpsPermission(OPS_RESOURCES.PREAUDIT_PULL, "create"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = preauditPullSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const spec = parsed.data;
+
+      const { bundle, totals } = await generatePreauditBundle(
+        facilityNumber,
+        spec,
+      );
+
+      let shareLinkId: number | undefined;
+      let shareToken: string | undefined;
+      if (spec.deliveryMethod === "share_link") {
+        try {
+          const link = await createShareLink(
+            {
+              facilityNumber,
+              audience: spec.audience,
+              audienceLabel: spec.audienceLabel,
+              durationDays:
+                spec.shareDurationDays ?? DEFAULT_SHARE_LINK_DURATION_DAYS,
+              createdBy: actor.id,
+            },
+            actor,
+          );
+          shareLinkId = link.id;
+          shareToken = link.token;
+        } catch (e) {
+          if (e instanceof ShareLinkDurationError) {
+            return res
+              .status(400)
+              .json({ success: false, error: e.message });
+          }
+          throw e;
+        }
+      }
+
+      const pull = await recordPreauditPull(
+        facilityNumber,
+        spec,
+        totals,
+        {
+          method: spec.deliveryMethod,
+          shareLinkId,
+        },
+        actor.id,
+        actor,
+      );
+
+      const result = {
+        preauditPullId: pull.id,
+        shareLinkId,
+        shareToken,
+        generatedAt: pull.generatedAt,
+        windowStartAt: pull.windowStartAt,
+        windowEndAt: pull.windowEndAt,
+        totals,
+        // Bundle only inline when delivery=download. With share_link the
+        // auditor pulls the bundle via the auditor router using the
+        // minted token (the bundle is NOT persisted server-side; the
+        // section-on-demand endpoint regenerates it from the source
+        // rows so it stays current).
+        bundle: spec.deliveryMethod === "download" ? bundle : undefined,
+      };
+      return res.status(201).json({ success: true, data: result });
+    } catch (e) {
+      console.error("[ops] preaudit-pull create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /facilities/:facilityNumber/preaudit-pulls
+opsRouter.get(
+  "/facilities/:facilityNumber/preaudit-pulls",
+  requireOpsPermission(OPS_RESOURCES.PREAUDIT_PULL, "read"),
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = preauditPullListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await listPreauditPulls(facilityNumber, {
+        sinceMs: parsed.data.sinceMs,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] preaudit-pull list failed", e);
       return res.status(500).json({ success: false, error: "Internal error" });
     }
   },
