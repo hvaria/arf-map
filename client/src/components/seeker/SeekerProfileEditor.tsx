@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { CredentialsSection } from "@/components/CredentialsSection";
+import WorkExperienceSection from "@/components/seeker/WorkExperienceSection";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -356,6 +357,11 @@ export function SeekerProfileEditor({ profile, onSaved }: SeekerProfileEditorPro
           inside the editor (not the read-only card) so the seeker
           edits everything in one place. */}
       <CredentialsSection />
+
+      {/* Work experience — LinkedIn-style employment history. Managed via
+          /api/jobseeker/work-experience. Read-only timeline appears on
+          the profile card; full editor lives here. */}
+      <WorkExperienceSection />
 
       {/* Job types */}
       <div>

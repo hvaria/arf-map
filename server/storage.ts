@@ -19,6 +19,9 @@ import {
   type ApplicantInterest,
   type JobSeekerCredential,
   type CredentialInput,
+  jobSeekerWorkExperience,
+  type JobSeekerWorkExperience,
+  type WorkExperienceInput,
 } from "@shared/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { db, pool } from "./db/index";
@@ -92,6 +95,11 @@ export interface IStorage {
   createJobSeekerCredential(accountId: number, input: CredentialInput): Promise<JobSeekerCredential>;
   updateJobSeekerCredential(id: number, accountId: number, input: CredentialInput): Promise<JobSeekerCredential | undefined>;
   deleteJobSeekerCredential(id: number, accountId: number): Promise<boolean>;
+
+  listJobSeekerWorkExperience(accountId: number): Promise<JobSeekerWorkExperience[]>;
+  createJobSeekerWorkExperience(accountId: number, input: WorkExperienceInput): Promise<JobSeekerWorkExperience>;
+  updateJobSeekerWorkExperience(id: number, accountId: number, input: WorkExperienceInput): Promise<JobSeekerWorkExperience | undefined>;
+  deleteJobSeekerWorkExperience(id: number, accountId: number): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -416,6 +424,96 @@ export class DatabaseStorage implements IStorage {
     if (!existingRows[0]) return false;
     await db.delete(jobSeekerCredentials).where(eq(jobSeekerCredentials.id, id));
     return true;
+  }
+
+  // ── Job seeker work experience ─────────────────────────────────────────────
+  // Reverse-chronological ordering: current roles (end_date IS NULL) first,
+  // then by end_date DESC, then by start_date DESC. Drizzle doesn't expose
+  // a clean "boolean DESC + NULLS LAST" combo so we drop to pool.query with
+  // snake→camel column aliasing, matching the JOIN helpers below.
+  async listJobSeekerWorkExperience(accountId: number): Promise<JobSeekerWorkExperience[]> {
+    const result = await pool.query<JobSeekerWorkExperience>(
+      `SELECT
+        id, account_id AS "accountId", title, company,
+        facility_number AS "facilityNumber", location,
+        employment_type AS "employmentType",
+        start_date AS "startDate", end_date AS "endDate",
+        description,
+        created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM job_seeker_work_experience
+      WHERE account_id = $1
+      ORDER BY (end_date IS NULL) DESC, end_date DESC NULLS LAST, start_date DESC`,
+      [accountId],
+    );
+    return result.rows;
+  }
+
+  async createJobSeekerWorkExperience(
+    accountId: number,
+    input: WorkExperienceInput,
+  ): Promise<JobSeekerWorkExperience> {
+    const now = Date.now();
+    const rows = await db
+      .insert(jobSeekerWorkExperience)
+      .values({
+        accountId,
+        title: input.title,
+        company: input.company,
+        facilityNumber: input.facilityNumber,
+        location: input.location,
+        employmentType: input.employmentType,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        description: input.description,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    return rows[0] as JobSeekerWorkExperience;
+  }
+
+  // Single-statement update scoped by (id, accountId). Empty returning array
+  // means the row either doesn't exist or belongs to a different seeker —
+  // either way the caller treats it as a 404.
+  async updateJobSeekerWorkExperience(
+    id: number,
+    accountId: number,
+    input: WorkExperienceInput,
+  ): Promise<JobSeekerWorkExperience | undefined> {
+    const rows = await db
+      .update(jobSeekerWorkExperience)
+      .set({
+        title: input.title,
+        company: input.company,
+        facilityNumber: input.facilityNumber,
+        location: input.location,
+        employmentType: input.employmentType,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        description: input.description,
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(
+          eq(jobSeekerWorkExperience.id, id),
+          eq(jobSeekerWorkExperience.accountId, accountId),
+        ),
+      )
+      .returning();
+    return rows[0] as JobSeekerWorkExperience | undefined;
+  }
+
+  async deleteJobSeekerWorkExperience(id: number, accountId: number): Promise<boolean> {
+    const rows = await db
+      .delete(jobSeekerWorkExperience)
+      .where(
+        and(
+          eq(jobSeekerWorkExperience.id, id),
+          eq(jobSeekerWorkExperience.accountId, accountId),
+        ),
+      )
+      .returning({ id: jobSeekerWorkExperience.id });
+    return rows.length === 1;
   }
 }
 

@@ -259,6 +259,66 @@ export const credentialInputSchema = z
   });
 export type CredentialInput = z.infer<typeof credentialInputSchema>;
 
+// ── Job seeker work experience (LinkedIn-style employment history) ──────────
+// One row per work-history entry per seeker. Month-precision dates stored as
+// ISO `YYYY-MM` text (TZ-safe, sorts correctly lexicographically). `endDate`
+// null means "Present" (currently employed there). No FK on `accountId` /
+// `facilityNumber` per existing convention. No unique constraint — a seeker
+// can legitimately have multiple stints at the same company.
+export const jobSeekerWorkExperience = pgTable("job_seeker_work_experience", {
+  id: serial("id").primaryKey(),
+  accountId: integer("account_id").notNull(),
+  title: text("title").notNull(),
+  company: text("company").notNull(),
+  facilityNumber: text("facility_number"),
+  location: text("location"),
+  employmentType: text("employment_type"),
+  startDate: text("start_date").notNull(),
+  endDate: text("end_date"),
+  description: text("description"),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+});
+export type JobSeekerWorkExperience = typeof jobSeekerWorkExperience.$inferSelect;
+export type InsertJobSeekerWorkExperience = typeof jobSeekerWorkExperience.$inferInsert;
+
+export const employmentTypeSchema = z.enum([
+  "Full-time",
+  "Part-time",
+  "Per-diem",
+  "On-call",
+  "Contract",
+  "Volunteer",
+]);
+export type EmploymentType = z.infer<typeof employmentTypeSchema>;
+
+const yearMonthRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
+const yearMonthString = z
+  .string()
+  .regex(yearMonthRegex, "Date must be in YYYY-MM format");
+
+export const workExperienceInputSchema = z
+  .object({
+    title: z.string().trim().min(1, "Title is required").max(120),
+    company: z.string().trim().min(1, "Company is required").max(120),
+    facilityNumber: z.string().trim().max(64).optional(),
+    location: z.string().trim().max(120).optional(),
+    employmentType: employmentTypeSchema.optional(),
+    startDate: yearMonthString,
+    endDate: yearMonthString.optional(),
+    description: z.string().trim().max(2000).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.endDate && val.endDate < val.startDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endDate"],
+        message: "End date must be on or after the start date",
+      });
+    }
+  });
+export type WorkExperienceInput = z.infer<typeof workExperienceInputSchema>;
+
 // ── Operations paywall subscription types (Phase 0) ──────────────────────────
 export type FacilitySubscription = typeof facilitySubscriptions.$inferSelect;
 export type NewFacilitySubscription = typeof facilitySubscriptions.$inferInsert;

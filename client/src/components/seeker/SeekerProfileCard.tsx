@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
+import WorkExperienceTimeline from "@/components/seeker/WorkExperienceTimeline";
+import { useWorkExperience } from "@/components/seeker/WorkExperienceSection";
 import type { JobSeekerProfile } from "@/components/seeker/SeekerProfileEditor";
 
 interface SeekerProfileCardProps {
@@ -36,6 +38,8 @@ interface SeekerProfileCardProps {
 export function SeekerProfileCard({ profile, email, onEdit }: SeekerProfileCardProps) {
   const { data: credentials } = useCredentials();
   const credentialList = credentials ?? [];
+  const { data: workExperience } = useWorkExperience();
+  const workExperienceList = workExperience ?? [];
 
   const displayName = profile?.firstName
     ? `${profile.firstName} ${profile.lastName ?? ""}`.trim()
@@ -136,6 +140,17 @@ export function SeekerProfileCard({ profile, email, onEdit }: SeekerProfileCardP
                   <CredentialBadge key={c.id} credential={c} />
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Work-experience timeline — reads via the same shared
+              cache the editor invalidates. The heading + body are
+              suppressed together when there are no entries (the
+              empty-state nudge lives in the editor). */}
+          {workExperienceList.length > 0 && (
+            <div className="mt-4">
+              <p className="portal-eyebrow mb-2">Work experience</p>
+              <WorkExperienceTimeline />
             </div>
           )}
 

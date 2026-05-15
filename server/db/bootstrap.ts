@@ -166,6 +166,27 @@ const MAIN_PG_SCHEMA_SQL = `
     ON job_seeker_credentials(account_id, kind, license_number)
     WHERE license_number IS NOT NULL;
 
+  -- ── Job seeker work experience (LinkedIn-style timeline) ─────────────────
+  -- One row per work-history entry. Month-precision dates stored as ISO
+  -- YYYY-MM text (TZ-safe, sorts lexicographically). NULL end_date means
+  -- the seeker is currently employed there.
+  CREATE TABLE IF NOT EXISTS job_seeker_work_experience (
+    id              SERIAL PRIMARY KEY,
+    account_id      INTEGER NOT NULL,
+    title           TEXT NOT NULL,
+    company         TEXT NOT NULL,
+    facility_number TEXT,
+    location        TEXT,
+    employment_type TEXT,
+    start_date      TEXT NOT NULL,
+    end_date        TEXT,
+    description     TEXT,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_experience_account
+    ON job_seeker_work_experience(account_id);
+
   CREATE TABLE IF NOT EXISTS enrichment_runs (
     id               SERIAL PRIMARY KEY,
     started_at       BIGINT NOT NULL,
