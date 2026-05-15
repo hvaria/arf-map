@@ -346,6 +346,11 @@ function OverviewTab({
   // route those rows into the new Postings tab. Until the shared union is
   // widened we declare the map with a string-keyed fallback so the lookup
   // stays type-safe but resilient to the in-flight contract.
+  // Wave 4 W12 — `trust_reconciliation_drift` is a cross-sub-view section
+  // (Billing → Trust accounts). The map below stays string-keyed so the
+  // shared union can widen later without a UI deploy. Until the cross-tab
+  // nav primitive lands in Wave 4 (see OperationsTab.tsx:1272 `goToSubView`),
+  // trust-drift rows stay on Overview informationally.
   const SECTION_TO_TAB: Record<string, string> = {
     temperature_out_of_range_open: "logs",
     vendors_expired: "vendors",
@@ -353,10 +358,13 @@ function OverviewTab({
     complaints_open: "complaints",
     drills_quarter_deficit: "drills",
     postings_stale_or_missing: "postings",
+    // No matching Audit Readiness sub-tab — informational link only;
+    // cross-sub-view jump to Billing/Trust lives in OperationsTab.
+    trust_reconciliation_drift: "",
   };
   const handleDeepLink = (item: TriageItem) => {
     const next = SECTION_TO_TAB[item.section];
-    if (next) onSwitchTab(next);
+    if (next && next.length > 0) onSwitchTab(next);
   };
 
   return (

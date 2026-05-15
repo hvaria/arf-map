@@ -47,6 +47,11 @@ import { listChartCompleteness } from "./chartCompletenessStorage";
 import { getRegSetting } from "./regSettings";
 import { getPostingRollup, listPostingCatalog } from "./postingsStorage";
 import { getDrillCadence } from "./drillCadenceStorage";
+import {
+  isTrustEnabled,
+  listTrustAccounts,
+  reconcileAccount,
+} from "./residentTrustStorage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PER_SECTION_LIMIT = 10;
@@ -374,6 +379,45 @@ export async function aggregateTriage(
   // not by the aggregator — kept here so the import surface is symmetric).
   void getPostingRollup;
 
+  const trustReconciliationDriftFn: SectionFn = async () => {
+    // Wave 4 Phase 4.2 (W12) — Only populated when the feature is enabled
+    // for this facility. Each active account is reconciled; one item per
+    // account with a non-zero drift (ledger SUM vs cached balance).
+    const enabled = await isTrustEnabled(facilityNumber);
+    if (!enabled) return [];
+    const accounts = await listTrustAccounts(facilityNumber, { status: "active" });
+    const items: TriageItem[] = [];
+    for (const acct of accounts) {
+      try {
+        const { drift, computedCents, cachedCents } = await reconcileAccount(
+          acct.id,
+          facilityNumber,
+        );
+        if (drift === 0) continue;
+        items.push({
+          section: "trust_reconciliation_drift",
+          itemKey: `trust_account:${acct.id}`,
+          subject: `Trust account #${acct.id} (resident ${acct.residentId})`,
+          action: `Reconcile trust ledger (cached ${cachedCents}¢ vs computed ${computedCents}¢)`,
+          ageDays: undefined,
+          severity: "high",
+          deepLink: {
+            subView: "audit_readiness/trust",
+            entityId: acct.id,
+          },
+        });
+      } catch (err) {
+        // Per-account failure should not blank the rest — log and skip.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[triage] trust reconcile failed for account ${acct.id}`,
+          (err as Error)?.message ?? err,
+        );
+      }
+    }
+    return items;
+  };
+
   const chartsIncompleteFn: SectionFn = async () => {
     const res = await listChartCompleteness(
       facilityNumber,
@@ -446,6 +490,7 @@ export async function aggregateTriage(
     chartsIncomplete,
     controlledSubAging,
     postingsStaleOrMissing,
+    trustReconciliationDrift,
   ] = await Promise.all([
     safeSection("overdue_obligations", overdueObligationsFn),
     safeSection("incidents_past_sla", incidentsPastSlaFn),
@@ -459,6 +504,7 @@ export async function aggregateTriage(
     safeSection("charts_incomplete", chartsIncompleteFn),
     safeSection("controlled_sub_discrepancies_aging", controlledSubAgingFn),
     safeSection("postings_stale_or_missing", postingsStaleOrMissingFn),
+    safeSection("trust_reconciliation_drift", trustReconciliationDriftFn),
   ]);
 
   const bySection: Record<TriageSection, TriageItem[]> = {
@@ -474,6 +520,7 @@ export async function aggregateTriage(
     charts_incomplete: chartsIncomplete,
     controlled_sub_discrepancies_aging: controlledSubAging,
     postings_stale_or_missing: postingsStaleOrMissing,
+    trust_reconciliation_drift: trustReconciliationDrift,
   };
 
   // Counts come from the UN-sliced arrays so KPI tiles are honest about
@@ -496,6 +543,7 @@ export async function aggregateTriage(
       charts_incomplete: 0,
       controlled_sub_discrepancies_aging: 0,
       postings_stale_or_missing: 0,
+      trust_reconciliation_drift: 0,
     },
   );
 

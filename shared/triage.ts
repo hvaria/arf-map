@@ -23,6 +23,12 @@ export const TRIAGE_SECTIONS = [
   // missing (status≠current or no verification on file) and "medium" for
   // stale (status=current but verification older than cadence).
   "postings_stale_or_missing",
+  // Wave 4 Phase 4.2 (W12) — Resident trust ledger vs cached-balance
+  // reconciliation drift. One item per active account where the SUM of
+  // signed ledger deltas differs from the cached balance_cents. Severity
+  // is "high" (financial citation risk). The section is only populated
+  // when RESIDENT_TRUST_ENABLED='true' for the facility.
+  "trust_reconciliation_drift",
 ] as const;
 export type TriageSection = (typeof TRIAGE_SECTIONS)[number];
 
@@ -78,4 +84,5 @@ export const TRIAGE_SECTION_LABELS: Record<TriageSection, string> = {
   charts_incomplete: "Resident charts incomplete",
   controlled_sub_discrepancies_aging: "Controlled-sub discrepancies aging",
   postings_stale_or_missing: "Postings stale or missing",
+  trust_reconciliation_drift: "Trust ledger reconciliation drift",
 };

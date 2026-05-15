@@ -7,11 +7,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { FormField, onSubmitKey } from "@/components/operations/FormField";
 import { useResidents } from "@/hooks/useResidents";
-import { Plus, Receipt, DollarSign, ArrowLeft } from "lucide-react";
+import { Plus, Receipt, DollarSign, ArrowLeft, Wallet } from "lucide-react";
+import { TrustAccountsTab } from "@/components/operations/TrustAccountsTab";
+import type { RegSettingRow } from "@/components/operations/RegSettingsContent";
 
 interface Charge {
   id: number;
@@ -329,6 +332,7 @@ function GenerateInvoiceDialog({
 }
 
 export function BillingContent({ facilityNumber, onBack }: { facilityNumber: string; onBack?: () => void }) {
+  const [tab, setTab] = useState<string>("invoices");
   const [selectedResidentId, setSelectedResidentId] = useState<number | null>(null);
   const [addChargeOpen, setAddChargeOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -343,6 +347,24 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!facilityNumber && selectedResidentId !== null,
   });
+
+  // Wave 4 Phase 4.2 (W12) — Resident Trust is feature-flagged per facility.
+  // Probe the reg-setting list. If RESIDENT_TRUST_ENABLED !== "true", the
+  // Trust tab renders an empty card directing the admin to Reg Settings.
+  const regSettingsQ = useQuery<{
+    success: boolean;
+    data: RegSettingRow[];
+  } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/reg-settings`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber,
+    staleTime: 60_000,
+  });
+  const regRows = regSettingsQ.data?.data ?? [];
+  const trustEnabled =
+    regRows.find((r) => r.key === "RESIDENT_TRUST_ENABLED")?.value === "true";
+  const dualSigRequired =
+    regRows.find((r) => r.key === "RESIDENT_TRUST_DUAL_SIG_REQUIRED")?.value === "true";
 
   const detail = detailEnvelope?.data ?? null;
   const selectedResident = residentList.find((r) => r.id === selectedResidentId);
@@ -361,7 +383,24 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
 
       <h1 className="text-xl font-semibold" style={{ color: '#1E1B4B' }}>Billing</h1>
 
-      <div className="flex flex-col md:flex-row gap-4">
+      <div className="portal-tabs">
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="w-full overflow-x-auto">
+            <TabsTrigger value="invoices" className="flex-1">
+              Invoices &amp; charges
+            </TabsTrigger>
+            <TabsTrigger
+              value="trust"
+              className="flex-1"
+              data-testid="billing-tab-trust"
+            >
+              <Wallet className="h-3.5 w-3.5 mr-1" />
+              Trust accounts
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="invoices" className="mt-4">
+            <div className="flex flex-col md:flex-row gap-4">
         {/* Left: resident list */}
         <div className="w-full md:w-72 shrink-0">
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #E0E7FF' }}>
@@ -477,6 +516,46 @@ export function BillingContent({ facilityNumber, onBack }: { facilityNumber: str
             </>
           )}
         </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="trust" className="mt-4">
+            {regSettingsQ.isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 w-full rounded-lg" />
+                ))}
+              </div>
+            ) : !trustEnabled ? (
+              <div
+                className="rounded-lg border border-dashed p-10 text-center"
+                data-testid="trust-feature-disabled"
+              >
+                <Wallet className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground mb-3">
+                  Resident trust accounts are not enabled for this facility.
+                  Enable in Reg Settings → Resident trust.
+                </p>
+                <p className="text-[11px] text-muted-foreground mb-4">
+                  Many facilities deliberately don't hold resident funds. Turn
+                  this on only if you intend to track per-resident funds here.
+                </p>
+                <a
+                  href="/#/facility-portal?tab=operations&subView=audit_readiness&subTab=settings"
+                  className="inline-flex items-center px-3 py-1.5 rounded-md border bg-white text-sm font-medium hover:bg-stone-50 transition-colors"
+                  data-testid="trust-feature-disabled-cta"
+                >
+                  Open Reg Settings
+                </a>
+              </div>
+            ) : (
+              <TrustAccountsTab
+                facilityNumber={facilityNumber}
+                dualSigRequired={dualSigRequired}
+              />
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
 
       {selectedResidentId !== null && (

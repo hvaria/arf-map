@@ -76,6 +76,11 @@ export const OPS_RESOURCES = {
   // catalog rows + walkthrough verification log. Admin gets read/create/
   // update; auditor read-only (read-only audit walkthrough use case).
   POSTING: "ops_posting",
+  // Wave 4 Phase 4.2 — Resident trust accounts (W12). Per-resident trust
+  // accounts + insert-only ledger + monthly statement snapshots. Admin
+  // gets read/create/update (no delete — ledger is application-insert-only,
+  // corrections happen via reversal entries). Auditor read-only.
+  RESIDENT_TRUST: "ops_resident_trust",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -179,6 +184,14 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.POSTING,
     actions: ["read", "create", "update"],
   },
+  // Wave 4 Phase 4.2 — Resident trust accounts (W12). Admin gets read/
+  // create/update. `update` gates close + repair-balance. No `delete` —
+  // ledger is application-insert-only; corrections happen via reversals
+  // (which are `create` events themselves).
+  {
+    resource: OPS_RESOURCES.RESIDENT_TRUST,
+    actions: ["read", "create", "update"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
@@ -197,6 +210,7 @@ const AUDITOR_READ_ONLY: Permission[] = [
   { resource: OPS_RESOURCES.RESIDENT,            actions: ["read"] },
   { resource: OPS_RESOURCES.OBLIGATION,          actions: ["read"] },
   { resource: OPS_RESOURCES.POSTING,             actions: ["read"] },
+  { resource: OPS_RESOURCES.RESIDENT_TRUST,      actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

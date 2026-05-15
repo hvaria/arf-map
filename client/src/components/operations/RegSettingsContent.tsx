@@ -54,7 +54,9 @@ import {
   Info,
   Mail,
   Send,
+  Wallet,
 } from "lucide-react";
+import { dollarsToCents } from "@shared/resident-trust";
 
 // ── Types matching Phase 4 §4.1 catalogue + §7.1 envelope ─────────────────────
 
@@ -144,6 +146,21 @@ type DailySummaryKey = (typeof DAILY_SUMMARY_KEYS)[number];
 
 function isDailySummaryKey(k: string): k is DailySummaryKey {
   return (DAILY_SUMMARY_KEYS as readonly string[]).includes(k);
+}
+
+// Wave 4 Phase 4.2 (W12) — Resident trust reg-settings. Rendered in a
+// dedicated <TrustSection> below the standard sections (toggle + dollar
+// input + dual-sig flag don't fit the generic Value/Source-note shape).
+const TRUST_KEYS = [
+  "RESIDENT_TRUST_ENABLED",
+  "RESIDENT_TRUST_DUAL_SIG_REQUIRED",
+  "RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS",
+  "RESIDENT_TRUST_STATEMENT_AUTO_GENERATE",
+] as const;
+type TrustKey = (typeof TRUST_KEYS)[number];
+
+function isTrustKey(k: string): k is TrustKey {
+  return (TRUST_KEYS as readonly string[]).includes(k);
 }
 
 // Fallback label / unit / help derived from the canonical key when the
@@ -495,12 +512,17 @@ export function RegSettingsContent({
 
   // Wave 3 W14 — pull the daily-summary keys out before the generic
   // section bucketing so they only render in <DailySummarySection>.
+  // Wave 4 W12 — same trick for the trust reg-setting keys.
   const dailySummaryRows = useMemo(
     () => rows.filter((r) => isDailySummaryKey(r.key)),
     [rows],
   );
+  const trustRows = useMemo(
+    () => rows.filter((r) => isTrustKey(r.key)),
+    [rows],
+  );
   const standardRows = useMemo(
-    () => rows.filter((r) => !isDailySummaryKey(r.key)),
+    () => rows.filter((r) => !isDailySummaryKey(r.key) && !isTrustKey(r.key)),
     [rows],
   );
 
@@ -609,6 +631,10 @@ export function RegSettingsContent({
           <DailySummarySection
             facilityNumber={facilityNumber}
             rows={dailySummaryRows}
+          />
+          <TrustSection
+            facilityNumber={facilityNumber}
+            rows={trustRows}
           />
         </div>
       )}
@@ -945,6 +971,390 @@ function DailySummaryTextRow({
             }}
             disabled={saving}
             data-testid={`daily-summary-save-${rowKey}`}
+          >
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Wave 4 Phase 4.2 W12 — Resident trust section ─────────────────────────────
+
+const TRUST_DEFAULTS: Record<TrustKey, string> = {
+  RESIDENT_TRUST_ENABLED: "false",
+  RESIDENT_TRUST_DUAL_SIG_REQUIRED: "true",
+  RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS: "100000",
+  RESIDENT_TRUST_STATEMENT_AUTO_GENERATE: "false",
+};
+
+const TRUST_LABELS: Record<TrustKey, string> = {
+  RESIDENT_TRUST_ENABLED: "Enable resident trust accounts",
+  RESIDENT_TRUST_DUAL_SIG_REQUIRED:
+    "Require a second staff signature for debits",
+  RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS:
+    "Maximum held balance per resident",
+  RESIDENT_TRUST_STATEMENT_AUTO_GENERATE:
+    "Auto-generate monthly statements",
+};
+
+const TRUST_HELP: Partial<Record<TrustKey, string>> = {
+  RESIDENT_TRUST_DUAL_SIG_REQUIRED:
+    "Marked [V] — most facilities default to true to satisfy auditor expectations.",
+  RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS:
+    "Marked [V] — soft cap surfaced as a warning when an entry would push the balance higher.",
+  RESIDENT_TRUST_STATEMENT_AUTO_GENERATE:
+    "Wave 5 will trigger monthly statement generation via cron. For now this is informational.",
+};
+
+const TRUST_VALIDATED_KEYS: TrustKey[] = [
+  "RESIDENT_TRUST_DUAL_SIG_REQUIRED",
+  "RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS",
+];
+
+function trustRowFor(rows: RegSettingRow[], key: TrustKey): RegSettingRow {
+  const existing = rows.find((r) => r.key === key);
+  if (existing) return existing;
+  return {
+    key,
+    value: TRUST_DEFAULTS[key],
+    placeholder: TRUST_VALIDATED_KEYS.includes(key),
+    validated: false,
+  };
+}
+
+function TrustSection({
+  facilityNumber,
+  rows,
+}: {
+  facilityNumber: string;
+  rows: RegSettingRow[];
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(true);
+
+  const listKey = [
+    `/api/ops/facilities/${facilityNumber}/reg-settings`,
+  ] as const;
+
+  const saveKey = useMutation({
+    mutationFn: async (vars: { key: TrustKey; value: string }) => {
+      const res = await apiRequest(
+        "PUT",
+        `/api/ops/reg-settings/${encodeURIComponent(vars.key)}`,
+        { value: vars.value, validated: true },
+      );
+      return res.json();
+    },
+    onMutate: async (vars) => {
+      await qc.cancelQueries({ queryKey: listKey });
+      const prev = qc.getQueryData<{ data: RegSettingRow[] }>(listKey);
+      if (prev?.data) {
+        const existing = prev.data.find((r) => r.key === vars.key);
+        const nextRow: RegSettingRow = existing
+          ? { ...existing, value: vars.value, validated: true }
+          : {
+              key: vars.key,
+              value: vars.value,
+              placeholder: false,
+              validated: true,
+            };
+        qc.setQueryData(listKey, {
+          ...prev,
+          data: prev.data.some((r) => r.key === vars.key)
+            ? prev.data.map((r) => (r.key === vars.key ? nextRow : r))
+            : [...prev.data, nextRow],
+        });
+      }
+      return { prev };
+    },
+    onError: (err: Error, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(listKey, ctx.prev);
+      toast({
+        title: "Couldn't save setting",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: listKey });
+    },
+  });
+
+  const enabledRow = trustRowFor(rows, "RESIDENT_TRUST_ENABLED");
+  const dualSigRow = trustRowFor(rows, "RESIDENT_TRUST_DUAL_SIG_REQUIRED");
+  const maxBalRow = trustRowFor(rows, "RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS");
+  const autoStmtRow = trustRowFor(rows, "RESIDENT_TRUST_STATEMENT_AUTO_GENERATE");
+
+  const enabled = enabledRow.value === "true";
+
+  return (
+    <section
+      className="space-y-2"
+      aria-label="Resident trust account settings"
+      data-testid="trust-settings-section"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+        aria-expanded={open}
+      >
+        {open ? (
+          <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+        )}
+        <Wallet className="h-3.5 w-3.5" aria-hidden />
+        Resident trust accounts
+      </button>
+
+      {open && (
+        <div className="space-y-2">
+          {/* Primary enabled toggle */}
+          <div
+            className="rounded-md border bg-white p-3 flex items-start justify-between gap-3"
+            data-testid="trust-settings-row-enabled"
+          >
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-gray-800">
+                {TRUST_LABELS.RESIDENT_TRUST_ENABLED}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 flex items-start gap-1">
+                <Info className="h-3 w-3 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  Trust accounts are off by default. Many facilities
+                  deliberately don't hold resident funds. Enable only if you
+                  intend to track per-resident funds in this product.
+                </span>
+              </p>
+            </div>
+            <Switch
+              checked={enabled}
+              onCheckedChange={(v) =>
+                saveKey.mutate({
+                  key: "RESIDENT_TRUST_ENABLED",
+                  value: v ? "true" : "false",
+                })
+              }
+              disabled={saveKey.isPending}
+              aria-label={TRUST_LABELS.RESIDENT_TRUST_ENABLED}
+              data-testid="trust-settings-switch-enabled"
+            />
+          </div>
+
+          {/* Dual-signature toggle */}
+          <ToggleRowWithV
+            label={TRUST_LABELS.RESIDENT_TRUST_DUAL_SIG_REQUIRED}
+            help={TRUST_HELP.RESIDENT_TRUST_DUAL_SIG_REQUIRED}
+            checked={dualSigRow.value === "true"}
+            placeholder={dualSigRow.placeholder && !dualSigRow.validated}
+            disabled={saveKey.isPending || !enabled}
+            onChange={(v) =>
+              saveKey.mutate({
+                key: "RESIDENT_TRUST_DUAL_SIG_REQUIRED",
+                value: v ? "true" : "false",
+              })
+            }
+            testId="trust-settings-switch-dualsig"
+          />
+
+          {/* Max held balance (dollars input, persisted as cents) */}
+          <DollarsInputRow
+            label={TRUST_LABELS.RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS}
+            help={TRUST_HELP.RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS}
+            placeholder={maxBalRow.placeholder && !maxBalRow.validated}
+            initialCents={Number(maxBalRow.value) || 0}
+            disabled={saveKey.isPending || !enabled}
+            onSave={(cents) =>
+              saveKey.mutate({
+                key: "RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS",
+                value: String(cents),
+              })
+            }
+            saving={saveKey.isPending}
+          />
+
+          {/* Auto-generate statements toggle */}
+          <ToggleRowWithV
+            label={TRUST_LABELS.RESIDENT_TRUST_STATEMENT_AUTO_GENERATE}
+            help={TRUST_HELP.RESIDENT_TRUST_STATEMENT_AUTO_GENERATE}
+            checked={autoStmtRow.value === "true"}
+            placeholder={false}
+            disabled={saveKey.isPending || !enabled}
+            onChange={(v) =>
+              saveKey.mutate({
+                key: "RESIDENT_TRUST_STATEMENT_AUTO_GENERATE",
+                value: v ? "true" : "false",
+              })
+            }
+            testId="trust-settings-switch-autostmt"
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ToggleRowWithV({
+  label,
+  help,
+  checked,
+  placeholder,
+  disabled,
+  onChange,
+  testId,
+}: {
+  label: string;
+  help?: string;
+  checked: boolean;
+  placeholder: boolean;
+  disabled: boolean;
+  onChange: (v: boolean) => void;
+  testId: string;
+}) {
+  return (
+    <div
+      className="rounded-md border bg-white p-3 flex items-start justify-between gap-3"
+      data-testid={`${testId}-row`}
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-medium text-gray-800">{label}</span>
+          {placeholder && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-amber-100 text-amber-700 border-amber-200"
+              title="Default value, not validated for your facility."
+            >
+              [V]
+            </span>
+          )}
+        </div>
+        {help && (
+          <p className="text-[11px] text-muted-foreground mt-0.5 flex items-start gap-1">
+            <Info className="h-3 w-3 mt-0.5 shrink-0" aria-hidden />
+            <span>{help}</span>
+          </p>
+        )}
+      </div>
+      <Switch
+        checked={checked}
+        onCheckedChange={onChange}
+        disabled={disabled}
+        aria-label={label}
+        data-testid={testId}
+      />
+    </div>
+  );
+}
+
+function DollarsInputRow({
+  label,
+  help,
+  placeholder,
+  initialCents,
+  disabled,
+  onSave,
+  saving,
+}: {
+  label: string;
+  help?: string;
+  placeholder: boolean;
+  initialCents: number;
+  disabled: boolean;
+  onSave: (cents: number) => void;
+  saving: boolean;
+}) {
+  // Comma-free editable string (e.g., "1000.00"). The non-edit display
+  // uses centsToDollars for formatting; the input keeps a parser-friendly
+  // value so dollarsToCents() round-trips cleanly.
+  const formatPlain = (cents: number): string => {
+    const dollars = Math.floor(cents / 100);
+    const remainder = cents % 100;
+    return `${dollars}.${String(remainder).padStart(2, "0")}`;
+  };
+  const [value, setValue] = useState(formatPlain(initialCents));
+  const [dirty, setDirty] = useState(false);
+  // Accept "$1,000.00" / "1,000" / "1000.00" / "1000" — strip commas before
+  // delegating to the shared parser.
+  const normalized = value.replace(/,/g, "");
+  const parsed = useMemo(() => dollarsToCents(normalized), [normalized]);
+  const error = dirty
+    ? parsed === null
+      ? "Enter a dollar amount like 1000 or 1000.00"
+      : parsed < 0
+        ? "Must be ≥ 0"
+        : undefined
+    : undefined;
+
+  return (
+    <div
+      className="rounded-md border bg-white p-3 space-y-2"
+      data-testid="trust-settings-row-maxbalance"
+    >
+      <div className="flex items-start gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium text-gray-800">{label}</span>
+            {placeholder && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-amber-100 text-amber-700 border-amber-200"
+                title="Default value, not validated for your facility."
+              >
+                [V]
+              </span>
+            )}
+          </div>
+          {help && (
+            <p className="text-[11px] text-muted-foreground mt-0.5 flex items-start gap-1">
+              <Info className="h-3 w-3 mt-0.5 shrink-0" aria-hidden />
+              <span>{help}</span>
+            </p>
+          )}
+        </div>
+        <FormField label="Value" error={error}>
+          <Input
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setDirty(true);
+            }}
+            placeholder="$1,000.00"
+            className="h-8 w-32 text-sm"
+            aria-label={label}
+            aria-invalid={!!error}
+            disabled={disabled}
+            data-testid="trust-settings-maxbalance-input"
+          />
+        </FormField>
+      </div>
+      {dirty && (
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setValue(formatPlain(initialCents));
+              setDirty(false);
+            }}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="gradient"
+            onClick={() => {
+              if (parsed === null || parsed < 0) return;
+              onSave(parsed);
+              setDirty(false);
+            }}
+            disabled={saving || parsed === null || parsed < 0}
+            data-testid="trust-settings-maxbalance-save"
           >
             {saving ? "Saving…" : "Save"}
           </Button>

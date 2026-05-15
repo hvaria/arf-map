@@ -36,6 +36,11 @@ import {
   createPostingCatalogEntry,
   createPostingVerification,
 } from "../../ops/postingsStorage";
+import {
+  appendLedgerEntry,
+  ensureTrustAccount,
+} from "../../ops/residentTrustStorage";
+import { setRegSetting } from "../../ops/regSettings";
 
 const FACILITY_A = "TEST-FAC-TRIAGE-A";
 const FACILITY_B = "TEST-FAC-TRIAGE-B";
@@ -62,6 +67,18 @@ async function cleanup(): Promise<void> {
   );
   await pool.query(
     `DELETE FROM ops_staff                   WHERE facility_number = ANY($1::text[])`,
+    [[...ALL_FN]],
+  );
+  await pool.query(
+    `DELETE FROM ops_resident_trust_statements WHERE facility_number = ANY($1::text[])`,
+    [[...ALL_FN]],
+  );
+  await pool.query(
+    `DELETE FROM ops_resident_trust_ledger     WHERE facility_number = ANY($1::text[])`,
+    [[...ALL_FN]],
+  );
+  await pool.query(
+    `DELETE FROM ops_resident_trust_accounts   WHERE facility_number = ANY($1::text[])`,
     [[...ALL_FN]],
   );
   await pool.query(
@@ -332,5 +349,46 @@ describe("triageAggregator — postings_stale_or_missing", () => {
     const staleItem = items.find((i) => i.subject.match(/Residents rights/));
     expect(missing?.severity).toBe("high");
     expect(staleItem?.severity).toBe("medium");
+  });
+});
+
+// Wave 4 Phase 4.2 (W12) — trust_reconciliation_drift section.
+describe("triageAggregator — trust_reconciliation_drift", () => {
+  it("is empty when RESIDENT_TRUST_ENABLED is unset (catalog default 'false')", async () => {
+    const payload = await aggregateTriage(FACILITY_A);
+    expect(payload.counts.trust_reconciliation_drift).toBe(0);
+  });
+
+  it("surfaces a drift item only when the feature is enabled AND drift exists", async () => {
+    await setRegSetting(FACILITY_A, "RESIDENT_TRUST_ENABLED", "true", {
+      actorId: ACTOR.id,
+      actorRole: ACTOR.role,
+    });
+    const acct = await ensureTrustAccount(FACILITY_A, 999, ACTOR.id, ACTOR);
+    await appendLedgerEntry(
+      FACILITY_A,
+      acct.id,
+      {
+        direction: "credit",
+        amountCents: 4242,
+        category: "cash_deposit",
+        description: "Drift seed",
+        transactedAt: Date.now(),
+        recordedBy: ACTOR.id,
+      },
+      ACTOR,
+    );
+    // Corrupt the cached balance so reconcile reports drift.
+    await pool.query(
+      `UPDATE ops_resident_trust_accounts SET balance_cents = $1 WHERE id = $2`,
+      [1, acct.id],
+    );
+    const payload = await aggregateTriage(FACILITY_A);
+    expect(payload.counts.trust_reconciliation_drift).toBe(1);
+    const item = payload.items.find(
+      (i) => i.section === "trust_reconciliation_drift",
+    );
+    expect(item).toBeDefined();
+    expect(item!.severity).toBe("high");
   });
 });

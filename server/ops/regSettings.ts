@@ -77,6 +77,24 @@ export const REG_SETTING_KEYS = {
   // 'expired'. Operational toggle, not statutory — `placeholder: false`
   // suppresses the [V] chip. Override via reg-settings UI per facility.
   OBLIGATION_EXPIRE_GRACE_DAYS:        { default: "1",            placeholder: false },
+  // ── Wave 4 Phase 4.2 — Resident trust accounts (W12) ──────────────────────
+  // Facility-level opt-in. Many small RCFEs deliberately don't hold resident
+  // funds, so the feature defaults OFF and routes are 404 unless enabled.
+  // Operational toggle (not regulation-derived) — `placeholder: false`.
+  RESIDENT_TRUST_ENABLED:                   { default: "false", placeholder: false },
+  // Dual-signature required on debits. Per B13 the statutory citation
+  // has not been validated against a primary source yet, so the [V]
+  // chip surfaces (placeholder: true) until an admin attaches a source
+  // note. Default ON — safer choice for an unvalidated regulation.
+  RESIDENT_TRUST_DUAL_SIG_REQUIRED:         { default: "true",  placeholder: true  },
+  // Maximum balance a facility may hold per resident before a warning
+  // shows in the admin UI. $500 (50000 cents) is a placeholder pending
+  // B13 validation. Stored as integer cents to match the ledger.
+  RESIDENT_TRUST_MAX_HELD_BALANCE_CENTS:    { default: "50000", placeholder: true  },
+  // Auto-generate monthly statements at month-end. Wave 5 work — for
+  // Wave 4 the table exists but the cron does not, so this stays OFF.
+  // Operational toggle — `placeholder: false`.
+  RESIDENT_TRUST_STATEMENT_AUTO_GENERATE:   { default: "false", placeholder: false },
 } as const;
 
 export type RegSettingKey = keyof typeof REG_SETTING_KEYS;

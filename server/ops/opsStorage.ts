@@ -143,6 +143,42 @@ async function pgFirst<T>(q: Promise<T[]>): Promise<T | undefined> {
   return (await q)[0];
 }
 
+// Audit-trail helper shared across modules. Moved up here (above Module 1)
+// so the legacy retrofit on Residents/eMAR/Admissions (Phase 4.2) can use
+// the same try/catch wrapper as Wave 1–4 modules below. AuditActor matches
+// the `AuditActor` interface exported by ./auditStorage (kept as a local
+// alias to avoid an import-rename across the file).
+interface AuditActor {
+  id: string;
+  role: string;
+}
+
+async function safeAudit(args: {
+  facilityNumber: string;
+  actor: AuditActor;
+  action: "create" | "update" | "delete" | "resolve" | "close" | "reopen";
+  entityType: string;
+  entityId: number;
+  before?: unknown;
+  after?: unknown;
+}): Promise<void> {
+  try {
+    await recordAudit({
+      facilityNumber: args.facilityNumber,
+      actorId: args.actor.id,
+      actorRole: args.actor.role,
+      action: args.action,
+      entityType: args.entityType,
+      entityId: args.entityId,
+      before: args.before,
+      after: args.after,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[ops] audit emit failed for ${args.entityType}#${args.entityId}`, err);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Module 1 — Residents / EHR
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,24 +206,75 @@ export async function getResident(id: number, facilityNumber: string): Promise<O
   return pgFirst(db.select().from(opsResidents).where(cond));
 }
 
-export async function createResident(data: InsertOpsResident): Promise<OpsResident> {
+export async function createResident(
+  data: InsertOpsResident,
+  actor?: AuditActor,
+): Promise<OpsResident> {
   const now = Date.now();
   const rows = await db.insert(opsResidents).values({ ...data, createdAt: now, updatedAt: now }).returning();
-  return rows[0] as OpsResident;
+  const row = rows[0] as OpsResident;
+  if (actor) {
+    await safeAudit({
+      facilityNumber: row.facilityNumber,
+      actor,
+      action: "create",
+      entityType: "ops_resident",
+      entityId: row.id,
+      after: row,
+    });
+  }
+  return row;
 }
 
-export async function updateResident(id: number, facilityNumber: string, data: Partial<InsertOpsResident>): Promise<OpsResident | undefined> {
+export async function updateResident(
+  id: number,
+  facilityNumber: string,
+  data: Partial<InsertOpsResident>,
+  actor?: AuditActor,
+): Promise<OpsResident | undefined> {
+  const before = await getResident(id, facilityNumber);
+  if (!before) return undefined;
   const now = Date.now();
   const cond = and(eq(opsResidents.id, id), eq(opsResidents.facilityNumber, facilityNumber));
   const rows = await db.update(opsResidents).set({ ...data, updatedAt: now }).where(cond).returning();
-  return rows[0] as OpsResident | undefined;
+  const after = rows[0] as OpsResident | undefined;
+  if (after && actor) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_resident",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
 }
 
-export async function softDeleteResident(id: number, facilityNumber: string): Promise<boolean> {
+export async function softDeleteResident(
+  id: number,
+  facilityNumber: string,
+  actor?: AuditActor,
+): Promise<boolean> {
+  const before = await getResident(id, facilityNumber);
+  if (!before) return false;
   const now = Date.now();
   const cond = and(eq(opsResidents.id, id), eq(opsResidents.facilityNumber, facilityNumber));
   const rows = await db.update(opsResidents).set({ status: "discharged", dischargeDate: now, updatedAt: now }).where(cond).returning({ id: opsResidents.id });
-  return rows.length > 0;
+  const ok = rows.length > 0;
+  if (ok && actor) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "delete",
+      entityType: "ops_resident",
+      entityId: id,
+      before,
+      after: { ...before, status: "discharged", dischargeDate: now, updatedAt: now },
+    });
+  }
+  return ok;
 }
 
 // Assessments
@@ -399,25 +486,81 @@ export async function getMedication(id: number, facilityNumber: string): Promise
   return rows[0];
 }
 
-export async function createMedication(data: InsertOpsMedication): Promise<OpsMedication> {
+export async function createMedication(
+  data: InsertOpsMedication,
+  actor?: AuditActor,
+): Promise<OpsMedication> {
   const now = Date.now();
   const rows = await db.insert(opsMedications).values({ ...data, createdAt: now, updatedAt: now }).returning();
-  return rows[0] as OpsMedication;
+  const row = rows[0] as OpsMedication;
+  if (actor) {
+    await safeAudit({
+      facilityNumber: row.facilityNumber,
+      actor,
+      action: "create",
+      entityType: "ops_medication",
+      entityId: row.id,
+      after: row,
+    });
+  }
+  return row;
 }
 
-export async function updateMedication(id: number, facilityNumber: string, data: Partial<InsertOpsMedication>): Promise<OpsMedication | undefined> {
+export async function updateMedication(
+  id: number,
+  facilityNumber: string,
+  data: Partial<InsertOpsMedication>,
+  actor?: AuditActor,
+): Promise<OpsMedication | undefined> {
+  const before = await getMedication(id, facilityNumber);
+  if (!before) return undefined;
   const now = Date.now();
   const cond = and(eq(opsMedications.id, id), eq(opsMedications.facilityNumber, facilityNumber));
   const rows = await db.update(opsMedications).set({ ...data, updatedAt: now }).where(cond).returning();
-  return rows[0] as OpsMedication | undefined;
+  const after = rows[0] as OpsMedication | undefined;
+  if (after && actor) {
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_medication",
+      entityId: after.id,
+      before,
+      after,
+    });
+  }
+  return after;
 }
 
-export async function discontinueMedication(id: number, facilityNumber: string, reason: string, by: string): Promise<boolean> {
+export async function discontinueMedication(
+  id: number,
+  facilityNumber: string,
+  reason: string,
+  by: string,
+  actor?: AuditActor,
+): Promise<boolean> {
+  const before = await getMedication(id, facilityNumber);
+  if (!before) return false;
   const now = Date.now();
   const cond = and(eq(opsMedications.id, id), eq(opsMedications.facilityNumber, facilityNumber));
   const updateData = { status: "discontinued", discontinuedReason: reason, discontinuedBy: by, discontinuedAt: now, updatedAt: now };
   const discRows = await db.update(opsMedications).set(updateData).where(cond).returning({ id: opsMedications.id });
-  return discRows.length > 0;
+  const ok = discRows.length > 0;
+  if (ok && actor) {
+    // Terminal-state transition — use 'delete' to align with the existing
+    // softDeleteResident / softDeleteDrillLog convention (resource-level
+    // delete = soft-deactivation in this codebase).
+    await safeAudit({
+      facilityNumber,
+      actor,
+      action: "delete",
+      entityType: "ops_medication",
+      entityId: id,
+      before,
+      after: { ...before, ...updateData },
+    });
+  }
+  return ok;
 }
 
 // Med pass queue
@@ -528,10 +671,24 @@ export async function getResidentMedPassQueue(
   return result.rows;
 }
 
-export async function recordMedPass(data: InsertOpsMedPass): Promise<OpsMedPass> {
+export async function recordMedPass(
+  data: InsertOpsMedPass,
+  actor?: AuditActor,
+): Promise<OpsMedPass> {
   const now = Date.now();
   const rows = await db.insert(opsMedPasses).values({ ...data, createdAt: now }).returning();
-  return rows[0] as OpsMedPass;
+  const row = rows[0] as OpsMedPass;
+  if (actor) {
+    await safeAudit({
+      facilityNumber: row.facilityNumber,
+      actor,
+      action: "create",
+      entityType: "ops_med_pass",
+      entityId: row.id,
+      after: row,
+    });
+  }
+  return row;
 }
 
 export async function updateMedPassRecord(
@@ -551,10 +708,32 @@ export async function updateMedPassRecord(
     rightReason: number;
     rightDocumentation: number;
     rightToRefuse: number;
-  }>
+  }>,
+  actor?: AuditActor,
 ): Promise<boolean> {
+  // Read the before-state so audit emits a useful diff + so we can scope
+  // the facility_number on the audit row without relying on the caller.
+  const beforeRows = await db
+    .select()
+    .from(opsMedPasses)
+    .where(eq(opsMedPasses.id, id))
+    .limit(1);
+  const before = beforeRows[0] as OpsMedPass | undefined;
+  if (!before) return false;
   const rows = await db.update(opsMedPasses).set(data).where(eq(opsMedPasses.id, id)).returning({ id: opsMedPasses.id });
-  return rows.length > 0;
+  const ok = rows.length > 0;
+  if (ok && actor) {
+    await safeAudit({
+      facilityNumber: before.facilityNumber,
+      actor,
+      action: "update",
+      entityType: "ops_med_pass",
+      entityId: id,
+      before,
+      after: { ...before, ...data },
+    });
+  }
+  return ok;
 }
 
 export async function updatePrnFollowup(id: number, effectivenessNotes: string, notedAt: number): Promise<boolean> {
@@ -915,13 +1094,32 @@ export async function updateTour(id: number, data: Partial<InsertOpsTour>): Prom
   return rows[0] as OpsTour | undefined;
 }
 
-export async function startAdmission(data: InsertOpsAdmission): Promise<OpsAdmission> {
+export async function startAdmission(
+  data: InsertOpsAdmission,
+  actor?: AuditActor,
+): Promise<OpsAdmission> {
   const now = Date.now();
   const rows = await db.insert(opsAdmissions).values({ ...data, createdAt: now, updatedAt: now }).returning();
-  return rows[0] as OpsAdmission;
+  const row = rows[0] as OpsAdmission;
+  if (actor) {
+    await safeAudit({
+      facilityNumber: row.facilityNumber,
+      actor,
+      action: "create",
+      entityType: "ops_admission",
+      entityId: row.id,
+      after: row,
+    });
+  }
+  return row;
 }
 
-export async function updateAdmissionLicForm(admissionId: number, form: string, completed: boolean): Promise<boolean> {
+export async function updateAdmissionLicForm(
+  admissionId: number,
+  form: string,
+  completed: boolean,
+  actor?: AuditActor,
+): Promise<boolean> {
   const validForms: Record<string, { completedCol: string; dateCol: string }> = {
     lic_601:  { completedCol: "lic_601_completed",  dateCol: "lic_601_date" },
     lic_602a: { completedCol: "lic_602a_completed", dateCol: "lic_602a_date" },
@@ -934,12 +1132,36 @@ export async function updateAdmissionLicForm(admissionId: number, form: string, 
   const mapping = validForms[form];
   if (!mapping) return false;
 
+  // Read before-state so the audit row carries the LIC flip diff (critical
+  // because each flip moves the chart-completeness score for this resident).
+  const beforeRes = await pool.query<Record<string, unknown>>(
+    `SELECT * FROM ops_admissions WHERE id = $1`,
+    [admissionId],
+  );
+  const before = beforeRes.rows[0];
+  if (!before) return false;
+
   const now = Date.now();
   const result = await pool.query(
     `UPDATE ops_admissions SET ${mapping.completedCol} = $1, ${mapping.dateCol} = $2, updated_at = $3 WHERE id = $4`,
     [completed ? 1 : 0, completed ? now : null, now, admissionId]
   );
-  return (result.rowCount ?? 0) > 0;
+  const ok = (result.rowCount ?? 0) > 0;
+  if (ok && actor) {
+    const facilityNumber = String(before.facility_number ?? "");
+    if (facilityNumber) {
+      await safeAudit({
+        facilityNumber,
+        actor,
+        action: "update",
+        entityType: "ops_admission",
+        entityId: admissionId,
+        before: { [mapping.completedCol]: before[mapping.completedCol], [mapping.dateCol]: before[mapping.dateCol] },
+        after: { form, completed, [mapping.completedCol]: completed ? 1 : 0, [mapping.dateCol]: completed ? now : null },
+      });
+    }
+  }
+  return ok;
 }
 
 export async function convertAdmissionToResident(admissionId: number): Promise<OpsResident | undefined> {
@@ -1731,36 +1953,9 @@ export async function seedFacilityDemoData(facilityNumber: string): Promise<Demo
 // viewer can filter by resource directly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface AuditActor {
-  id: string;
-  role: string;
-}
-
-async function safeAudit(args: {
-  facilityNumber: string;
-  actor: AuditActor;
-  action: "create" | "update" | "delete" | "resolve" | "close" | "reopen";
-  entityType: string;
-  entityId: number;
-  before?: unknown;
-  after?: unknown;
-}): Promise<void> {
-  try {
-    await recordAudit({
-      facilityNumber: args.facilityNumber,
-      actorId: args.actor.id,
-      actorRole: args.actor.role,
-      action: args.action,
-      entityType: args.entityType,
-      entityId: args.entityId,
-      before: args.before,
-      after: args.after,
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[ops] audit emit failed for ${args.entityType}#${args.entityId}`, err);
-  }
-}
+// AuditActor + safeAudit are defined above (near pgFirst) so the legacy
+// retrofit on Residents/eMAR/Admissions can share the same wrapper as the
+// Wave 1+ modules below.
 
 // JSON column helpers — write side stringifies, read side parses with a
 // try/catch fallback to [] so a malformed legacy row never crashes a list

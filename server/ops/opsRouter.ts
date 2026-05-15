@@ -65,6 +65,25 @@ import {
   seedDefaultPostings,
   updatePostingCatalogEntry,
 } from "./postingsStorage";
+import {
+  appendLedgerEntry,
+  closeTrustAccount,
+  ensureTrustAccount,
+  generateMonthlyStatement,
+  getTrustAccount,
+  isTrustEnabled,
+  listLedger,
+  listStatements,
+  listTrustAccounts,
+  recordReversal,
+  reconcileAccount,
+  repairBalance,
+  TrustDomainError,
+} from "./residentTrustStorage";
+import {
+  TRUST_LEDGER_DIRECTIONS,
+  TRUST_LEDGER_CATEGORIES,
+} from "@shared/resident-trust";
 import { getDrillCadence } from "./drillCadenceStorage";
 import {
   POSTING_KEYS,
@@ -662,7 +681,10 @@ opsRouter.post("/facilities/:facilityNumber/residents/:id/medications", async (r
     }
     const now = Date.now();
     const storagePayload = toStorageShape(parsed.data);
-    const med = await ops.createMedication({ ...storagePayload, residentId, facilityNumber, createdAt: now, updatedAt: now });
+    const med = await ops.createMedication(
+      { ...storagePayload, residentId, facilityNumber, createdAt: now, updatedAt: now },
+      getActor(req),
+    );
     res.status(201).json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -705,12 +727,15 @@ opsRouter.post("/residents", async (req, res) => {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
     const now = Date.now();
-    const resident = await ops.createResident({
-      ...parsed.data,
-      facilityNumber,
-      createdAt: now,
-      updatedAt: now,
-    });
+    const resident = await ops.createResident(
+      {
+        ...parsed.data,
+        facilityNumber,
+        createdAt: now,
+        updatedAt: now,
+      },
+      getActor(req),
+    );
     res.status(201).json({ success: true, data: resident });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -741,7 +766,7 @@ opsRouter.put("/residents/:id", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const resident = await ops.updateResident(id, facilityNumber, parsed.data);
+    const resident = await ops.updateResident(id, facilityNumber, parsed.data, getActor(req));
     if (!resident) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: resident });
   } catch (e) {
@@ -755,7 +780,7 @@ opsRouter.delete("/residents/:id", async (req, res) => {
     const facilityNumber = getFacilityNumber(req);
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
-    const ok = await ops.softDeleteResident(id, facilityNumber);
+    const ok = await ops.softDeleteResident(id, facilityNumber, getActor(req));
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
@@ -1016,13 +1041,16 @@ opsRouter.post("/residents/:id/medications", async (req, res) => {
     }
     const now = Date.now();
     const storagePayload = toStorageShape(parsed.data);
-    const med = await ops.createMedication({
-      ...storagePayload,
-      residentId,
-      facilityNumber,
-      createdAt: now,
-      updatedAt: now,
-    });
+    const med = await ops.createMedication(
+      {
+        ...storagePayload,
+        residentId,
+        facilityNumber,
+        createdAt: now,
+        updatedAt: now,
+      },
+      getActor(req),
+    );
     res.status(201).json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -1058,7 +1086,7 @@ opsRouter.put("/medications/:id", async (req, res) => {
     }
 
     const storagePayload = toStorageShape(patch);
-    const med = await ops.updateMedication(id, facilityNumber, storagePayload);
+    const med = await ops.updateMedication(id, facilityNumber, storagePayload, getActor(req));
     if (!med) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
@@ -1081,7 +1109,7 @@ opsRouter.delete("/medications/:id", async (req, res) => {
       ? `${parsed.data.reason ?? "other"}: ${parsed.data.reasonNote}`
       : (parsed.data.reason ?? "");
     const by = parsed.data.discontinuedBy ?? sessionUser?.username ?? "unknown";
-    const ok = await ops.discontinueMedication(id, facilityNumber, reason, by);
+    const ok = await ops.discontinueMedication(id, facilityNumber, reason, by, getActor(req));
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
@@ -1216,7 +1244,7 @@ opsRouter.post("/med-passes", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const medPass = await ops.recordMedPass({ ...parsed.data, createdAt: Date.now() });
+    const medPass = await ops.recordMedPass({ ...parsed.data, createdAt: Date.now() }, getActor(req));
     res.status(201).json({ success: true, data: medPass });
   } catch (e) {
     res.status(500).json({ success: false, error: "Internal error" });
@@ -1248,7 +1276,7 @@ opsRouter.put("/med-passes/:id", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const ok = await ops.updateMedPassRecord(id, parsed.data);
+    const ok = await ops.updateMedPassRecord(id, parsed.data, getActor(req));
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (e) {
@@ -1324,9 +1352,12 @@ opsRouter.post("/medications/:id/request-refill", async (req, res) => {
     if (existing.status === "discontinued") {
       return res.status(409).json({ success: false, error: "Cannot request refill for a discontinued medication." });
     }
-    const med = await ops.updateMedication(id, facilityNumber, {
-      autoRefillRequest: 1,
-    });
+    const med = await ops.updateMedication(
+      id,
+      facilityNumber,
+      { autoRefillRequest: 1 },
+      getActor(req),
+    );
     if (!med) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: normalizeMedicationRow(med) });
   } catch (e) {
@@ -1603,13 +1634,16 @@ opsRouter.post("/leads/:id/admissions", async (req, res) => {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
     const now = Date.now();
-    const admission = await ops.startAdmission({
-      leadId,
-      facilityNumber,
-      ...parsed.data,
-      createdAt: now,
-      updatedAt: now,
-    });
+    const admission = await ops.startAdmission(
+      {
+        leadId,
+        facilityNumber,
+        ...parsed.data,
+        createdAt: now,
+        updatedAt: now,
+      },
+      getActor(req),
+    );
     // Advance lead stage
     await ops.updateLead(leadId, facilityNumber, { stage: "admission_in_progress" });
     res.status(201).json({ success: true, data: admission });
@@ -1639,7 +1673,10 @@ opsRouter.get("/facilities/:facilityNumber/leads/:leadId/admissions", async (req
     }
 
     if (!admission) {
-      const created = await ops.startAdmission({ leadId, facilityNumber, createdAt: Date.now(), updatedAt: Date.now() });
+      const created = await ops.startAdmission(
+        { leadId, facilityNumber, createdAt: Date.now(), updatedAt: Date.now() },
+        getActor(req),
+      );
       const r = await pool.query<Record<string, unknown>>(
         `SELECT * FROM ops_admissions WHERE id = $1`,
         [created.id]
@@ -1709,7 +1746,7 @@ opsRouter.put("/leads/:leadId/lic/:form", async (req, res) => {
     // Normalize frontend formId to storage column key: lic601 → lic_601, lic602a → lic_602a
     const rawForm = req.params.form;
     const normalizedForm = rawForm.replace(/^lic(\d)/, "lic_$1");
-    const ok = await ops.updateAdmissionLicForm(row.id, normalizedForm, parsed.data.completed);
+    const ok = await ops.updateAdmissionLicForm(row.id, normalizedForm, parsed.data.completed, getActor(req));
     if (!ok) return res.status(404).json({ success: false, error: "Not found or invalid form" });
     res.json({ success: true });
   } catch (e) {
@@ -1781,7 +1818,7 @@ opsRouter.put("/admissions/:id/lic/:form", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const ok = await ops.updateAdmissionLicForm(admissionId, form, parsed.data.completed);
+    const ok = await ops.updateAdmissionLicForm(admissionId, form, parsed.data.completed, getActor(req));
     if (!ok) return res.status(404).json({ success: false, error: "Not found or invalid form" });
     res.json({ success: true });
   } catch (e) {
@@ -5512,6 +5549,437 @@ opsRouter.get(
       return res.json({ success: true, data: cadence });
     } catch (e) {
       console.error("[ops] drill cadence failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 4 Phase 4.2 (W12) — Resident trust account routes
+//
+// Feature gate: every route returns 404 with body
+// "Trust accounts are not enabled for this facility" unless
+// RESIDENT_TRUST_ENABLED='true' for the facility. The middleware below is
+// the first thing in the route handler chain so a disabled facility pays
+// no DB cost beyond one reg-settings read.
+//
+// Permission mapping:
+//   GET    /facilities/:fn/trust/accounts                       — RESIDENT_TRUST:read
+//   GET    /trust/accounts/:id                                  — RESIDENT_TRUST:read
+//   POST   /trust/accounts                                      — RESIDENT_TRUST:create
+//   POST   /trust/accounts/:id/close                            — RESIDENT_TRUST:update
+//   GET    /trust/accounts/:id/ledger                           — RESIDENT_TRUST:read
+//   POST   /trust/accounts/:id/ledger                           — RESIDENT_TRUST:create
+//   POST   /trust/ledger/:entryId/reverse                       — RESIDENT_TRUST:create
+//   GET    /trust/accounts/:id/reconcile                        — RESIDENT_TRUST:read
+//   POST   /trust/accounts/:id/repair-balance                   — RESIDENT_TRUST:update
+//   POST   /trust/accounts/:id/statements                       — RESIDENT_TRUST:create
+//   GET    /trust/accounts/:id/statements                       — RESIDENT_TRUST:read
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Translate TrustDomainError → HTTP response. 409 for domain rejections is
+// the right shape (conflict with current resource state — closed account,
+// non-zero balance, missing witness, etc.).
+function handleTrustDomainError(res: Response, err: unknown): boolean {
+  if (err instanceof TrustDomainError) {
+    res.status(409).json({ success: false, error: err.message, code: err.code });
+    return true;
+  }
+  return false;
+}
+
+async function requireTrustEnabled(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const facilityNumber = getFacilityNumber(req);
+  if (!facilityNumber) {
+    res.status(401).json({ success: false, error: "Not authenticated" });
+    return;
+  }
+  const enabled = await isTrustEnabled(facilityNumber);
+  if (!enabled) {
+    res.status(404).json({
+      success: false,
+      error: "Trust accounts are not enabled for this facility",
+    });
+    return;
+  }
+  next();
+}
+
+const trustListAccountsQuerySchema = z
+  .object({
+    residentId: z.coerce.number().int().positive().optional(),
+    status: z.enum(["active", "closed"]).optional(),
+    includeClosed: z
+      .union([z.literal("true"), z.literal("1"), z.literal("false"), z.literal("0")])
+      .optional(),
+  })
+  .strict();
+
+const trustCreateAccountSchema = z
+  .object({ residentId: z.number().int().positive() })
+  .strict();
+
+const trustLedgerListQuerySchema = z
+  .object({
+    sinceMs: z.coerce.number().int().nonnegative().optional(),
+    untilMs: z.coerce.number().int().nonnegative().optional(),
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  })
+  .strict();
+
+const trustLedgerCreateSchema = z
+  .object({
+    direction: z.enum(TRUST_LEDGER_DIRECTIONS),
+    amountCents: z.number().int().positive(),
+    category: z.enum(TRUST_LEDGER_CATEGORIES),
+    description: z.string().min(1).max(500),
+    transactedAt: z.number().int().positive(),
+    recordedBy: z.string().min(1).max(120),
+    witnessedBy: z.string().min(1).max(120).optional(),
+    notes: z.string().max(2000).optional(),
+    receiptUri: z.string().max(2000).optional(),
+  })
+  .strict();
+
+const trustReverseSchema = z
+  .object({ reason: z.string().min(1).max(500) })
+  .strict();
+
+const trustStatementCreateSchema = z
+  .object({
+    periodStartAt: z.number().int().nonnegative(),
+    periodEndAt: z.number().int().positive(),
+  })
+  .strict()
+  .refine((v) => v.periodStartAt < v.periodEndAt, {
+    message: "periodStartAt must be strictly less than periodEndAt",
+  });
+
+// GET /facilities/:facilityNumber/trust/accounts
+opsRouter.get(
+  "/facilities/:facilityNumber/trust/accounts",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "read"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = String(req.params.facilityNumber);
+      const parsed = trustListAccountsQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const includeClosed =
+        parsed.data.includeClosed === "true" || parsed.data.includeClosed === "1";
+      const rows = await listTrustAccounts(facilityNumber, {
+        residentId: parsed.data.residentId,
+        status: parsed.data.status,
+        includeClosed,
+      });
+      return res.json({ success: true, data: rows });
+    } catch (e) {
+      console.error("[ops] trust accounts list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /trust/accounts/:id
+opsRouter.get(
+  "/trust/accounts/:id",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "read"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const row = await getTrustAccount(id, facilityNumber);
+      if (!row) {
+        return res.status(404).json({ success: false, error: "Trust account not found" });
+      }
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      console.error("[ops] trust account get failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /trust/accounts  — body { residentId }
+opsRouter.post(
+  "/trust/accounts",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "create"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const parsed = trustCreateAccountSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await ensureTrustAccount(
+        facilityNumber,
+        parsed.data.residentId,
+        actor.id,
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (handleTrustDomainError(res, e)) return;
+      console.error("[ops] trust account create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /trust/accounts/:id/close
+opsRouter.post(
+  "/trust/accounts/:id/close",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "update"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const actor = getActor(req);
+      const row = await closeTrustAccount(id, facilityNumber, actor.id, actor);
+      if (!row) {
+        return res.status(404).json({ success: false, error: "Trust account not found" });
+      }
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (handleTrustDomainError(res, e)) return;
+      console.error("[ops] trust account close failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /trust/accounts/:id/ledger
+opsRouter.get(
+  "/trust/accounts/:id/ledger",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "read"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const parsed = trustLedgerListQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      // Verify the account belongs to this facility — defense in depth so
+      // the ledger doesn't leak across tenants if the id is guessed.
+      const acct = await getTrustAccount(id, facilityNumber);
+      if (!acct) {
+        return res.status(404).json({ success: false, error: "Trust account not found" });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await listLedger(facilityNumber, {
+        accountId: id,
+        sinceMs: parsed.data.sinceMs,
+        untilMs: parsed.data.untilMs,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] trust ledger list failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /trust/accounts/:id/ledger
+opsRouter.post(
+  "/trust/accounts/:id/ledger",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "create"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const parsed = trustLedgerCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await appendLedgerEntry(facilityNumber, id, parsed.data, actor);
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (handleTrustDomainError(res, e)) return;
+      console.error("[ops] trust ledger append failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /trust/ledger/:entryId/reverse
+opsRouter.post(
+  "/trust/ledger/:entryId/reverse",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "create"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const entryId = parseInt(String(req.params.entryId), 10);
+      if (!Number.isInteger(entryId) || entryId <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const parsed = trustReverseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await recordReversal(facilityNumber, entryId, parsed.data.reason, actor);
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (handleTrustDomainError(res, e)) return;
+      console.error("[ops] trust ledger reverse failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /trust/accounts/:id/reconcile
+opsRouter.get(
+  "/trust/accounts/:id/reconcile",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "read"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const data = await reconcileAccount(id, facilityNumber);
+      return res.json({ success: true, data });
+    } catch (e) {
+      if (handleTrustDomainError(res, e)) return;
+      console.error("[ops] trust reconcile failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /trust/accounts/:id/repair-balance
+opsRouter.post(
+  "/trust/accounts/:id/repair-balance",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "update"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const actor = getActor(req);
+      const row = await repairBalance(id, facilityNumber, actor);
+      if (!row) {
+        return res.status(404).json({ success: false, error: "Trust account not found" });
+      }
+      return res.json({ success: true, data: row });
+    } catch (e) {
+      if (handleTrustDomainError(res, e)) return;
+      console.error("[ops] trust repair balance failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// POST /trust/accounts/:id/statements
+opsRouter.post(
+  "/trust/accounts/:id/statements",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "create"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const parsed = trustStatementCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: parsed.error.errors[0].message });
+      }
+      const actor = getActor(req);
+      const row = await generateMonthlyStatement(
+        facilityNumber,
+        id,
+        parsed.data.periodStartAt,
+        parsed.data.periodEndAt,
+        actor.id,
+        actor,
+      );
+      return res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      if (handleTrustDomainError(res, e)) return;
+      console.error("[ops] trust statement create failed", e);
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
+  },
+);
+
+// GET /trust/accounts/:id/statements
+opsRouter.get(
+  "/trust/accounts/:id/statements",
+  requireOpsPermission(OPS_RESOURCES.RESIDENT_TRUST, "read"),
+  requireTrustEnabled,
+  async (req, res) => {
+    try {
+      const facilityNumber = getFacilityNumber(req);
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, error: "Invalid id" });
+      }
+      const acct = await getTrustAccount(id, facilityNumber);
+      if (!acct) {
+        return res.status(404).json({ success: false, error: "Trust account not found" });
+      }
+      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+      const result = await listStatements(facilityNumber, id, { page, limit });
+      return res.json({
+        success: true,
+        data: result.rows,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (e) {
+      console.error("[ops] trust statement list failed", e);
       return res.status(500).json({ success: false, error: "Internal error" });
     }
   },

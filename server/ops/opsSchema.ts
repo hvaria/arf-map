@@ -857,6 +857,92 @@ export const OPS_PG_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_ops_posting_verif_facility ON ops_posting_verifications(facility_number, verified_at);
   CREATE INDEX IF NOT EXISTS idx_ops_posting_verif_catalog  ON ops_posting_verifications(catalog_id, verified_at);
+
+  -- ── Wave 4 Phase 4.2 — Resident trust accounts (W12) ───────────────────────
+  -- Per-resident trust account + insert-only ledger + monthly statement
+  -- snapshots. Money is stored as BIGINT cents — divergent from ops_billing_*
+  -- which uses DOUBLE PRECISION. Floats are fine for invoice totals (one-way
+  -- arithmetic, single tenant currency) but trust accounts need integer cents
+  -- to guarantee bit-exact reconciliation across many small allowance/snack
+  -- debits. Drift would compound and break the inspector-facing reconciliation
+  -- surface that flags mismatches between the ledger SUM and the cached
+  -- balance.
+  --
+  -- One row per resident per facility. Created lazily on first transaction
+  -- OR when the admin explicitly enables trust for a resident. The partial
+  -- unique on (facility_number, resident_id) WHERE status='active' allows
+  -- closing an account and reopening a new one for the same resident
+  -- (matches the ops_posting_catalog archive+re-add pattern).
+  CREATE TABLE IF NOT EXISTS ops_resident_trust_accounts (
+    id                BIGSERIAL PRIMARY KEY,
+    facility_number   TEXT NOT NULL,
+    resident_id       BIGINT NOT NULL,
+    balance_cents     BIGINT NOT NULL DEFAULT 0,
+    status            TEXT NOT NULL DEFAULT 'active',
+    opened_at         BIGINT NOT NULL,
+    closed_at         BIGINT,
+    closed_by         TEXT,
+    notes             TEXT,
+    created_by        TEXT NOT NULL,
+    created_at        BIGINT NOT NULL,
+    updated_at        BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_trust_facility ON ops_resident_trust_accounts(facility_number);
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_ops_trust_resident
+    ON ops_resident_trust_accounts(facility_number, resident_id) WHERE status = 'active';
+
+  -- Every credit/debit. Insert-only at the API layer (corrections are
+  -- reversal entries linked back via reverses_entry_id with category
+  -- 'reversal' and opposite direction — never UPDATEs — to preserve an
+  -- immutable financial audit trail). amount_cents is always positive;
+  -- direction encodes sign. witnessed_by carries the dual-signature staff
+  -- id on debits when RESIDENT_TRUST_DUAL_SIG_REQUIRED is true (storage
+  -- agent enforces). No FK on account_id (matches existing ops
+  -- application-level integrity convention).
+  CREATE TABLE IF NOT EXISTS ops_resident_trust_ledger (
+    id                BIGSERIAL PRIMARY KEY,
+    facility_number   TEXT NOT NULL,
+    account_id        BIGINT NOT NULL,
+    resident_id       BIGINT NOT NULL,
+    direction         TEXT NOT NULL,
+    amount_cents      BIGINT NOT NULL,
+    category          TEXT NOT NULL,
+    description       TEXT NOT NULL,
+    transacted_at     BIGINT NOT NULL,
+    recorded_by       TEXT NOT NULL,
+    witnessed_by      TEXT,
+    reverses_entry_id BIGINT,
+    receipt_uri       TEXT,
+    notes             TEXT,
+    created_at        BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_trust_ledger_facility    ON ops_resident_trust_ledger(facility_number, transacted_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_trust_ledger_account     ON ops_resident_trust_ledger(account_id, transacted_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_trust_ledger_resident    ON ops_resident_trust_ledger(resident_id, transacted_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_trust_ledger_reverses    ON ops_resident_trust_ledger(reverses_entry_id);
+
+  -- Monthly statement snapshots — generated on demand or by a future cron
+  -- job. A statement freezes the month's running balance + transaction
+  -- totals so it can be reproduced verbatim during an inspection. period
+  -- bounds are [start_at, end_at) — start inclusive, end exclusive — to
+  -- match every other windowed query in the ops schema.
+  CREATE TABLE IF NOT EXISTS ops_resident_trust_statements (
+    id                     BIGSERIAL PRIMARY KEY,
+    facility_number        TEXT NOT NULL,
+    account_id             BIGINT NOT NULL,
+    resident_id            BIGINT NOT NULL,
+    period_start_at        BIGINT NOT NULL,
+    period_end_at          BIGINT NOT NULL,
+    opening_balance_cents  BIGINT NOT NULL,
+    closing_balance_cents  BIGINT NOT NULL,
+    credit_total_cents     BIGINT NOT NULL,
+    debit_total_cents      BIGINT NOT NULL,
+    entry_count            INTEGER NOT NULL,
+    generated_by           TEXT NOT NULL,
+    generated_at           BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_trust_stmt_facility ON ops_resident_trust_statements(facility_number, period_start_at);
+  CREATE INDEX IF NOT EXISTS idx_ops_trust_stmt_account  ON ops_resident_trust_statements(account_id, period_start_at);
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1648,6 +1734,68 @@ export const opsPostingVerifications = pgTable("ops_posting_verifications", {
   createdAt:      ts("created_at").notNull(),
 });
 
+// ── Wave 4 Phase 4.2: Resident trust accounts (W12) ───────────────────────
+// Per-resident trust account + insert-only ledger + monthly statement
+// snapshots. Money is BIGINT cents (Drizzle bigint with mode:"number"
+// stays in JS number range for any plausible per-resident balance — a
+// $90 trillion balance would be required to overflow Number.MAX_SAFE_INTEGER).
+// Divergent from ops_billing_* which uses doublePrecision — see DDL
+// comment for rationale (reconciliation needs integer cents). account_id
+// on the ledger and statement tables is application-level FK (matches
+// existing ops convention). status on opsResidentTrustAccounts is
+// 'active' | 'closed'; direction on the ledger is 'credit' | 'debit';
+// category is one of the values in TRUST_LEDGER_CATEGORIES (see
+// shared/resident-trust.ts).
+
+export const opsResidentTrustAccounts = pgTable("ops_resident_trust_accounts", {
+  id:             serial("id").primaryKey(),
+  facilityNumber: text("facility_number").notNull(),
+  residentId:     bigint("resident_id", { mode: "number" }).notNull(),
+  balanceCents:   bigint("balance_cents", { mode: "number" }).notNull().default(0),
+  status:         text("status").notNull().default("active"),
+  openedAt:       ts("opened_at").notNull(),
+  closedAt:       ts("closed_at"),
+  closedBy:       text("closed_by"),
+  notes:          text("notes"),
+  createdBy:      text("created_by").notNull(),
+  createdAt:      ts("created_at").notNull(),
+  updatedAt:      ts("updated_at").notNull(),
+});
+
+export const opsResidentTrustLedger = pgTable("ops_resident_trust_ledger", {
+  id:              serial("id").primaryKey(),
+  facilityNumber:  text("facility_number").notNull(),
+  accountId:       bigint("account_id", { mode: "number" }).notNull(),
+  residentId:      bigint("resident_id", { mode: "number" }).notNull(),
+  direction:       text("direction").notNull(),
+  amountCents:     bigint("amount_cents", { mode: "number" }).notNull(),
+  category:        text("category").notNull(),
+  description:     text("description").notNull(),
+  transactedAt:    ts("transacted_at").notNull(),
+  recordedBy:      text("recorded_by").notNull(),
+  witnessedBy:     text("witnessed_by"),
+  reversesEntryId: bigint("reverses_entry_id", { mode: "number" }),
+  receiptUri:      text("receipt_uri"),
+  notes:           text("notes"),
+  createdAt:       ts("created_at").notNull(),
+});
+
+export const opsResidentTrustStatements = pgTable("ops_resident_trust_statements", {
+  id:                  serial("id").primaryKey(),
+  facilityNumber:      text("facility_number").notNull(),
+  accountId:           bigint("account_id", { mode: "number" }).notNull(),
+  residentId:          bigint("resident_id", { mode: "number" }).notNull(),
+  periodStartAt:       ts("period_start_at").notNull(),
+  periodEndAt:         ts("period_end_at").notNull(),
+  openingBalanceCents: bigint("opening_balance_cents", { mode: "number" }).notNull(),
+  closingBalanceCents: bigint("closing_balance_cents", { mode: "number" }).notNull(),
+  creditTotalCents:    bigint("credit_total_cents", { mode: "number" }).notNull(),
+  debitTotalCents:     bigint("debit_total_cents", { mode: "number" }).notNull(),
+  entryCount:          integer("entry_count").notNull(),
+  generatedBy:         text("generated_by").notNull(),
+  generatedAt:         ts("generated_at").notNull(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1759,3 +1907,12 @@ export type InsertOpsPostingCatalog = typeof opsPostingCatalog.$inferInsert;
 
 export type OpsPostingVerification       = typeof opsPostingVerifications.$inferSelect;
 export type InsertOpsPostingVerification = typeof opsPostingVerifications.$inferInsert;
+
+export type OpsResidentTrustAccount       = typeof opsResidentTrustAccounts.$inferSelect;
+export type InsertOpsResidentTrustAccount = typeof opsResidentTrustAccounts.$inferInsert;
+
+export type OpsResidentTrustLedgerEntry       = typeof opsResidentTrustLedger.$inferSelect;
+export type InsertOpsResidentTrustLedgerEntry = typeof opsResidentTrustLedger.$inferInsert;
+
+export type OpsResidentTrustStatement       = typeof opsResidentTrustStatements.$inferSelect;
+export type InsertOpsResidentTrustStatement = typeof opsResidentTrustStatements.$inferInsert;
