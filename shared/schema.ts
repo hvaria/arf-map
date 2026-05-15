@@ -94,6 +94,19 @@ export const facilitySubscriptions = pgTable("facility_subscriptions", {
   updatedAt: ts("updated_at").notNull(),
 });
 
+// Customer-facility public-listing + report-letterhead overrides. One row per
+// facility_number. All columns below the original four (phone/description/
+// website/email) are nullable additive — backwards compatible with existing
+// rows. JSON-as-TEXT columns (hours_of_operation_json, languages_spoken_json,
+// etc.) MUST be parsed defensively on read; nothing in the DB layer validates
+// shape.
+//
+// NOTE on facility_logo_*: this is the customer facility's own logo (each ARF
+// uploads its own — used on their public listing and on PDF report
+// letterheads). It is NOT the app's BrandLogo (client/src/components/BrandLogo.tsx),
+// which is the 2DOT2 INC. / arf-map brand identity and must never be sourced
+// from this table. Storage path lives on the Fly volume, populated by the
+// /api/facility/profile/logo upload endpoint (see server/routes/facilityProfile.ts).
 export const facilityOverrides = pgTable("facility_overrides", {
   id: serial("id").primaryKey(),
   facilityNumber: text("facility_number").notNull().unique(),
@@ -101,6 +114,58 @@ export const facilityOverrides = pgTable("facility_overrides", {
   description: text("description"),
   website: text("website"),
   email: text("email"),
+
+  // ── Identity & branding (customer facility's own logo — NOT the app brand) ─
+  dbaName: text("dba_name"),
+  logoStorageUri: text("logo_storage_uri"),
+  logoMimeType: text("logo_mime_type"),
+  logoUpdatedAt: ts("logo_updated_at"),
+
+  // ── Mailing address (when different from CCLD physical address) ──────────
+  mailingAddressLine1: text("mailing_address_line1"),
+  mailingAddressLine2: text("mailing_address_line2"),
+  mailingCity: text("mailing_city"),
+  mailingState: text("mailing_state"),
+  mailingZip: text("mailing_zip"),
+
+  // ── Operations: hours / languages / care types (JSON-as-TEXT) ────────────
+  // hoursOfOperationJson  → { mon: {open:'08:00', close:'17:00'}, ... }
+  // languagesSpokenJson   → ['en','es','tl']
+  // careTypesOfferedJson  → ['skilled_nursing','memory_care', ...]
+  // Parse defensively on read.
+  hoursOfOperationJson: text("hours_of_operation_json"),
+  languagesSpokenJson: text("languages_spoken_json"),
+  careTypesOfferedJson: text("care_types_offered_json"),
+
+  // ── Administrator (distinct from licensee — different regulatory role) ───
+  administratorName: text("administrator_name"),
+  administratorPhone: text("administrator_phone"),
+  administratorEmail: text("administrator_email"),
+  administratorLicenseNumber: text("administrator_license_number"),
+
+  // ── Operations / business detail ─────────────────────────────────────────
+  // taxIdLast4: store LAST 4 of the EIN only. Never store the full EIN here.
+  taxIdLast4: text("tax_id_last4"),
+  yearEstablished: integer("year_established"),
+  accreditationsJson: text("accreditations_json"),
+
+  // ── Social ───────────────────────────────────────────────────────────────
+  facebookUrl: text("facebook_url"),
+  instagramUrl: text("instagram_url"),
+  linkedinUrl: text("linkedin_url"),
+
+  // ── Report letterhead overrides ──────────────────────────────────────────
+  // When NULL, the PDF renderer falls back to facility name + license + city
+  // (see defaultReportHeader in shared/facility-profile.ts).
+  reportHeaderText: text("report_header_text"),
+  reportFooterText: text("report_footer_text"),
+
+  // ── Prefill audit ────────────────────────────────────────────────────────
+  // Records when blanks were auto-filled from CCLD data on signup, and which
+  // columns were populated (JSON array of column names).
+  prefilledFromCcldAt: ts("prefilled_from_ccld_at"),
+  prefilledFields: text("prefilled_fields"),
+
   updatedAt: ts("updated_at").notNull(),
 });
 

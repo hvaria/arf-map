@@ -25,6 +25,7 @@ import {
 } from "@shared/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { db, pool } from "./db/index";
+import { CCLD_PREFILL_MAP } from "@shared/facility-profile";
 
 export type { FacilityDbRow } from "@shared/etl-types";
 
@@ -48,8 +49,12 @@ export interface IStorage {
   getFacilityOverride(facilityNumber: string): Promise<FacilityOverride | undefined>;
   upsertFacilityOverride(
     facilityNumber: string,
-    data: Partial<Pick<FacilityOverride, "phone" | "description" | "website" | "email">>
+    data: Partial<Omit<FacilityOverride, "id" | "facilityNumber" | "updatedAt">>
   ): Promise<FacilityOverride>;
+  prefillFacilityOverrideFromCcld(
+    facilityNumber: string,
+    actor: string,
+  ): Promise<{ override: FacilityOverride; prefilled: string[] }>;
 
   getAllJobPostings(): Promise<DbJobPosting[]>;
   getJobPostingById(id: number): Promise<DbJobPosting | undefined>;
@@ -150,7 +155,7 @@ export class DatabaseStorage implements IStorage {
 
   async upsertFacilityOverride(
     facilityNumber: string,
-    data: Partial<Pick<FacilityOverride, "phone" | "description" | "website" | "email">>
+    data: Partial<Omit<FacilityOverride, "id" | "facilityNumber" | "updatedAt">>
   ): Promise<FacilityOverride> {
     const existing = await this.getFacilityOverride(facilityNumber);
     const now = Date.now();
@@ -167,6 +172,105 @@ export class DatabaseStorage implements IStorage {
       .values({ facilityNumber, ...data, updatedAt: now })
       .returning();
     return rows[0] as FacilityOverride;
+  }
+
+  async prefillFacilityOverrideFromCcld(
+    facilityNumber: string,
+    actor: string,
+  ): Promise<{ override: FacilityOverride; prefilled: string[] }> {
+    // The CCLD `facilities` table doesn't carry a state column (every row is
+    // California by construction). `state` in CCLD_PREFILL_MAP resolves to
+    // an empty value here and is skipped by the null-check below.
+    const facRes = await pool.query(
+      `SELECT phone, address, city, zip, administrator, first_license_date
+         FROM facilities WHERE number = $1`,
+      [facilityNumber],
+    );
+    const fac = facRes.rows[0] as
+      | {
+          phone: string | null;
+          address: string | null;
+          city: string | null;
+          zip: string | null;
+          administrator: string | null;
+          first_license_date: string | null;
+        }
+      | undefined;
+
+    let existing = await this.getFacilityOverride(facilityNumber);
+    if (!existing) {
+      const inserted = await db
+        .insert(facilityOverrides)
+        .values({ facilityNumber, updatedAt: Date.now() })
+        .returning();
+      existing = inserted[0] as FacilityOverride;
+    }
+
+    if (existing.prefilledFromCcldAt) {
+      return { override: existing, prefilled: [] };
+    }
+
+    if (!fac) {
+      const now = Date.now();
+      const rows = await db
+        .update(facilityOverrides)
+        .set({
+          prefilledFromCcldAt: now,
+          prefilledFields: JSON.stringify([]),
+          updatedAt: now,
+        })
+        .where(eq(facilityOverrides.facilityNumber, facilityNumber))
+        .returning();
+      return { override: rows[0] as FacilityOverride, prefilled: [] };
+    }
+
+    const updates: Record<string, unknown> = {};
+    const written: string[] = [];
+
+    type OverrideCol = keyof typeof CCLD_PREFILL_MAP;
+    const sourceValue = (srcKey: string): string | null => {
+      if (srcKey === "first_license_date_year") {
+        const raw = fac.first_license_date ?? "";
+        const m = raw.match(/(19|20)\d{2}/);
+        return m ? m[0] : null;
+      }
+      const v = (fac as Record<string, unknown>)[srcKey];
+      if (v == null) return null;
+      const s = String(v).trim();
+      return s.length > 0 ? s : null;
+    };
+
+    for (const overrideCol of Object.keys(CCLD_PREFILL_MAP) as OverrideCol[]) {
+      const srcKey = CCLD_PREFILL_MAP[overrideCol];
+      const currentValue = (existing as Record<string, unknown>)[overrideCol];
+      if (currentValue != null && currentValue !== "") continue;
+      const fromCcld = sourceValue(srcKey);
+      if (fromCcld == null) continue;
+      if (overrideCol === "yearEstablished") {
+        const year = Number(fromCcld);
+        if (Number.isFinite(year) && year >= 1900 && year <= 2100) {
+          updates[overrideCol] = year;
+          written.push(overrideCol);
+        }
+      } else {
+        updates[overrideCol] = fromCcld;
+        written.push(overrideCol);
+      }
+    }
+
+    const now = Date.now();
+    const rows = await db
+      .update(facilityOverrides)
+      .set({
+        ...updates,
+        prefilledFromCcldAt: now,
+        prefilledFields: JSON.stringify(written),
+        updatedAt: now,
+      })
+      .where(eq(facilityOverrides.facilityNumber, facilityNumber))
+      .returning();
+    void actor;
+    return { override: rows[0] as FacilityOverride, prefilled: written };
   }
 
   async getAllJobPostings(): Promise<DbJobPosting[]> {

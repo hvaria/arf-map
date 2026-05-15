@@ -65,6 +65,39 @@ const MAIN_PG_SCHEMA_SQL = `
     email           TEXT,
     updated_at      BIGINT NOT NULL
   );
+  -- ── facility_overrides: additive columns for public listing + report letterhead.
+  -- All nullable, no defaults — Postgres 11+ ADD COLUMN with no default is a
+  -- metadata-only change (instant, safe on populated production tables).
+  -- NOTE: logo_* columns are for the customer FACILITY's own logo (each ARF
+  -- uploads its own; used on their public listing and PDF reports). They are
+  -- NOT the app brand identity (client/src/components/BrandLogo.tsx).
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS dba_name TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS logo_storage_uri TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS logo_mime_type TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS logo_updated_at BIGINT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_address_line1 TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_address_line2 TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_city TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_state TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_zip TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS hours_of_operation_json TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS languages_spoken_json TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS care_types_offered_json TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS administrator_name TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS administrator_phone TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS administrator_email TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS administrator_license_number TEXT;
+  -- tax_id_last4: LAST 4 digits of EIN only. Full EIN is NEVER stored here.
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS tax_id_last4 TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS year_established INTEGER;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS accreditations_json TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS facebook_url TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS instagram_url TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS linkedin_url TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS report_header_text TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS report_footer_text TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS prefilled_from_ccld_at BIGINT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS prefilled_fields TEXT;
 
   CREATE TABLE IF NOT EXISTS job_postings (
     id              SERIAL PRIMARY KEY,

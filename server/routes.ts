@@ -15,6 +15,7 @@ import { interestsRouter } from "./routes/interests"; // NEW: expression-of-inte
 import { credentialsRouter } from "./routes/credentials";
 import { workExperienceRouter } from "./routes/workExperience";
 import { billingRouter } from "./routes/billing";
+import { facilityProfileRouter } from "./routes/facilityProfile";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 import {
   getCachedFacilities,
@@ -56,6 +57,18 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 function generateOTP(): string {
   return randomInt(100000, 999999).toString();
+}
+
+/** Defensive JSON.parse for TEXT-stored array columns — never throws. */
+function safeParseJsonArray(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((v): v is string => typeof v === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 const registerSchema = z.object({
@@ -130,6 +143,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.use("/api", credentialsRouter);
   app.use("/api", workExperienceRouter);
   app.use("/api/billing", billingRouter);
+  app.use("/api", facilityProfileRouter);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -603,12 +617,39 @@ export async function registerRoutes(server: Server, app: Express) {
       verificationExpiry: null,
     });
 
+    // CCLD auto-prefill: run the override-row prefill exactly once on first
+    // successful verification so the facility's dashboard lands with the
+    // CCLD-derived contact + address fields already populated. Idempotent at
+    // the storage layer (no-op if the row's `prefilledFromCcldAt` is set),
+    // and best-effort — a missing CCLD row or DB hiccup must NOT block login.
+    let ccldPrefill: { fields: string[]; at: number } | null = null;
+    try {
+      const result = await storage.prefillFacilityOverrideFromCcld(
+        account.facilityNumber,
+        "system_prefill",
+      );
+      if (result.prefilled.length > 0 && result.override.prefilledFromCcldAt) {
+        ccldPrefill = {
+          fields: result.prefilled,
+          at: result.override.prefilledFromCcldAt,
+        };
+      }
+    } catch (prefillErr) {
+      console.error("[facility/verify-email] CCLD prefill failed", prefillErr);
+    }
+
     // S-04: regenerate session before login to prevent session fixation
     req.session.regenerate((regErr) => {
       if (regErr) return next(regErr);
       req.login(account, (err) => {
         if (err) return next(err);
-        res.json({ ok: true, id: account.id, facilityNumber: account.facilityNumber, username: account.username });
+        res.json({
+          ok: true,
+          id: account.id,
+          facilityNumber: account.facilityNumber,
+          username: account.username,
+          ccldPrefill,
+        });
       });
     });
   });
@@ -756,10 +797,28 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  app.get("/api/facility/me", (req, res) => {
+  app.get("/api/facility/me", async (req, res) => {
     res.set("Cache-Control", "no-store"); // S-06: don't cache auth state
     if (!req.isAuthenticated() || !req.user) {
       return res.status(401).json({ message: "Not authenticated" });
+    }
+    // CCLD prefill summary — surfaces the timestamp + the columns that the
+    // signup-time prefill wrote so the dashboard can show a one-time toast
+    // ("Pre-filled N fields from your CCLD license record"). The FE may also
+    // call POST /api/facility/profile/prefill-from-ccld explicitly; this read
+    // is just a convenience hint so first dashboard load has the data ready.
+    let ccldPrefill: { fields: string[]; at: number } | null = null;
+    try {
+      const override = await storage.getFacilityOverride(req.user.facilityNumber);
+      if (override?.prefilledFromCcldAt) {
+        const parsed = override.prefilledFields
+          ? safeParseJsonArray(override.prefilledFields)
+          : [];
+        ccldPrefill = { fields: parsed, at: override.prefilledFromCcldAt };
+      }
+    } catch (err) {
+      // Non-fatal — log and continue. Auth payload must still resolve.
+      console.error("[facility/me] override lookup failed", err);
     }
     // Subscription block (Phase 0): exposes the hot-path cache columns the
     // Operations gate reads from. status + currentPeriodEnd are populated by
@@ -772,6 +831,7 @@ export async function registerRoutes(server: Server, app: Express) {
       facilityNumber: req.user.facilityNumber,
       username: req.user.username,
       role: req.user.role ?? "facility_admin",
+      ccldPrefill,
       subscription: {
         status: req.user.subscriptionStatus ?? null,
         currentPeriodEnd: req.user.subscriptionCurrentPeriodEnd ?? null,

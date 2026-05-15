@@ -111,6 +111,9 @@ function csvBytes(header: string[], rows: unknown[][]): Buffer {
 interface PdfHeaderArgs {
   title: string;
   subtitle?: string;
+  // Letterhead — accepts the merged shape from getFacilityReportHeader (which
+  // optionally includes logoPath + headerText). Older callers pass only the
+  // CCLD-derived subset; the extra fields are all optional.
   facility: {
     name: string;
     number: string;
@@ -118,6 +121,9 @@ interface PdfHeaderArgs {
     city?: string;
     zip?: string;
     phone?: string;
+    logoPath?: string | null;
+    headerText?: string | null;
+    administrator?: string | null;
   } | null;
   generatedAt: number;
   generatedBy: string;
@@ -125,24 +131,62 @@ interface PdfHeaderArgs {
 
 function drawPdfHeader(doc: InstanceType<typeof PDFDocument>, args: PdfHeaderArgs): void {
   const fac = args.facility;
-  doc.fontSize(16).fillColor("#01696f").text(args.title, { align: "left" });
+  const top = doc.y;
+
+  // Render the facility logo at top-left (48pt square) when available.
+  // pdfkit only supports PNG/JPEG — `reportQueries.getFacilityReportHeader`
+  // already filters SVG out and resolves the absolute path for us.
+  let titleX = doc.page.margins.left;
+  if (fac?.logoPath) {
+    try {
+      doc.image(fac.logoPath, doc.page.margins.left, top, { fit: [48, 48] });
+      titleX = doc.page.margins.left + 60;
+    } catch {
+      // Bad image — fall through to text-only header.
+    }
+  }
+
+  doc
+    .fontSize(16)
+    .fillColor("#01696f")
+    .text(args.title, titleX, top, { align: "left" });
   if (args.subtitle) {
     doc.moveDown(0.2);
-    doc.fontSize(10).fillColor("#64748b").text(args.subtitle);
+    doc.fontSize(10).fillColor("#64748b").text(args.subtitle, titleX, doc.y);
   }
   doc.moveDown(0.4);
   doc.fontSize(9).fillColor("#0f172a");
   if (fac) {
     const addr = [fac.address, fac.city, fac.zip].filter(Boolean).join(", ");
-    doc.text(`${fac.name}  (License #${fac.number})`);
-    if (addr) doc.text(addr);
-    if (fac.phone) doc.text(fac.phone);
+    doc.text(`${fac.name}  (License #${fac.number})`, titleX, doc.y);
+    if (addr) doc.text(addr, titleX, doc.y);
+    if (fac.phone) doc.text(fac.phone, titleX, doc.y);
+    if (fac.administrator) {
+      doc.text(`Administrator: ${fac.administrator}`, titleX, doc.y);
+    }
   } else {
-    doc.text("Facility");
+    doc.text("Facility", titleX, doc.y);
   }
+
+  // Push past the logo if the text block was shorter than the image.
+  if (fac?.logoPath) {
+    const logoBottom = top + 48;
+    if (doc.y < logoBottom) doc.y = logoBottom;
+  }
+
+  if (fac?.headerText) {
+    doc.moveDown(0.2);
+    doc
+      .fontSize(9)
+      .fillColor("#475569")
+      .text(fac.headerText, doc.page.margins.left, doc.y);
+  }
+
   doc.moveDown(0.4);
   doc.fontSize(8).fillColor("#64748b").text(
     `Generated ${new Date(args.generatedAt).toISOString()} by ${args.generatedBy}`,
+    doc.page.margins.left,
+    doc.y,
   );
   doc.moveDown(0.6);
   doc

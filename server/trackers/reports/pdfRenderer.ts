@@ -114,22 +114,57 @@ function drawHeaderStrip(
   args: RenderTrackerReportPdfArgs,
 ): void {
   const facility = args.facility;
+  const headerTop = doc.y;
 
-  doc.fillColor(COLOR_TEXT).font("Helvetica-Bold").fontSize(14);
-  doc.text(facility?.name ?? "Facility report", { continued: false });
+  let textX = PAGE_MARGIN_X;
+  if (facility?.logoPath) {
+    try {
+      doc.image(facility.logoPath, PAGE_MARGIN_X, headerTop, {
+        fit: [48, 48],
+      });
+      textX = PAGE_MARGIN_X + 60;
+    } catch {
+      // ignore broken image
+    }
+  }
+
+  doc
+    .fillColor(COLOR_TEXT)
+    .font("Helvetica-Bold")
+    .fontSize(14)
+    .text(facility?.name ?? "Facility report", textX, headerTop, {
+      continued: false,
+    });
 
   doc.font("Helvetica").fontSize(10).fillColor(COLOR_MUTED);
   const idLine = facility
     ? `License #: ${facility.number}${facility.facilityType ? ` · ${facility.facilityType}` : ""}`
     : "License: —";
-  doc.text(idLine);
+  doc.text(idLine, textX, doc.y);
 
   if (facility) {
     const addressLine = [facility.address, facility.city, facility.zip]
       .filter((v) => v && v.trim() !== "")
       .join(", ");
-    if (addressLine) doc.text(addressLine);
-    if (facility.phone) doc.text(facility.phone);
+    if (addressLine) doc.text(addressLine, textX, doc.y);
+    if (facility.phone) doc.text(facility.phone, textX, doc.y);
+    if (facility.administrator) {
+      doc.text(`Administrator: ${facility.administrator}`, textX, doc.y);
+    }
+  }
+
+  if (facility?.logoPath) {
+    const logoBottom = headerTop + 48;
+    if (doc.y < logoBottom) doc.y = logoBottom;
+  }
+
+  if (facility?.headerText) {
+    doc.moveDown(0.3);
+    doc
+      .font("Helvetica-Oblique")
+      .fontSize(9)
+      .fillColor(COLOR_MUTED)
+      .text(facility.headerText, PAGE_MARGIN_X, doc.y);
   }
 
   doc.moveDown(0.4);
@@ -446,6 +481,15 @@ function drawSignatureBlock(
     .fillColor(COLOR_MUTED)
     .fontSize(9)
     .text(`Facility license #: ${args.facility?.number ?? "—"}`);
+
+  if (args.facility?.footerText) {
+    doc.moveDown(0.5);
+    doc
+      .font("Helvetica-Oblique")
+      .fontSize(8)
+      .fillColor(COLOR_MUTED)
+      .text(args.facility.footerText, { align: "center" });
+  }
 }
 
 function drawSignatureLine(doc: PDFKit.PDFDocument, label: string): void {

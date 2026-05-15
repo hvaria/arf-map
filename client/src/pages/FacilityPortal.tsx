@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Building2, Briefcase, Plus, Pencil, Trash2, Edit3, MailCheck, RefreshCw, KeyRound, Eye, EyeOff, Lock, CheckCircle2, AlertCircle } from "lucide-react";
+import { Building2, Briefcase, Plus, Pencil, Trash2, MailCheck, RefreshCw, KeyRound, Eye, EyeOff, Lock } from "lucide-react";
 import { AppHeader } from "@/components/layout/AppHeader";
 import OperationsTab from "@/components/OperationsTab";
 import { OperationsPaywall } from "@/components/billing/OperationsPaywall";
@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-of-interest
 import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
+import { FacilityDetailsTab } from "@/components/facility/FacilityDetailsTab";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -39,13 +40,6 @@ const registerSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
-const detailsSchema = z.object({
-  phone: z.string().optional(),
-  description: z.string().optional(),
-  website: z.string().optional(),
-  email: z.string().optional(),
-});
-
 const jobSchema = z.object({
   title: z.string().min(1, "Title is required"),
   type: z.string().min(1, "Type is required"),
@@ -55,7 +49,6 @@ const jobSchema = z.object({
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
-type DetailsForm = z.infer<typeof detailsSchema>;
 type JobForm = z.infer<typeof jobSchema>;
 
 interface FacilitySearchResult {
@@ -72,6 +65,10 @@ interface SessionUser {
   // not include it. The gate predicate (`isOperationsActive`) treats
   // missing/null as "not active", so consumers can always read defensively.
   subscription?: import("@/lib/subscription").FacilitySubscription | null;
+  // Signup-time CCLD prefill envelope — surfaced as a dismissible banner
+  // on the My details tab on first arrival. Optional because older server
+  // builds may not include it.
+  ccldPrefill?: { fields: string[]; at: number } | null;
 }
 
 interface DbJobPosting {
@@ -656,97 +653,12 @@ function ResetPasswordForm({
   );
 }
 
-// ── Details editor ────────────────────────────────────────────────────────────
-
-function DetailsEditor({ facilityNumber, overrides, onSaved }: { facilityNumber: string; overrides: FacilityOverride | null; onSaved?: () => void }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-
-  const form = useForm<DetailsForm>({
-    resolver: zodResolver(detailsSchema),
-    defaultValues: {
-      phone: overrides?.phone ?? "",
-      description: overrides?.description ?? "",
-      website: overrides?.website ?? "",
-      email: overrides?.email ?? "",
-    },
-  });
-
-  const mutation = useMutation({
-    mutationFn: (data: DetailsForm) => apiRequest("PUT", "/api/facility/details", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/facility/details"] });
-      qc.invalidateQueries({ queryKey: [`/api/facilities/${facilityNumber}/public`] });
-      toast({ title: "Details saved" });
-      onSaved?.();
-    },
-    onError: (err: Error) => {
-      toast({ title: "Save failed", description: err.message, variant: "destructive" });
-    },
-  });
-
-  return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit((d) => mutation.mutate(d))} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="phone"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Phone Number</FormLabel>
-              <FormControl><Input placeholder="(555) 555-5555" {...field} /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="email"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Contact Email</FormLabel>
-              <FormControl><Input type="email" placeholder="contact@facility.com" {...field} /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="website"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Website</FormLabel>
-              <FormControl><Input placeholder="https://www.yourfacility.com" {...field} /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="description"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Facility Description</FormLabel>
-              <FormControl>
-                <Textarea
-                  placeholder="Describe your facility, services offered, and what makes it special..."
-                  className="resize-none min-h-[120px]"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <Button type="submit" disabled={mutation.isPending}>
-          {mutation.isPending ? "Saving..." : "Save Details"}
-        </Button>
-      </form>
-    </Form>
-  );
-}
-
 // ── Job posting form dialog ───────────────────────────────────────────────────
+//
+// The legacy <DetailsEditor> + 4-field flat listing card was retired —
+// the sectioned profile UI now lives in
+// client/src/components/facility/FacilityDetailsTab.tsx and posts to
+// PUT /api/facility/profile (replaces the old PUT /api/facility/details).
 
 function JobFormDialog({
   existingJob,
@@ -1046,7 +958,6 @@ function clearHashParams(keys: string[]) {
 function Dashboard({ user }: { user: SessionUser }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [editingDetails, setEditingDetails] = useState(false);
 
   // Controlled tab state — so the post-checkout / paywall-deeplink effects
   // below can force-select the Operations tab. Default still "details".
@@ -1113,14 +1024,9 @@ function Dashboard({ user }: { user: SessionUser }) {
   });
   const facility = publicData?.facility ?? null;
 
-  // Listing-completeness signal — surfaced inside "My details" tab as the
-  // operator's primary nudge to fill in missing public-listing info.
-  const overrides = publicData?.overrides ?? null;
-  const missingFields: string[] = [];
-  if (!overrides?.phone) missingFields.push("phone");
-  if (!overrides?.email) missingFields.push("email");
-  if (!overrides?.description) missingFields.push("description");
-  const isListingComplete = missingFields.length === 0;
+  // Listing-completeness banner now lives inside <FacilityDetailsTab>,
+  // which owns the /api/facility/profile envelope (and its full set of
+  // editable fields, not just phone/email/description).
 
   // Open notes drive the indicator on the Operations tab. Same query key as
   // OperationsTab → NotesContent uses, so React Query dedupes.
@@ -1243,108 +1149,15 @@ function Dashboard({ user }: { user: SessionUser }) {
       >
         <div className="max-w-3xl mx-auto px-4 lg:px-6 py-6">
           <TabsContent value="details" className="mt-0">
-            {/* Listing-completeness banner — replaces the chip that
-                previously lived in the header. Sits above the
-                details table so the operator sees the nudge before
-                they scan the fields. */}
-            <div
-              role="status"
-              data-testid="listing-completeness-banner"
-              className={cn(
-                "mb-4 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm",
-                isListingComplete
-                  ? "bg-emerald-50 border-emerald-200 text-emerald-900"
-                  : "bg-amber-50 border-amber-200 text-amber-900",
-              )}
-            >
-              {isListingComplete ? (
-                <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" aria-hidden="true" />
-              ) : (
-                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
-              )}
-              <div className="min-w-0">
-                {isListingComplete ? (
-                  <p className="font-medium leading-snug">
-                    Your public listing is complete.
-                  </p>
-                ) : (
-                  <>
-                    <p className="font-medium leading-snug">
-                      Your public listing is missing {missingFields.length} field
-                      {missingFields.length === 1 ? "" : "s"}: {missingFields.join(", ")}.
-                    </p>
-                    <p className="text-amber-800/80 text-[13px] mt-0.5 leading-snug">
-                      Filling these in helps families find you.
-                    </p>
-                  </>
-                )}
-              </div>
-            </div>
-            {editingDetails ? (
-              <div className="rounded-lg border bg-white p-5" style={{ borderColor: "var(--portal-border-subtle)" }}>
-                <div className="mb-4">
-                  <h2 className="text-base font-semibold text-stone-900">Edit listing details</h2>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    These appear on your public listing in the map.
-                  </p>
-                </div>
-                <DetailsEditor
-                  facilityNumber={user.facilityNumber}
-                  overrides={publicData?.overrides ?? null}
-                  onSaved={() => setEditingDetails(false)}
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3 -ml-3"
-                  onClick={() => setEditingDetails(false)}
-                >
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded-lg border bg-white" style={{ borderColor: "var(--portal-border-subtle)" }}>
-                <div
-                  className="px-5 py-4 flex items-center justify-between border-b"
-                  style={{ borderColor: "var(--portal-border-subtle)" }}
-                >
-                  <div>
-                    <h2 className="text-sm font-semibold text-stone-900">Listing details</h2>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Public information on your map listing
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => setEditingDetails(true)}>
-                    <Edit3 className="h-3.5 w-3.5 mr-1.5" />
-                    Edit
-                  </Button>
-                </div>
-                <dl className="text-sm divide-y" style={{ borderColor: "var(--portal-border-subtle)" }}>
-                  {[
-                    { label: "Phone",       value: publicData?.overrides?.phone },
-                    { label: "Email",       value: publicData?.overrides?.email },
-                    { label: "Website",     value: publicData?.overrides?.website },
-                    { label: "Description", value: publicData?.overrides?.description },
-                  ].map((row) => (
-                    <div
-                      key={row.label}
-                      className="flex items-start gap-4 px-5 py-3"
-                      style={{ borderColor: "var(--portal-border-subtle)" }}
-                    >
-                      <dt className="text-muted-foreground w-28 shrink-0 text-[13px]">
-                        {row.label}
-                      </dt>
-                      <dd className={cn(
-                        "min-w-0 flex-1 text-[13px]",
-                        row.value ? "text-stone-900" : "text-muted-foreground italic"
-                      )}>
-                        {row.value || "Not set"}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            )}
+            {/* Sectioned profile page — replaces the legacy flat 4-field
+                "Listing details" card. The completeness banner, prefill
+                banner, logo upload, and per-section edit dialogs all live
+                inside <FacilityDetailsTab>. */}
+            <FacilityDetailsTab
+              facilityNumber={user.facilityNumber}
+              facilityName={facility?.name ?? null}
+              initialCcldPrefill={user.ccldPrefill ?? null}
+            />
           </TabsContent>
 
           <TabsContent value="jobs" className="mt-0">
