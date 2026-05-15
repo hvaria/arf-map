@@ -51,7 +51,7 @@ import {
   CheckCircle2, Inbox, UserCog, Keyboard,
   Calendar as CalendarIcon, Activity,
   ChevronDown, ChevronUp, Plus,
-  LayoutDashboard,
+  LayoutDashboard, FileText,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -67,6 +67,7 @@ import { BillingContent } from "@/components/operations/BillingContent";
 import { StaffContent } from "@/components/operations/StaffContent";
 import { ComplianceContent } from "@/components/operations/ComplianceContent";
 import { AuditReadinessContent } from "@/components/operations/AuditReadinessContent";
+import { ReportsContent } from "@/components/operations/ReportsContent";
 import { TasksContent } from "@/components/operations/TasksContent";
 import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
 import OpsCalendar from "@/components/OpsCalendar";
@@ -171,6 +172,7 @@ type SubView =
   | "staff"
   | "compliance"
   | "audit_readiness"
+  | "reports"
   | "tracker"
   | "calendar";
 
@@ -189,6 +191,7 @@ const NAV_ITEMS: Array<{ key: SubView | null; label: string; icon: React.Element
   { key: "crm",        label: "CRM",         icon: UserPlus },
   { key: "billing",    label: "Billing",     icon: Receipt },
   { key: "staff",      label: "Staff",       icon: UserCog },
+  { key: "reports",    label: "Reports",     icon: FileText },
   { key: "calendar",   label: "Calendar",    icon: CalendarIcon },
 ];
 
@@ -1804,6 +1807,7 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "audit_readiness" ? <AuditReadinessContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "reports"    ? <ReportsContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "calendar"   ? (
       <OpsCalendar
         facilityNumber={facilityNumber}

@@ -13,6 +13,7 @@ import { z } from "zod";
 import { pool } from "../db/index";
 import * as ops from "./opsStorage";
 import { notesRouter } from "./notesRouter";
+import { reportsRouter } from "./reportsRouter";
 import { trackerRouter } from "../trackers/routes";
 import { requireActiveSubscription } from "../middleware/requireActiveSubscription";
 import {
@@ -53,6 +54,7 @@ import {
 import {
   generatePreauditBundle,
   listPreauditPulls,
+  persistAsReport,
   recordPreauditPull,
 } from "./preauditPullsStorage";
 import {
@@ -155,6 +157,11 @@ opsRouter.use("/notes", notesRouter);
 // requireFacilityAuth instead of running its own auth middleware. Effective
 // URL stays /api/ops/trackers/... (M4).
 opsRouter.use("/trackers", trackerRouter);
+
+// Reports Hub — Wave 5. Mounted under opsRouter so it inherits the
+// auth + paywall chain. Routes hang off the root prefix (/api/ops/...)
+// and use the same :facilityNumber IDOR guard via opsRouter.param below.
+opsRouter.use(reportsRouter);
 
 // ── IDOR guard: any route with `:facilityNumber` in the path must match the
 // authenticated user's facility. Without this, facility A could read facility
@@ -4985,6 +4992,9 @@ const preauditPullSchema = z
       .positive()
       .max(MAX_SHARE_LINK_DURATION_DAYS)
       .optional(),
+    // Wave 5 — also persist the bundle to the Reports Hub so the admin
+    // can re-download it later. Defaults to true; opt out by passing false.
+    saveToReports: z.boolean().optional(),
   })
   .strict()
   .refine((v) => v.windowStartAt < v.windowEndAt, {
@@ -5168,10 +5178,30 @@ opsRouter.post(
         actor,
       );
 
+      // Wave 5 — optionally persist the bundle to the Reports Hub. Defaults
+      // to true; opt-out via `saveToReports: false` in the body. Best-
+      // effort — persistAsReport swallows its own errors so a Reports-Hub
+      // failure can't roll back the originating pull.
+      let reportId: number | undefined;
+      const wantSave = spec.saveToReports !== false;
+      if (wantSave) {
+        const reportRow = await persistAsReport(
+          facilityNumber,
+          bundle,
+          totals,
+          spec,
+          actor.id,
+          actor,
+          pull.id,
+        );
+        if (reportRow) reportId = reportRow.id;
+      }
+
       const result = {
         preauditPullId: pull.id,
         shareLinkId,
         shareToken,
+        reportId,
         generatedAt: pull.generatedAt,
         windowStartAt: pull.windowStartAt,
         windowEndAt: pull.windowEndAt,

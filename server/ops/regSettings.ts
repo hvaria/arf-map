@@ -95,6 +95,18 @@ export const REG_SETTING_KEYS = {
   // Wave 4 the table exists but the cron does not, so this stays OFF.
   // Operational toggle — `placeholder: false`.
   RESIDENT_TRUST_STATEMENT_AUTO_GENERATE:   { default: "false", placeholder: false },
+  // ── Wave 5 — Reports Hub ──────────────────────────────────────────────────
+  // Operational tunables for the persistent reports library. Not regulation-
+  // derived (record-retention floors live per-kind in shared/reports.ts
+  // REPORT_DEFAULT_RETENTION_DAYS), so `placeholder: false` suppresses the
+  // [V] chip. Default retention applies when a report is generated without
+  // an explicit retention_days override on the row.
+  REPORTS_DEFAULT_RETENTION_DAYS:           { default: "1095",  placeholder: false },
+  // Inline-generate budget. Reports whose generation exceeds this wall-clock
+  // budget fall back to async generation (Wave 5+ work). 30s default keeps
+  // the UI responsive for the common case while still covering monthly
+  // statement PDFs and tracker CSVs.
+  REPORTS_MAX_INLINE_GENERATE_MS:           { default: "30000", placeholder: false },
 } as const;
 
 export type RegSettingKey = keyof typeof REG_SETTING_KEYS;

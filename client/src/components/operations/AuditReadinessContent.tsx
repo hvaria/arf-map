@@ -361,6 +361,12 @@ function OverviewTab({
     // No matching Audit Readiness sub-tab — informational link only;
     // cross-sub-view jump to Billing/Trust lives in OperationsTab.
     trust_reconciliation_drift: "",
+    // Reports Hub extensibility hook — wave-5: when a future triage
+    // section deep-links to the Reports library (e.g. a "missing
+    // audit-trail export" alert), this maps that section to the
+    // Reports tab. Cross-sub-view jump goes through OperationsTab.tsx
+    // `goToSubView` similar to trust-drift.
+    reports: "reports",
   };
   const handleDeepLink = (item: TriageItem) => {
     const next = SECTION_TO_TAB[item.section];

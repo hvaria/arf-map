@@ -65,6 +65,14 @@ export interface StorageAdapter {
     entityId: number;
     filename: string;
     bytes: Buffer;
+    /**
+     * Optional path segment inserted between the facility directory and the
+     * entity-type directory. Reports use `subdir: 'reports'` so generated
+     * report files land at `/data/evidence/<facility>/reports/<id>/...`,
+     * keeping them visually separate from raw evidence uploads on disk.
+     * Omitted by default — evidence attachments stay at the historical path.
+     */
+    subdir?: string;
   }): Promise<{ uri: string; sha256: string; byteSize: number; absolutePath: string }>;
   resolve(uri: string): string;
 }
@@ -116,16 +124,19 @@ export class FlyVolumeAdapter implements StorageAdapter {
     entityId: number;
     filename: string;
     bytes: Buffer;
+    subdir?: string;
   }): Promise<{ uri: string; sha256: string; byteSize: number; absolutePath: string }> {
     const hash = sha256(input.bytes);
     const sha8 = hash.slice(0, 8);
     const safeName = sanitizeFilename(input.filename);
-    const dir = join(
+    const segments = [
       this.root,
       safePathSegment(input.facilityNumber),
+      ...(input.subdir ? [safePathSegment(input.subdir)] : []),
       safePathSegment(input.entityType),
       safePathSegment(String(input.entityId)),
-    );
+    ];
+    const dir = join(...segments);
     await mkdir(dir, { recursive: true });
     const filename = `${sha8}-${safeName}`;
     const absolutePath = join(dir, filename);

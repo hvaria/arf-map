@@ -81,6 +81,12 @@ export const OPS_RESOURCES = {
   // gets read/create/update (no delete — ledger is application-insert-only,
   // corrections happen via reversal entries). Auditor read-only.
   RESIDENT_TRUST: "ops_resident_trust",
+  // Wave 5 — Reports Hub. Persistent library of generated reports
+  // (pre-audit pulls, MAR exports, incident summaries, monthly statements,
+  // audit-trail extracts, tracker exports, etc.). Admin gets read/create/
+  // delete (soft). Auditor read-only — auditor share-link sessions can
+  // pull previously generated reports for inspector handoff.
+  REPORT: "ops_report",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -192,6 +198,13 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.RESIDENT_TRUST,
     actions: ["read", "create", "update"],
   },
+  // Wave 5 — Reports Hub. Admin can read/create/delete (soft). `create`
+  // gates the synchronous generate path. `delete` gates soft-delete; the
+  // underlying file is purged by the retention cron, not by user delete.
+  {
+    resource: OPS_RESOURCES.REPORT,
+    actions: ["read", "create", "delete"],
+  },
 ];
 
 const AUDITOR_READ_ONLY: Permission[] = [
@@ -211,6 +224,10 @@ const AUDITOR_READ_ONLY: Permission[] = [
   { resource: OPS_RESOURCES.OBLIGATION,          actions: ["read"] },
   { resource: OPS_RESOURCES.POSTING,             actions: ["read"] },
   { resource: OPS_RESOURCES.RESIDENT_TRUST,      actions: ["read"] },
+  // Wave 5 — Reports Hub. Auditor share-link can pull previously generated
+  // reports (download via the auditor router mirror endpoint) for inspector
+  // handoff. Read-only — auditors never trigger generation themselves.
+  { resource: OPS_RESOURCES.REPORT,              actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills

@@ -943,6 +943,58 @@ export const OPS_PG_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_ops_trust_stmt_facility ON ops_resident_trust_statements(facility_number, period_start_at);
   CREATE INDEX IF NOT EXISTS idx_ops_trust_stmt_account  ON ops_resident_trust_statements(account_id, period_start_at);
+
+  -- ── Wave 5 — Reports Hub ────────────────────────────────────────────────────
+  -- Persistent library of every report generated for a facility (pre-audit
+  -- pulls, MAR exports, incident summaries, monthly trust statements, audit-
+  -- trail extracts, tracker exports, etc.). Files live on the existing Fly
+  -- volume via evidenceStorage.ts; this table is the index + lifecycle
+  -- bookkeeping.
+  --
+  -- status lifecycle: 'generating' (row inserted, file not yet written;
+  -- storage_uri/sha256/byte_size all NULL) → 'ready' (file persisted; the
+  -- partial idx_ops_reports_active covers this hot read path) → 'expired'
+  -- (cron purged bytes after retention_days; row kept for audit). 'failed'
+  -- is terminal — no file ever written; failure_reason carries the cause.
+  --
+  -- source_entity_type/source_entity_id form a lineage pointer back to the
+  -- originating record (e.g. ops_preaudit_pulls.id, ops_resident_trust_
+  -- statements.id, a tracker_entries.id). No FK — matches the existing
+  -- application-level integrity convention across the ops schema (every
+  -- *_id reference is unconstrained at the DB).
+  --
+  -- retention_days NULL means keep-forever; otherwise the nightly purge
+  -- cron deletes file bytes from disk and flips status to 'expired' once
+  -- generated_at + retention_days*DAY < now.
+  CREATE TABLE IF NOT EXISTS ops_reports (
+    id                  BIGSERIAL PRIMARY KEY,
+    facility_number     TEXT NOT NULL,
+    report_kind         TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    description         TEXT,
+    parameters_json     TEXT,
+    storage_uri         TEXT,
+    mime_type           TEXT,
+    filename            TEXT,
+    byte_size           BIGINT,
+    sha256              TEXT,
+    status              TEXT NOT NULL DEFAULT 'generating',
+    failure_reason      TEXT,
+    source_entity_type  TEXT,
+    source_entity_id    BIGINT,
+    retention_days      INTEGER,
+    generated_by        TEXT NOT NULL,
+    generated_at        BIGINT NOT NULL,
+    download_count      INTEGER NOT NULL DEFAULT 0,
+    last_downloaded_at  BIGINT,
+    notes               TEXT,
+    deleted_at          BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_reports_facility ON ops_reports(facility_number, generated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ops_reports_kind     ON ops_reports(report_kind, generated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ops_reports_status   ON ops_reports(status) WHERE deleted_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_ops_reports_source   ON ops_reports(source_entity_type, source_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_ops_reports_active   ON ops_reports(facility_number, generated_at) WHERE deleted_at IS NULL AND status = 'ready';
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1796,6 +1848,40 @@ export const opsResidentTrustStatements = pgTable("ops_resident_trust_statements
   generatedAt:         ts("generated_at").notNull(),
 });
 
+// ── Wave 5: Reports Hub ───────────────────────────────────────────────────
+// Persistent library of every generated report. report_kind values are
+// constrained at the application layer by the REPORT_KINDS union in
+// shared/reports.ts; status values by REPORT_STATUSES; mime_type by
+// REPORT_MIME_TYPES. source_entity_id is an application-level FK (no DB
+// constraint — matches existing ops convention). storage_uri/sha256/
+// byte_size are nullable during the 'generating' window and on 'failed'
+// rows. retention_days NULL means keep-forever.
+
+export const opsReports = pgTable("ops_reports", {
+  id:                serial("id").primaryKey(),
+  facilityNumber:    text("facility_number").notNull(),
+  reportKind:        text("report_kind").notNull(),
+  title:             text("title").notNull(),
+  description:       text("description"),
+  parametersJson:    text("parameters_json"),
+  storageUri:        text("storage_uri"),
+  mimeType:          text("mime_type"),
+  filename:          text("filename"),
+  byteSize:          bigint("byte_size", { mode: "number" }),
+  sha256:            text("sha256"),
+  status:            text("status").notNull().default("generating"),
+  failureReason:     text("failure_reason"),
+  sourceEntityType:  text("source_entity_type"),
+  sourceEntityId:    bigint("source_entity_id", { mode: "number" }),
+  retentionDays:     integer("retention_days"),
+  generatedBy:       text("generated_by").notNull(),
+  generatedAt:       ts("generated_at").notNull(),
+  downloadCount:     integer("download_count").notNull().default(0),
+  lastDownloadedAt:  ts("last_downloaded_at"),
+  notes:             text("notes"),
+  deletedAt:         ts("deleted_at"),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Inferred TypeScript types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1916,3 +2002,6 @@ export type InsertOpsResidentTrustLedgerEntry = typeof opsResidentTrustLedger.$i
 
 export type OpsResidentTrustStatement       = typeof opsResidentTrustStatements.$inferSelect;
 export type InsertOpsResidentTrustStatement = typeof opsResidentTrustStatements.$inferInsert;
+
+export type OpsReport       = typeof opsReports.$inferSelect;
+export type InsertOpsReport = typeof opsReports.$inferInsert;

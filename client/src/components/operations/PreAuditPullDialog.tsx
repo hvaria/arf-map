@@ -179,6 +179,13 @@ export function PreAuditPullDialog({
   const [generated, setGenerated] = useState<
     (PreauditPullResult & { deliveryMethod: DeliveryMethod }) | null
   >(null);
+  // Wave 5 — opt-in to mirror this pull into the Reports library so the
+  // artifact persists for audit retrieval even after the share-link expires
+  // or the download folder is cleared. Default ON; the BE materializes a
+  // row when `saveToReports` is truthy and surfaces `savedReportId` in the
+  // response so we can deep-link to the library.
+  const [saveToReports, setSaveToReports] = useState<boolean>(true);
+  const [savedReportId, setSavedReportId] = useState<number | null>(null);
 
   // Reset whenever the dialog re-opens.
   useEffect(() => {
@@ -191,6 +198,8 @@ export function PreAuditPullDialog({
     setShareDurationKey("7d");
     setShowErrors(false);
     setGenerated(null);
+    setSaveToReports(true);
+    setSavedReportId(null);
     const all: Record<PreauditSection, boolean> = {} as Record<
       PreauditSection,
       boolean
@@ -250,6 +259,8 @@ export function PreAuditPullDialog({
         windowEndAt: endMs,
         sections: selectedSections,
         deliveryMethod: delivery,
+        // Wave 5 Reports Hub — opt-in mirror to the library.
+        saveToReports,
       };
       if (delivery === "share_link") {
         const preset =
@@ -267,6 +278,24 @@ export function PreAuditPullDialog({
     onSuccess: (resp) => {
       const result = resp.data;
       setGenerated(result);
+      // Wave 5 — the BE may surface `savedReportId` when `saveToReports`
+      // was true. Capture for the in-dialog deep-link confirmation row.
+      const respWithReportId = result as PreauditPullResult & {
+        deliveryMethod: DeliveryMethod;
+        savedReportId?: number | null;
+      };
+      if (saveToReports && respWithReportId.savedReportId) {
+        setSavedReportId(respWithReportId.savedReportId);
+        void qc.invalidateQueries({
+          predicate: (q) => {
+            const k = q.queryKey[0];
+            return (
+              typeof k === "string" &&
+              k.startsWith(`/api/ops/facilities/${facilityNumber}/reports`)
+            );
+          },
+        });
+      }
       toast({ title: "Pre-audit pull generated" });
       void qc.invalidateQueries({
         predicate: (q) => {
@@ -383,6 +412,24 @@ export function PreAuditPullDialog({
                     Copy
                   </Button>
                 </div>
+              </div>
+            )}
+
+            {savedReportId !== null && (
+              <div
+                className="rounded-lg border bg-emerald-50 border-emerald-200 p-3"
+                data-testid="preaudit-pull-saved-report"
+              >
+                <p className="text-xs text-emerald-700 mb-1 font-medium">
+                  Saved to library (id #{savedReportId})
+                </p>
+                <a
+                  href={`#/facility-portal?ops=reports&reportId=${savedReportId}`}
+                  className="text-xs text-emerald-800 underline hover:no-underline"
+                  data-testid="preaudit-pull-open-in-reports"
+                >
+                  Open in Reports library →
+                </a>
               </div>
             )}
 
@@ -566,6 +613,25 @@ export function PreAuditPullDialog({
                 </p>
               )}
             </div>
+
+            <label
+              className="flex items-start gap-2 rounded-md border bg-stone-50 p-2.5 text-xs cursor-pointer"
+              data-testid="preaudit-pull-save-to-reports"
+            >
+              <Checkbox
+                checked={saveToReports}
+                onCheckedChange={(v) => setSaveToReports(v === true)}
+                aria-label="Save to reports library"
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium block">Save to reports library</span>
+                <span className="text-muted-foreground">
+                  Mirror this pull into the Reports hub so auditors can retrieve
+                  it later, even after a share-link expires.
+                </span>
+              </span>
+            </label>
 
             <fieldset className="rounded-md border p-2.5 space-y-1.5">
               <legend className="text-xs font-medium text-muted-foreground px-1">

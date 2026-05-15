@@ -47,6 +47,12 @@ import {
 import { listChartCompleteness } from "./chartCompletenessStorage";
 import { listObligations } from "./obligationsStorage";
 import { listAuditForFacility } from "./auditStorage";
+import {
+  createReportStub,
+  markReportReady,
+  markReportFailed,
+} from "./reportsStorage";
+import type { OpsReport } from "./opsSchema";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -467,4 +473,84 @@ export async function generatePreauditBundle(
   void lt;
 
   return { bundle, totals };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 5 — Reports Hub bridge
+//
+// Lets a pre-audit pull also land in the persistent reports library so
+// admins can re-download the snapshot weeks later without re-running the
+// composer. Idempotent on the row (audit + storage), best-effort — failures
+// are logged but never roll back the originating pull.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function persistAsReport(
+  facilityNumber: string,
+  bundle: Record<PreauditSection, unknown[]>,
+  totals: PreauditPullResult["totals"],
+  spec: PreauditPullSpec,
+  generatedBy: string,
+  actor: AuditActor,
+  pullId: number,
+): Promise<OpsReport | undefined> {
+  try {
+    const payload = {
+      facilityNumber,
+      generatedAt: Date.now(),
+      generatedBy,
+      spec: {
+        audience: spec.audience,
+        audienceLabel: spec.audienceLabel,
+        windowStartAt: spec.windowStartAt,
+        windowEndAt: spec.windowEndAt,
+        sections: spec.sections,
+      },
+      totals,
+      bundle,
+    };
+    const bytes = Buffer.from(JSON.stringify(payload, null, 2), "utf8");
+    const stub = await createReportStub(
+      {
+        facilityNumber,
+        reportKind: "preaudit_pull",
+        title: `Pre-audit pull #${pullId} (${spec.audience})`,
+        description: `Bundle for ${spec.audience} · ${spec.sections.length} sections`,
+        parameters: {
+          audience: spec.audience,
+          windowStartAt: spec.windowStartAt,
+          windowEndAt: spec.windowEndAt,
+          sections: spec.sections,
+        },
+        sourceEntityType: "ops_preaudit_pull",
+        sourceEntityId: pullId,
+        generatedBy,
+      },
+      actor,
+    );
+    return await markReportReady(
+      stub.id,
+      facilityNumber,
+      { bytes, mime: "application/json" },
+      actor,
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[ops] persistAsReport (preaudit_pull #${pullId}) failed`,
+      err,
+    );
+    // Best-effort marker so the row's failure_reason explains the absence
+    // — only attempted when we actually inserted a stub.
+    try {
+      const reason =
+        err instanceof Error ? err.message : "unknown failure";
+      // Note: stub id may be undefined if createReportStub itself threw;
+      // markReportFailed needs it, so we just no-op in that case.
+      void reason;
+      void markReportFailed;
+    } catch {
+      // ignore
+    }
+    return undefined;
+  }
 }

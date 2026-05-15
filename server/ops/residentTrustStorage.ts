@@ -778,3 +778,56 @@ export async function listStatements(
   ]);
   return { rows, total: countRows[0]?.count ?? 0 };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 5 — Reports Hub bridge
+//
+// After a statement row is generated, callers can also persist a PDF
+// rendering of it to the reports library so an admin can re-download it
+// later without re-running the renderer. Best-effort — failure is logged
+// but never rolls back the originating statement insert.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function persistStatementAsReport(
+  facilityNumber: string,
+  statement: OpsResidentTrustStatement,
+  pdfBytes: Buffer,
+  generatedBy: string,
+  actor: AuditActor,
+): Promise<void> {
+  try {
+    // Lazy require so the storage layer doesn't pull pdfkit/generators in
+    // every cold-start of every test that touches trust accounts.
+    const { createReportStub, markReportReady } = await import("./reportsStorage");
+    const stub = await createReportStub(
+      {
+        facilityNumber,
+        reportKind: "monthly_trust_statement",
+        title: `Monthly trust statement #${statement.id}`,
+        description: `Account ${statement.accountId} · period ${new Date(statement.periodStartAt).toISOString().slice(0, 10)} → ${new Date(statement.periodEndAt).toISOString().slice(0, 10)}`,
+        parameters: {
+          accountId: statement.accountId,
+          periodStartAt: statement.periodStartAt,
+          periodEndAt: statement.periodEndAt,
+          statementId: statement.id,
+        },
+        sourceEntityType: "ops_resident_trust_statement",
+        sourceEntityId: statement.id,
+        generatedBy,
+      },
+      actor,
+    );
+    await markReportReady(
+      stub.id,
+      facilityNumber,
+      { bytes: pdfBytes, mime: "application/pdf" },
+      actor,
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[ops] persistStatementAsReport (statement #${statement.id}) failed`,
+      err,
+    );
+  }
+}

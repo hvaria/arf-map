@@ -39,6 +39,17 @@ import {
   createShareLink,
   revokeShareLink,
 } from "../../ops/shareLinksStorage";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  FlyVolumeAdapter,
+  setStorageAdapterForTests,
+} from "../../ops/evidenceStorage";
+import {
+  createReportStub,
+  markReportReady,
+} from "../../ops/reportsStorage";
 
 const FACILITY_A = "TEST-FAC-AUD-A";
 const FACILITY_B = "TEST-FAC-AUD-B";
@@ -54,14 +65,25 @@ async function cleanup(): Promise<void> {
     [[...ALL_FN]],
   );
   await pool.query(
+    `DELETE FROM ops_reports WHERE facility_number = ANY($1::text[])`,
+    [[...ALL_FN]],
+  );
+  await pool.query(
     `DELETE FROM ops_audit_trail WHERE facility_number = ANY($1::text[])`,
     [[...ALL_FN]],
   );
 }
 
+let reportsTempRoot: string;
+
 beforeAll(async () => {
   await bootstrapMainSchema();
   await bootstrapOpsSchema();
+
+  // Storage adapter pointed at a tmpdir so report bytes don't try to hit
+  // /data/evidence. Reused for the Wave 5 reports-mirror cases below.
+  reportsTempRoot = await mkdtemp(join(tmpdir(), "arf-aud-reports-"));
+  setStorageAdapterForTests(new FlyVolumeAdapter(reportsTempRoot));
 
   // Minimal app that wires only the auditor router. No facility
   // Passport — the auditor router has its own auth path.
@@ -92,6 +114,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanup();
+  setStorageAdapterForTests(null);
+  await rm(reportsTempRoot, { recursive: true, force: true });
   await pool.end();
 });
 
@@ -304,5 +328,82 @@ describe("auditor tenant scope", () => {
       .set("Authorization", `Bearer ${link.token}`);
     expect(triage.status).toBe(200);
     expect(triage.body.data.facilityNumber).toBe(FACILITY_A);
+  });
+});
+
+describe("auditor — Wave 5 reports mirror", () => {
+  it("can list + download a ready report scoped to the auditor's facility", async () => {
+    // Mint a share link for FACILITY_A.
+    const link = await createShareLink(
+      {
+        facilityNumber: FACILITY_A,
+        audience: "cdss",
+        durationDays: 7,
+        createdBy: ACTOR.id,
+      },
+      ACTOR,
+    );
+
+    // Seed two reports — one for each facility — to assert tenant scope.
+    const aStub = await createReportStub(
+      {
+        facilityNumber: FACILITY_A,
+        reportKind: "audit_trail",
+        title: "Audit A",
+        generatedBy: ACTOR.id,
+      },
+      ACTOR,
+    );
+    await markReportReady(
+      aStub.id,
+      FACILITY_A,
+      { bytes: Buffer.from("a,b\r\n1,2\r\n", "utf8"), mime: "text/csv" },
+      ACTOR,
+    );
+
+    const bStub = await createReportStub(
+      {
+        facilityNumber: FACILITY_B,
+        reportKind: "audit_trail",
+        title: "Audit B",
+        generatedBy: ACTOR.id,
+      },
+      ACTOR,
+    );
+    await markReportReady(
+      bStub.id,
+      FACILITY_B,
+      { bytes: Buffer.from("x,y\r\n7,8\r\n", "utf8"), mime: "text/csv" },
+      ACTOR,
+    );
+
+    // List — only FACILITY_A's report should appear.
+    const listRes = await request(app)
+      .get("/api/ops/auditor/reports")
+      .set("Authorization", `Bearer ${link.token}`);
+    expect(listRes.status).toBe(200);
+    const ids: number[] = listRes.body.data.map((r: { id: number }) => r.id);
+    expect(ids).toContain(aStub.id);
+    expect(ids).not.toContain(bStub.id);
+
+    // Download — facility A's report streams successfully.
+    const dlRes = await request(app)
+      .get(`/api/ops/auditor/reports/${aStub.id}/download`)
+      .set("Authorization", `Bearer ${link.token}`)
+      .buffer(true)
+      .parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(dlRes.status).toBe(200);
+    expect(dlRes.headers["content-type"]).toContain("text/csv");
+    expect(dlRes.headers["cache-control"]).toMatch(/no-store/);
+
+    // Cross-tenant probe — FACILITY_B's id should 404, NOT 200.
+    const cross = await request(app)
+      .get(`/api/ops/auditor/reports/${bStub.id}/download`)
+      .set("Authorization", `Bearer ${link.token}`);
+    expect(cross.status).toBe(404);
   });
 });

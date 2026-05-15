@@ -41,10 +41,15 @@ import {
   getPreauditPull,
 } from "./preauditPullsStorage";
 import {
+  listReports,
+  streamReport,
+} from "./reportsStorage";
+import {
   PREAUDIT_SECTIONS,
   AUDITOR_AUDIENCES,
   type PreauditSection,
 } from "@shared/auditor";
+import { REPORT_KINDS, REPORT_STATUSES } from "@shared/reports";
 
 export const auditorRouter = Router();
 
@@ -218,6 +223,100 @@ auditorRouter.get("/preaudit-pull/:pullId", async (req, res) => {
     // eslint-disable-next-line no-console
     console.error("[ops] auditor preaudit-pull replay failed", e);
     return res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave 5 — Reports Hub mirror endpoints
+//
+// Auditors with a live share-link can list + download previously generated
+// reports for the scoped facility. Both endpoints are GET-only (the
+// blockAuditorMutations middleware already enforces this) and read straight
+// from the same reportsStorage layer the admin router uses — facility scope
+// comes from req.auditor.facilityNumber.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const reportsListQuerySchema = z
+  .object({
+    reportKind: z.enum(REPORT_KINDS).optional(),
+    status: z.enum(REPORT_STATUSES).optional(),
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  })
+  .strict();
+
+// GET /api/ops/auditor/reports
+auditorRouter.get("/reports", async (req, res) => {
+  try {
+    const scope = getScope(req);
+    const parsed = reportsListQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ success: false, error: parsed.error.errors[0].message });
+    }
+    const page = parsed.data.page ?? 1;
+    const limit = parsed.data.limit ?? 20;
+    const result = await listReports(scope.facilityNumber, {
+      reportKind: parsed.data.reportKind,
+      status: parsed.data.status,
+      page,
+      limit,
+    });
+    return res.json({
+      success: true,
+      data: result.rows,
+      meta: { total: result.total, page, limit },
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[ops] auditor reports list failed", e);
+    return res.status(500).json({ success: false, error: "Internal error" });
+  }
+});
+
+// GET /api/ops/auditor/reports/:id/download
+auditorRouter.get("/reports/:id/download", async (req, res) => {
+  try {
+    const scope = getScope(req);
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ success: false, error: "Invalid id" });
+    }
+    // Auditor downloads are audited as the auditor session's actor —
+    // the same "auditor:<shareLinkId>" id used by maybeEmitAuditView so
+    // admins can correlate the share-link with the downloads.
+    const actor = {
+      id: `auditor:${scope.shareLinkId}`,
+      role: "auditor",
+    };
+    const result = await streamReport(id, scope.facilityNumber, actor);
+    if (!result) {
+      return res.status(404).json({ success: false, error: "Not found" });
+    }
+    res.setHeader("Content-Type", result.mime);
+    res.setHeader("Content-Length", String(result.byteSize));
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename.replace(/"/g, "")}"`,
+    );
+    res.setHeader("Cache-Control", "private, no-store");
+    result.stream.on("error", (err: Error) => {
+      // eslint-disable-next-line no-console
+      console.error("[ops] auditor report stream error", err);
+      if (!res.headersSent) {
+        res.status(500).end();
+      } else {
+        res.destroy(err);
+      }
+    });
+    result.stream.pipe(res);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[ops] auditor report download failed", e);
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, error: "Internal error" });
+    }
   }
 });
 
