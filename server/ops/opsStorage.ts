@@ -1,4 +1,4 @@
-import { eq, and, gte, lte, desc, sql, or } from "drizzle-orm";
+import { eq, and, gte, lt, lte, desc, sql, or } from "drizzle-orm";
 import { db, pool } from "../db/index";
 import { OPS_PG_SCHEMA_SQL } from "./opsSchema";
 import {
@@ -327,11 +327,33 @@ export async function signCarePlan(id: number, signerType: "resident" | "family"
 
 // Daily Tasks
 
-export async function getDailyTasks(residentId: number, facilityNumber: string, taskDate: number, shift?: string): Promise<OpsDailyTask[]> {
-  const conditions = shift
-    ? and(eq(opsDailyTasks.residentId, residentId), eq(opsDailyTasks.facilityNumber, facilityNumber), eq(opsDailyTasks.taskDate, taskDate), eq(opsDailyTasks.shift, shift))
-    : and(eq(opsDailyTasks.residentId, residentId), eq(opsDailyTasks.facilityNumber, facilityNumber), eq(opsDailyTasks.taskDate, taskDate));
-
+/**
+ * List a resident's daily tasks within a half-open `[start, end)` time
+ * window. Callers typically pass a single-day window (start = local
+ * midnight, end = next midnight) so a wall-clock timestamp like
+ * Date.now() reliably finds tasks whose `task_date` is the canonical
+ * start-of-day epoch.
+ *
+ * Range semantics matter: the legacy implementation used `eq(task_date,
+ * Date.now())` which never matched anything in practice because
+ * createDailyTasksFromCarePlan() normalizes `task_date` to start-of-day
+ * but the route passed a mid-day clock value. This is the resident
+ * profile "Today's Tasks" empty-state bug from the May fix batch.
+ */
+export async function getDailyTasks(
+  residentId: number,
+  facilityNumber: string,
+  taskDateStart: number,
+  taskDateEnd: number,
+  shift?: string,
+): Promise<OpsDailyTask[]> {
+  const base = and(
+    eq(opsDailyTasks.residentId, residentId),
+    eq(opsDailyTasks.facilityNumber, facilityNumber),
+    gte(opsDailyTasks.taskDate, taskDateStart),
+    lt(opsDailyTasks.taskDate, taskDateEnd),
+  );
+  const conditions = shift ? and(base, eq(opsDailyTasks.shift, shift)) : base;
   return db.select().from(opsDailyTasks).where(conditions);
 }
 
@@ -1443,6 +1465,7 @@ export async function getFacilityDashboard(facilityNumber: string): Promise<{
   activeResidents: number;
   pendingMedPasses: number;
   overdueTasks: number;
+  todaysOpenTasks: number;
   openIncidents: number;
   pendingLeads: number;
   overdueInvoices: number;
@@ -1452,10 +1475,17 @@ export async function getFacilityDashboard(facilityNumber: string): Promise<{
   const todayStart = (() => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.getTime(); })();
   const todayEnd = todayStart + 86400000;
 
-  const [r1, r2, r3, r4, r5, r6, r7] = await Promise.all([
+  // todaysOpenTasks: pending tasks whose task_date falls in today's window.
+  // overdueTasks (legacy) counts only tasks whose task_date is strictly
+  // before today — a task dated today isn't overdue, but it IS open work
+  // the operator should see in the sidebar badge. Splitting the two
+  // surfaces the right semantic for each: the Tasks-sub-view counter
+  // (today's work) vs the overdue alert chip (truly late).
+  const [r1, r2, r3, r3b, r4, r5, r6, r7] = await Promise.all([
     pool.query<{ c: number }>(`SELECT COUNT(*)::int as c FROM ops_residents WHERE facility_number = $1 AND status = 'active'`, [facilityNumber]),
     pool.query<{ c: number }>(`SELECT COUNT(*)::int as c FROM ops_med_passes WHERE facility_number = $1 AND status = 'pending' AND scheduled_datetime >= $2 AND scheduled_datetime < $3`, [facilityNumber, todayStart, todayEnd]),
     pool.query<{ c: number }>(`SELECT COUNT(*)::int as c FROM ops_daily_tasks WHERE facility_number = $1 AND status = 'pending' AND task_date < $2`, [facilityNumber, todayStart]),
+    pool.query<{ c: number }>(`SELECT COUNT(*)::int as c FROM ops_daily_tasks WHERE facility_number = $1 AND status = 'pending' AND task_date >= $2 AND task_date < $3`, [facilityNumber, todayStart, todayEnd]),
     pool.query<{ c: number }>(`SELECT COUNT(*)::int as c FROM ops_incidents WHERE facility_number = $1 AND status = 'open'`, [facilityNumber]),
     pool.query<{ c: number }>(`SELECT COUNT(*)::int as c FROM ops_leads WHERE facility_number = $1 AND stage NOT IN ('admitted', 'lost')`, [facilityNumber]),
     pool.query<{ c: number }>(`SELECT COUNT(*)::int as c FROM ops_invoices WHERE facility_number = $1 AND status NOT IN ('paid', 'void') AND balance_due > 0 AND due_date < $2`, [facilityNumber, now]),
@@ -1465,6 +1495,7 @@ export async function getFacilityDashboard(facilityNumber: string): Promise<{
     activeResidents:   r1.rows[0]?.c ?? 0,
     pendingMedPasses:  r2.rows[0]?.c ?? 0,
     overdueTasks:      r3.rows[0]?.c ?? 0,
+    todaysOpenTasks:   r3b.rows[0]?.c ?? 0,
     openIncidents:     r4.rows[0]?.c ?? 0,
     pendingLeads:      r5.rows[0]?.c ?? 0,
     overdueInvoices:   r6.rows[0]?.c ?? 0,

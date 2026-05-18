@@ -662,14 +662,28 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/care-plan", async (req,
 });
 
 // GET /facilities/:facilityNumber/residents/:id/daily-tasks
+//
+// `?date=` is interpreted as ANY clock value within the desired day.
+// We normalize to the half-open `[startOfDay, startOfDay + 24h)`
+// window before querying. The legacy implementation compared the
+// raw clock value to ops_daily_tasks.task_date via equality, which
+// never matched because task_date is normalized to start-of-day at
+// insert time; the resident profile "Today's Tasks" tab was
+// silently empty as a result.
 opsRouter.get("/facilities/:facilityNumber/residents/:id/daily-tasks", async (req, res) => {
   try {
     const { facilityNumber } = req.params;
     const residentId = parseInt(req.params.id, 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
-    const dateParam = req.query.date ? parseInt(String(req.query.date), 10) : Date.now();
+    const refClock = req.query.date ? parseInt(String(req.query.date), 10) : Date.now();
+    const startOfDay = (() => {
+      const d = new Date(refClock);
+      d.setUTCHours(0, 0, 0, 0);
+      return d.getTime();
+    })();
+    const endOfDay = startOfDay + 86400000;
     const shift = req.query.shift ? String(req.query.shift) : undefined;
-    const tasks = await ops.getDailyTasks(residentId, facilityNumber, dateParam, shift);
+    const tasks = await ops.getDailyTasks(residentId, facilityNumber, startOfDay, endOfDay, shift);
     res.json({ success: true, data: tasks });
   } catch (e) {
     return handleRouteError(req, e, res);
@@ -970,17 +984,26 @@ opsRouter.post("/care-plans/:id/sign", async (req, res) => {
   }
 });
 
-// GET /residents/:id/tasks
+// GET /residents/:id/tasks — same semantics as the /facilities/.../daily-tasks
+// route above; `?date=` is treated as any clock value within the desired
+// day and normalized to a half-open `[startOfDay, startOfDay + 24h)`
+// window so callers passing `Date.now()` reliably get today's tasks.
 opsRouter.get("/residents/:id/tasks", async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const residentId = parseInt(req.params.id, 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
 
-    const dateParam = req.query.date ? parseInt(String(req.query.date), 10) : Date.now();
+    const refClock = req.query.date ? parseInt(String(req.query.date), 10) : Date.now();
+    const startOfDay = (() => {
+      const d = new Date(refClock);
+      d.setUTCHours(0, 0, 0, 0);
+      return d.getTime();
+    })();
+    const endOfDay = startOfDay + 86400000;
     const shift = req.query.shift ? String(req.query.shift) : undefined;
 
-    const tasks = await ops.getDailyTasks(residentId, facilityNumber, dateParam, shift);
+    const tasks = await ops.getDailyTasks(residentId, facilityNumber, startOfDay, endOfDay, shift);
     res.json({ success: true, data: tasks });
   } catch (e) {
     return handleRouteError(req, e, res);
