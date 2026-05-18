@@ -50,16 +50,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  ArrowLeft,
-  Settings,
-  MessageSquare,
-  Thermometer,
-  Building2,
-  Siren,
-  ClipboardCheck,
-  History,
-} from "lucide-react";
+import { ArrowLeft, Settings, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RegSettingsContent } from "@/components/operations/RegSettingsContent";
 import { DrillsContent } from "@/components/operations/DrillsContent";
@@ -148,14 +139,19 @@ function Tile({
     stone: "bg-stone-50 border-stone-200 text-stone-700",
   };
   return (
-    <div className={cn("rounded-lg border p-3 text-center", cls[tone])}>
+    <div
+      className={cn(
+        "h-full min-h-[88px] rounded-lg border p-3 text-center flex flex-col items-center justify-center gap-0.5",
+        cls[tone],
+      )}
+    >
       {loading ? (
         <Skeleton className="h-6 w-12 mx-auto" />
       ) : (
-        <p className="text-xl font-bold portal-num">{value}</p>
+        <p className="text-xl font-bold portal-num leading-none">{value}</p>
       )}
-      <p className="text-xs">{label}</p>
-      {hint && <p className="text-[10px] opacity-70 mt-0.5">{hint}</p>}
+      <p className="text-xs leading-tight">{label}</p>
+      {hint && <p className="text-[10px] opacity-70 leading-tight">{hint}</p>}
     </div>
   );
 }
@@ -169,7 +165,6 @@ function OverviewTab({
   onOpenSettings: () => void;
   onSwitchTab: (tab: string) => void;
 }) {
-  const isWritable = useIsWritable();
   const complaintsQ = useQuery<{ success: boolean; data: ComplaintLite[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/complaints`],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -375,10 +370,10 @@ function OverviewTab({
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3" data-testid="audit-overview-tiles">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3 auto-rows-fr" data-testid="audit-overview-tiles">
         <button
           onClick={() => onSwitchTab("complaints")}
-          className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
+          className="block w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
           aria-label="View open complaints"
         >
           <Tile
@@ -390,7 +385,7 @@ function OverviewTab({
         </button>
         <button
           onClick={() => onSwitchTab("logs")}
-          className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
+          className="block w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
           aria-label="View out-of-range readings"
         >
           <Tile
@@ -402,7 +397,7 @@ function OverviewTab({
         </button>
         <button
           onClick={() => onSwitchTab("vendors")}
-          className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
+          className="block w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
           aria-label="View vendors expiring within 60 days"
         >
           <Tile
@@ -414,7 +409,7 @@ function OverviewTab({
         </button>
         <button
           onClick={() => onSwitchTab("drills")}
-          className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
+          className="block w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-lg"
           aria-label="View drills this quarter"
         >
           <Tile
@@ -434,6 +429,7 @@ function OverviewTab({
         <div
           aria-label="Credentials expiring within 60 days (informational)"
           data-testid="audit-overview-credentials-tile"
+          className="h-full"
         >
           <Tile
             label="Credentials expiring (60d)"
@@ -451,6 +447,7 @@ function OverviewTab({
         <div
           aria-label="Open incidents past SLA (informational)"
           data-testid="audit-overview-incidents-past-sla-tile"
+          className="h-full"
         >
           <Tile
             label="Open incidents past SLA"
@@ -468,6 +465,7 @@ function OverviewTab({
         <div
           aria-label="Residents with incomplete charts (informational)"
           data-testid="audit-overview-charts-incomplete-tile"
+          className="h-full"
         >
           <Tile
             label="Charts incomplete"
@@ -485,6 +483,7 @@ function OverviewTab({
         <div
           aria-label="Overdue obligations (informational)"
           data-testid="audit-overview-overdue-obligations-tile"
+          className="h-full"
         >
           <Tile
             label="Overdue obligations"
@@ -500,58 +499,6 @@ function OverviewTab({
         onOpenSettings={onOpenSettings}
         onOpenDeepLink={handleDeepLink}
       />
-
-      <div className="rounded-lg border bg-stone-50 p-4">
-        <p className="text-sm text-muted-foreground mb-3">Jump to:</p>
-        <div className="flex flex-wrap gap-2 text-xs">
-          <button
-            onClick={() => onSwitchTab("drills")}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-white hover:bg-stone-100 transition-colors"
-          >
-            <Siren className="h-3.5 w-3.5" />
-            Drills
-          </button>
-          <button
-            onClick={() => onSwitchTab("logs")}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-white hover:bg-stone-100 transition-colors"
-          >
-            <Thermometer className="h-3.5 w-3.5" />
-            Temperature logs
-          </button>
-          <button
-            onClick={() => onSwitchTab("vendors")}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-white hover:bg-stone-100 transition-colors"
-          >
-            <Building2 className="h-3.5 w-3.5" />
-            Vendors
-          </button>
-          <button
-            onClick={() => onSwitchTab("complaints")}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-white hover:bg-stone-100 transition-colors"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Complaints
-          </button>
-          <button
-            onClick={() => onSwitchTab("inspections")}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-white hover:bg-stone-100 transition-colors"
-          >
-            <ClipboardCheck className="h-3.5 w-3.5" />
-            Inspections
-          </button>
-        </div>
-      </div>
-
-      {isWritable && (
-        <div className="text-right">
-          <button
-            onClick={onOpenSettings}
-            className="text-sm font-medium text-primary hover:underline"
-          >
-            Open Reg Settings ⚙
-          </button>
-        </div>
-      )}
     </div>
   );
 }
