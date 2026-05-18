@@ -100,6 +100,11 @@ interface DashboardData {
   activeResidents: number;
   pendingMedPasses: number;
   overdueTasks: number;
+  // todaysOpenTasks: pending tasks whose task_date falls in today's
+  // window. Server returns this alongside overdueTasks; older server
+  // builds may not include it, hence optional. The sidebar Tasks badge
+  // prefers this metric ("today's work") and falls back to overdueTasks.
+  todaysOpenTasks?: number;
   openIncidents: number;
   pendingLeads: number;
   overdueInvoices: number;
@@ -1234,9 +1239,22 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
             : "ok",
       };
 
+      // Sidebar Tasks badge: prefer todaysOpenTasks (today's pending
+      // work) over overdueTasks. A task dated today isn't overdue but
+      // the operator still needs to see it; the KPI tile below keeps
+      // the strict "Overdue Tasks" semantic via dashboard.overdueTasks.
+      // Falls back to overdueTasks for older server builds that don't
+      // include the new field. Tone is "danger" only when there's
+      // actually past-due work — today's open count alone shouldn't
+      // colour the rail red.
+      const taskCount = dashboard.todaysOpenTasks ?? dashboard.overdueTasks;
       out.tasks = {
-        count: dashboard.overdueTasks,
-        tone: dashboard.overdueTasks > 0 ? "danger" : "ok",
+        count: taskCount,
+        tone: dashboard.overdueTasks > 0
+          ? "danger"
+          : taskCount > 0
+            ? "info"
+            : "ok",
       };
 
       out.incidents = {

@@ -85,7 +85,10 @@ interface CarePlan {
 interface DailyTask {
   id: number;
   description: string;
-  scheduledDate: number;
+  // Wire name matches the server's ops_daily_tasks.task_date column
+  // (Drizzle camelCase). The legacy `scheduledDate` field was a
+  // client-side typo that silently broke the today filter below.
+  taskDate: number;
   status: string;
 }
 
@@ -1485,9 +1488,9 @@ export function ResidentProfileContent({
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayTasks = dailyTasks.filter((t) => {
-    const taskDate = new Date(t.scheduledDate);
-    taskDate.setHours(0, 0, 0, 0);
-    return taskDate.getTime() === today.getTime();
+    const td = new Date(t.taskDate);
+    td.setHours(0, 0, 0, 0);
+    return td.getTime() === today.getTime();
   });
 
   if (isLoading) {
