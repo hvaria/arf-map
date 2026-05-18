@@ -995,6 +995,80 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_reports_status   ON ops_reports(status) WHERE deleted_at IS NULL;
   CREATE INDEX IF NOT EXISTS idx_ops_reports_source   ON ops_reports(source_entity_type, source_entity_id);
   CREATE INDEX IF NOT EXISTS idx_ops_reports_active   ON ops_reports(facility_number, generated_at) WHERE deleted_at IS NULL AND status = 'ready';
+
+  -- ── Fix-up: coerce ops_resident_assessments ADL columns from BOOLEAN → INTEGER
+  --
+  -- Background: earlier prod builds materialized these 15 ADL/IADL columns
+  -- as BOOLEAN. The Drizzle schema (above), the Zod request validator, and
+  -- the client form are all INTEGER (0–3 score on the Katz/Lawton scale)
+  -- and the new defaults INSERT integer literals. The mismatch surfaces as
+  --     invalid input syntax for type boolean: "3"
+  -- on assessment save and blocks the entire resident-onboarding flow.
+  --
+  -- This block converts them in place. Idempotent: gated on the bathing
+  -- column still being BOOLEAN, so once any environment has been coerced it
+  -- becomes a no-op on every subsequent boot. Existing TRUE rows map to
+  -- 1, FALSE → 0; that matches the legacy "needs assistance" semantic
+  -- well enough that nothing downstream needs reinterpretation. All 15
+  -- columns flip in a single ALTER TABLE so the table is locked once,
+  -- not 15 times.
+  DO $$
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_resident_assessments'
+         AND column_name = 'bathing'
+         AND data_type   = 'boolean'
+    ) THEN
+      ALTER TABLE ops_resident_assessments
+        ALTER COLUMN bathing               DROP DEFAULT,
+        ALTER COLUMN bathing               TYPE INTEGER USING (CASE WHEN bathing               THEN 1 ELSE 0 END),
+        ALTER COLUMN bathing               SET DEFAULT 0,
+        ALTER COLUMN dressing              DROP DEFAULT,
+        ALTER COLUMN dressing              TYPE INTEGER USING (CASE WHEN dressing              THEN 1 ELSE 0 END),
+        ALTER COLUMN dressing              SET DEFAULT 0,
+        ALTER COLUMN grooming              DROP DEFAULT,
+        ALTER COLUMN grooming              TYPE INTEGER USING (CASE WHEN grooming              THEN 1 ELSE 0 END),
+        ALTER COLUMN grooming              SET DEFAULT 0,
+        ALTER COLUMN toileting             DROP DEFAULT,
+        ALTER COLUMN toileting             TYPE INTEGER USING (CASE WHEN toileting             THEN 1 ELSE 0 END),
+        ALTER COLUMN toileting             SET DEFAULT 0,
+        ALTER COLUMN continence            DROP DEFAULT,
+        ALTER COLUMN continence            TYPE INTEGER USING (CASE WHEN continence            THEN 1 ELSE 0 END),
+        ALTER COLUMN continence            SET DEFAULT 0,
+        ALTER COLUMN eating                DROP DEFAULT,
+        ALTER COLUMN eating                TYPE INTEGER USING (CASE WHEN eating                THEN 1 ELSE 0 END),
+        ALTER COLUMN eating                SET DEFAULT 0,
+        ALTER COLUMN mobility              DROP DEFAULT,
+        ALTER COLUMN mobility              TYPE INTEGER USING (CASE WHEN mobility              THEN 1 ELSE 0 END),
+        ALTER COLUMN mobility              SET DEFAULT 0,
+        ALTER COLUMN transfers             DROP DEFAULT,
+        ALTER COLUMN transfers             TYPE INTEGER USING (CASE WHEN transfers             THEN 1 ELSE 0 END),
+        ALTER COLUMN transfers             SET DEFAULT 0,
+        ALTER COLUMN meal_prep             DROP DEFAULT,
+        ALTER COLUMN meal_prep             TYPE INTEGER USING (CASE WHEN meal_prep             THEN 1 ELSE 0 END),
+        ALTER COLUMN meal_prep             SET DEFAULT 0,
+        ALTER COLUMN housekeeping          DROP DEFAULT,
+        ALTER COLUMN housekeeping          TYPE INTEGER USING (CASE WHEN housekeeping          THEN 1 ELSE 0 END),
+        ALTER COLUMN housekeeping          SET DEFAULT 0,
+        ALTER COLUMN laundry               DROP DEFAULT,
+        ALTER COLUMN laundry               TYPE INTEGER USING (CASE WHEN laundry               THEN 1 ELSE 0 END),
+        ALTER COLUMN laundry               SET DEFAULT 0,
+        ALTER COLUMN transportation        DROP DEFAULT,
+        ALTER COLUMN transportation        TYPE INTEGER USING (CASE WHEN transportation        THEN 1 ELSE 0 END),
+        ALTER COLUMN transportation        SET DEFAULT 0,
+        ALTER COLUMN finances              DROP DEFAULT,
+        ALTER COLUMN finances              TYPE INTEGER USING (CASE WHEN finances              THEN 1 ELSE 0 END),
+        ALTER COLUMN finances              SET DEFAULT 0,
+        ALTER COLUMN communication         DROP DEFAULT,
+        ALTER COLUMN communication         TYPE INTEGER USING (CASE WHEN communication         THEN 1 ELSE 0 END),
+        ALTER COLUMN communication         SET DEFAULT 0,
+        ALTER COLUMN self_administer_meds  DROP DEFAULT,
+        ALTER COLUMN self_administer_meds  TYPE INTEGER USING (CASE WHEN self_administer_meds  THEN 1 ELSE 0 END),
+        ALTER COLUMN self_administer_meds  SET DEFAULT 0;
+    END IF;
+  END
+  $$;
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
