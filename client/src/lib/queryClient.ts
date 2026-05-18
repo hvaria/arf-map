@@ -9,7 +9,7 @@ const API_BASE =
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
         const text = (await res.text()) || res.statusText;
-        let message = text; try { message = JSON.parse(text).message || text; } catch {} throw new Error(message);
+        let message = text; try { const j = JSON.parse(text); message = j.message || j.error || text; } catch {} throw new Error(message);
   }
 }
 

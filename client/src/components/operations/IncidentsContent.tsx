@@ -177,6 +177,7 @@ interface IncidentFormData {
   location: string;
   description: string;
   immediateActionTaken: string;
+  reportedBy: string;
   injuryInvolved: boolean;
   supervisorNotified: boolean;
   supervisorNotifiedAt: string;
@@ -203,6 +204,10 @@ const EMPTY_FORM_STATIC: IncidentFormData = {
   location: "",
   description: "",
   immediateActionTaken: "",
+  // Default reporter matches the resident-level inline dialog. Server
+  // schema requires reportedBy.min(1); without a default, submissions that
+  // skip the field 400. Operator can overwrite via the input below.
+  reportedBy: "Staff",
   injuryInvolved: false,
   supervisorNotified: false,
   supervisorNotifiedAt: "",
@@ -234,18 +239,37 @@ function ReportIncidentDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       // Use toLocalEpochMs for date-only fields so users west of UTC don't
-      // see their incident-date roll back by a day.
+      // see their incident-date roll back by a day. Build the body
+      // explicitly — spreading `...form` leaks every empty-string field
+      // (e.g. blank notified-at) into the payload and obscures shape.
       const body = {
-        ...form,
-        residentId: form.residentId && form.residentId !== "none" ? Number(form.residentId) : null,
+        incidentType: form.incidentType,
+        description: form.description.trim(),
+        immediateActionTaken: form.immediateActionTaken.trim() || null,
+        reportedBy: form.reportedBy.trim(),
+        residentId:
+          form.residentId && form.residentId !== "none"
+            ? Number(form.residentId)
+            : null,
         incidentDate: form.incidentDate ? toLocalEpochMs(form.incidentDate) : Date.now(),
+        incidentTime: form.incidentTime || null,
+        location: form.location.trim() || null,
         injuryInvolved: form.injuryInvolved ? 1 : 0,
         supervisorNotified: form.supervisorNotified ? 1 : 0,
-        supervisorNotifiedAt: form.supervisorNotifiedAt ? new Date(form.supervisorNotifiedAt).getTime() : null,
+        supervisorNotifiedAt:
+          form.supervisorNotified && form.supervisorNotifiedAt
+            ? new Date(form.supervisorNotifiedAt).getTime()
+            : null,
         familyNotified: form.familyNotified ? 1 : 0,
-        familyNotifiedAt: form.familyNotifiedAt ? new Date(form.familyNotifiedAt).getTime() : null,
+        familyNotifiedAt:
+          form.familyNotified && form.familyNotifiedAt
+            ? new Date(form.familyNotifiedAt).getTime()
+            : null,
         physicianNotified: form.physicianNotified ? 1 : 0,
-        physicianNotifiedAt: form.physicianNotifiedAt ? new Date(form.physicianNotifiedAt).getTime() : null,
+        physicianNotifiedAt:
+          form.physicianNotified && form.physicianNotifiedAt
+            ? new Date(form.physicianNotifiedAt).getTime()
+            : null,
       };
       const res = await apiRequest("POST", `/api/ops/incidents`, body);
       return res.json();
@@ -258,17 +282,27 @@ function ReportIncidentDialog({
       setShowErrors(false);
     },
     onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      // apiRequest already extracts the server's `error` / `message` field
+      // out of the JSON body, so err.message carries the real reason (e.g.
+      // a Zod validation message). Show it so divergence between client
+      // form shape and server schema doesn't hide behind a generic toast.
+      toast({
+        title: "Couldn't save incident",
+        description: err.message || "Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
-  // Required: type, date, description. Everything else is supporting context.
+  // Required: type, date, description, reportedBy. Everything else is supporting context.
   const errors = {
     incidentType: !form.incidentType ? "Pick the incident type" : undefined,
     incidentDate: !form.incidentDate ? "When did it happen?" : undefined,
     description: form.description.trim().length === 0 ? "Describe what happened" : undefined,
+    reportedBy: form.reportedBy.trim().length === 0 ? "Who reported this?" : undefined,
   };
-  const isValid = !errors.incidentType && !errors.incidentDate && !errors.description;
+  const isValid =
+    !errors.incidentType && !errors.incidentDate && !errors.description && !errors.reportedBy;
   const submit = () => {
     if (!isValid || mutation.isPending) {
       setShowErrors(true);
@@ -338,6 +372,14 @@ function ReportIncidentDialog({
               onChange={(e) => set("immediateActionTaken", e.target.value)}
               placeholder="What was done immediately..."
               className="resize-none min-h-[60px]"
+            />
+          </FormField>
+
+          <FormField label="Reported By" required error={showErrors ? errors.reportedBy : undefined}>
+            <Input
+              value={form.reportedBy}
+              onChange={(e) => set("reportedBy", e.target.value)}
+              placeholder="Staff name"
             />
           </FormField>
 
