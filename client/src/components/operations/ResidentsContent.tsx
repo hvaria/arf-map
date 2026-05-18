@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { ResidentProfileContent } from "@/components/operations/ResidentProfileContent";
+import { useFacilityPortalRoute } from "@/hooks/useFacilityPortalRoute";
 import {
   VoiceAddResidentChat,
   type AddResidentForm,
@@ -265,7 +266,26 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [addOpen, setAddOpen] = useState(false);
-  const [selectedResidentId, setSelectedResidentId] = useState<number | null>(null);
+  // Selected-resident state is URL-owned (Bug 3) so hard refreshes restore
+  // the resident profile view and Back/Forward traverses the drill-in path.
+  const route = useFacilityPortalRoute();
+  const selectedResidentId = route.residentId;
+
+  const openResident = (id: number) =>
+    route.navigate({
+      tab: "operations",
+      subView: "residents",
+      residentId: id,
+      residentTab: "details",
+    });
+
+  const backToList = () =>
+    route.navigate({
+      tab: "operations",
+      subView: "residents",
+      residentId: null,
+      residentTab: "details",
+    });
 
   // Residents page shows the full roster — activeOnly: false to keep
   // discharged residents reachable through the status filter.
@@ -285,7 +305,7 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
       <ResidentProfileContent
         facilityNumber={facilityNumber}
         residentId={selectedResidentId}
-        onBack={() => setSelectedResidentId(null)}
+        onBack={backToList}
       />
     );
   }
@@ -386,7 +406,7 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
                     style={{ background: 'white' }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = '#F0F4FF')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'white')}
-                    onClick={() => setSelectedResidentId(r.id)}
+                    onClick={() => openResident(r.id)}
                   >
                     <td className="px-4 py-3 font-medium">
                       {r.firstName} {r.lastName}
@@ -427,7 +447,7 @@ export function ResidentsContent({ facilityNumber, onBack }: { facilityNumber: s
               <button
                 key={r.id}
                 className="w-full text-left rounded-lg border p-4 hover:bg-muted/30 transition-colors"
-                onClick={() => setSelectedResidentId(r.id)}
+                onClick={() => openResident(r.id)}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-sm">

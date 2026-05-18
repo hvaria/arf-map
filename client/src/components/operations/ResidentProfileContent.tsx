@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import {
+  useFacilityPortalRoute,
+  type ResidentTab,
+} from "@/hooks/useFacilityPortalRoute";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,6 +38,31 @@ import { ChartCompletenessPanel } from "@/components/operations/ChartCompletenes
 import { useChartCompletenessForResident } from "@/hooks/useChartCompleteness";
 import { useIsWritable } from "@/context/AuditorContext";
 import { IncidentCard } from "@/components/incidents/IncidentCard";
+
+// ── URL ↔ internal tab mapping ───────────────────────────────────────────────
+//
+// The URL contract exposes 5 kebab-case slugs (details / assessments /
+// care-plan / meds / incidents), but the component only renders 4 visible
+// tabs (Profile / Care Plan / Medications / Incidents) — Assessment History
+// lives INSIDE the Profile tab. Both URL slugs "details" and "assessments"
+// map to the same internal tab so deep-links from older code keep working;
+// the round-trip prefers "details" (the URL emitted by clicks).
+type InternalResidentTab = "profile" | "careplan" | "medications" | "incidents";
+
+const URL_TO_INTERNAL_RESIDENT_TAB: Record<ResidentTab, InternalResidentTab> = {
+  details: "profile",
+  assessments: "profile",
+  "care-plan": "careplan",
+  meds: "medications",
+  incidents: "incidents",
+};
+
+const INTERNAL_TO_URL_RESIDENT_TAB: Record<InternalResidentTab, ResidentTab> = {
+  profile: "details",
+  careplan: "care-plan",
+  medications: "meds",
+  incidents: "incidents",
+};
 
 interface Resident {
   id: number;
@@ -1409,6 +1438,23 @@ export function ResidentProfileContent({
   const [reactivateOpen, setReactivateOpen] = useState(false);
   const residentIdStr = String(residentId);
 
+  // URL-driven inner tab (Bug 3). The URL contract uses kebab-case slugs
+  // (details/assessments/care-plan/meds/incidents) while the component's
+  // internal Tabs values stay as `profile/careplan/medications/incidents`
+  // so the existing <TabsContent> blocks below don't need to be relabelled.
+  // "assessments" maps to "profile" because Assessment History lives inside
+  // the Profile tab — both URLs round-trip to the same view.
+  const route = useFacilityPortalRoute();
+  const internalResidentTab = URL_TO_INTERNAL_RESIDENT_TAB[route.residentTab];
+  const onResidentTabChange = (next: InternalResidentTab) => {
+    route.navigate({
+      tab: "operations",
+      subView: "residents",
+      residentId,
+      residentTab: INTERNAL_TO_URL_RESIDENT_TAB[next],
+    });
+  };
+
   const { data: residentEnvelope, isLoading } = useQuery<{ success: boolean; data: Resident } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentIdStr}`],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -1614,7 +1660,10 @@ export function ResidentProfileContent({
         facilityNumber={facilityNumber}
       />
 
-      <Tabs defaultValue="profile">
+      <Tabs
+        value={internalResidentTab}
+        onValueChange={(v) => onResidentTabChange(v as InternalResidentTab)}
+      >
         <TabsList className="w-full overflow-x-auto">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="careplan">Care Plan</TabsTrigger>

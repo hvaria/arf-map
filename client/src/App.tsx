@@ -52,10 +52,39 @@ function AppRouter() {
         <Route path="/map" component={MapPage} />
         <Route path="/jobs" component={MapPage} />
         <Route path="/stats" component={StatsPage} />
-        <Route path="/facility-portal" component={FacilityPortal} />
         {/* Dedicated split-pane Notes page (Slice 1 of the Notes redesign).
-            Mounted above the catch-all and below the portal entry. */}
+            Mounted FIRST in the portal subtree so wouter's <Switch> picks it
+            before any of the generic /facility-portal/... routes below. */}
         <Route path="/facility-portal/notes" component={NotesPage} />
+        {/* URL-driven facility-portal sub-routes (Bug 3).
+            Ordered specific → generic so wouter's <Switch> picks the most
+            precise match first. Every match renders the same FacilityPortal
+            component, which reads its tab + sub-view + selected resident
+            from `useFacilityPortalRoute()` so a hard refresh restores the
+            exact view the operator was on. */}
+        <Route
+          path="/facility-portal/operations/residents/:residentId/:residentTab"
+          component={FacilityPortal}
+        />
+        <Route
+          path="/facility-portal/operations/residents/:residentId"
+          component={FacilityPortal}
+        />
+        <Route
+          path="/facility-portal/operations/tracker/:slug"
+          component={FacilityPortal}
+        />
+        <Route
+          path="/facility-portal/operations/tracker"
+          component={FacilityPortal}
+        />
+        <Route
+          path="/facility-portal/operations/:subView"
+          component={FacilityPortal}
+        />
+        <Route path="/facility-portal/operations" component={FacilityPortal} />
+        <Route path="/facility-portal/:tab" component={FacilityPortal} />
+        <Route path="/facility-portal" component={FacilityPortal} />
         <Route path="/job-seeker" component={JobSeekerPage} />
         {/* Public job detail page — anonymous-readable; Express Interest
             CTA reuses the existing pendingAction flow for unauth seekers. */}

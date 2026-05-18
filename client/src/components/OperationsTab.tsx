@@ -93,6 +93,7 @@ import type {
   TrackerMode,
   Shift,
 } from "@shared/tracker-schemas";
+import { useFacilityPortalRoute } from "@/hooks/useFacilityPortalRoute";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1047,13 +1048,18 @@ function TrackerSubView({
 // ── Main component ─────────────────────────────────────────────────────────────
 
 function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
-  const [subView, setSubView] = useState<SubView | null>(null);
+  // URL-driven sub-view + selected tracker (Bug 3). A hard refresh on any
+  // operations URL restores the exact module the operator was on. Internal
+  // axes that don't deep-link (calendar date, tracker tab/filters) stay in
+  // useState below.
+  const route = useFacilityPortalRoute();
+  const subView: SubView | null = route.subView;
+  const selectedTrackerSlug: string | null = route.trackerSlug;
+
   // Day-scoped sub-views (currently just emar) read this to open on the
-  // correct date when navigation comes from a calendar chip.
+  // correct date when navigation comes from a calendar chip. Transient —
+  // intentionally not in the URL.
   const [subViewDate, setSubViewDate] = useState<string | null>(null);
-  // Tracker sub-view state. The slug picks the definition; tab/filters are
-  // owned here because trackers no longer have their own URL.
-  const [selectedTrackerSlug, setSelectedTrackerSlug] = useState<string | null>(null);
   const [trackerTab, setTrackerTab] = useState<TrackerMode>("quick");
   const [trackerFilters, setTrackerFilters] = useState<TrackerFilters>(() => ({
     date: startOfDay(Date.now()),
@@ -1291,11 +1297,16 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   }, [dashboard, medPasses, trackerAlertSummary]);
 
   const goToSubView = (sv: SubView, date: string | null = null) => {
-    setSubView(sv);
     setSubViewDate(date);
     // Entering tracker via the overview always lands on the picker; users
     // can re-enter the same tracker if they want by clicking its card.
-    if (sv === "tracker") setSelectedTrackerSlug(null);
+    // The hook's cross-axis invariants also auto-clear trackerSlug when
+    // subView !== "tracker", and clear residentId when subView !== "residents".
+    route.navigate({
+      tab: "operations",
+      subView: sv,
+      trackerSlug: null,
+    });
   };
 
   // Tracker definitions feed the sidebar's expandable Trackers sub-list. The
@@ -1307,8 +1318,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   // the same state TrackerSubView's onSelectTracker does, so deep-linking
   // from the rail behaves identically to picking a card from the grid.
   const navigateToTracker = (def: SerializedTrackerDefinition) => {
-    setSubView("tracker");
-    setSelectedTrackerSlug(def.slug);
     const defaultMode = (def.defaultMode as TrackerMode | undefined) ?? "quick";
     setTrackerTab(defaultMode);
     setTrackerFilters({
@@ -1316,6 +1325,11 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
       shift: deriveCurrentShift(),
     });
     setSubViewDate(null);
+    route.navigate({
+      tab: "operations",
+      subView: "tracker",
+      trackerSlug: def.slug,
+    });
   };
 
   // Auto-expand the Trackers nav group when the user is inside a tracker
@@ -1353,8 +1367,8 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         return;
       }
       if (e.key === "c" && prefix == null) {
-        setSubView("emar");
         setSubViewDate(null);
+        route.navigate({ tab: "operations", subView: "emar" });
         return;
       }
       if (e.key === "g") {
@@ -1380,9 +1394,12 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           if (dest === "notes") {
             openNotesBell();
           } else {
-            setSubView(dest);
             setSubViewDate(null);
-            if (dest === "tracker") setSelectedTrackerSlug(null);
+            route.navigate({
+              tab: "operations",
+              subView: dest,
+              trackerSlug: null,
+            });
           }
         }
       }
@@ -1392,6 +1409,11 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
       window.removeEventListener("keydown", onKey);
       if (prefixTimeout) clearTimeout(prefixTimeout);
     };
+    // route.navigate is stable across renders (useCallback with empty deps
+    // inside useFacilityPortalRoute), so reading it via the captured `route`
+    // snapshot is safe — but we depend on `route` here to keep ESLint happy
+    // about the closure capture.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Smart KPI tiles ────────────────────────────────────────────────────────
@@ -1802,15 +1824,18 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
   // drilled into a module — UX-1 from BA review: "see at-a-glance status
   // even while you're focused on one thing".
   const subViewBack = () => {
-    setSubView(null);
     setSubViewDate(null);
-    setSelectedTrackerSlug(null);
+    route.navigate({ tab: "operations", subView: null, trackerSlug: null });
   };
   const trackerBack = () => {
     // Inside the tracker sub-view, "Back" returns to the tracker picker.
     // From the picker, it returns to the overview.
     if (selectedTrackerSlug !== null) {
-      setSelectedTrackerSlug(null);
+      route.navigate({
+        tab: "operations",
+        subView: "tracker",
+        trackerSlug: null,
+      });
     } else {
       subViewBack();
     }
@@ -1841,7 +1866,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         filters={trackerFilters}
         alertCountsBySlug={trackerAlertCountsBySlug}
         onSelectTracker={(slug, def) => {
-          setSelectedTrackerSlug(slug);
           // Seed tab from the definition's defaultMode (falls back to quick).
           const defaultMode = (def.defaultMode as TrackerMode | undefined) ?? "quick";
           setTrackerTab(defaultMode);
@@ -1850,6 +1874,11 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
           setTrackerFilters({
             date: startOfDay(Date.now()),
             shift: deriveCurrentShift(),
+          });
+          route.navigate({
+            tab: "operations",
+            subView: "tracker",
+            trackerSlug: slug,
           });
         }}
         onTabChange={setTrackerTab}

@@ -24,6 +24,7 @@ import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-of-interest
 import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
 import { FacilityDetailsTab } from "@/components/facility/FacilityDetailsTab";
+import { useFacilityPortalRoute, type PortalTab } from "@/hooks/useFacilityPortalRoute";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -959,9 +960,13 @@ function Dashboard({ user }: { user: SessionUser }) {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  // Controlled tab state — so the post-checkout / paywall-deeplink effects
-  // below can force-select the Operations tab. Default still "details".
-  const [activeTab, setActiveTab] = useState<string>("details");
+  // URL-driven tab + sub-view + selected resident. A hard refresh on any
+  // /facility-portal/... URL restores the exact view; Back/Forward traverses
+  // navigation history naturally. Internal child state (calendar dates,
+  // tracker filters, dialog open-states) intentionally stays in useState —
+  // the URL only owns the structural axes operators actually deep-link to.
+  const route = useFacilityPortalRoute();
+  const { tab: activeTab, navigate: navigateRoute } = route;
 
   // Handle the billing redirect from Stripe and the paywall deep-link from
   // NotesPage. Runs once on mount: the toasts/refetch must fire on the
@@ -987,7 +992,7 @@ function Dashboard({ user }: { user: SessionUser }) {
         description: "Your subscription is active.",
       });
       qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
-      setActiveTab("operations");
+      navigateRoute({ tab: "operations" }, { replace: true });
       clearHashParams(["billing"]);
     } else if (billing === "cancelled" || billing === "canceled") {
       // Stripe historically spells it "canceled" (single-l); we accept
@@ -996,7 +1001,7 @@ function Dashboard({ user }: { user: SessionUser }) {
         title: "Checkout cancelled",
         description: "You can upgrade anytime.",
       });
-      setActiveTab("operations");
+      navigateRoute({ tab: "operations" }, { replace: true });
       clearHashParams(["billing"]);
     }
 
@@ -1005,7 +1010,7 @@ function Dashboard({ user }: { user: SessionUser }) {
       // tab so the paywall card is the first thing they see. NotesPage
       // sets this when the dedicated /facility-portal/notes route is
       // gated by an inactive subscription.
-      setActiveTab("operations");
+      navigateRoute({ tab: "operations" }, { replace: true });
       clearHashParams(["paywall"]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1050,7 +1055,9 @@ function Dashboard({ user }: { user: SessionUser }) {
   return (
     <Tabs
       value={activeTab}
-      onValueChange={setActiveTab}
+      onValueChange={(value) =>
+        navigateRoute({ tab: value as PortalTab })
+      }
       className="min-h-screen flex flex-col bg-white"
     >
       {/* ── Top bar ──
