@@ -1,7 +1,12 @@
 /**
  * OpsCalendar — unified month/week operations calendar.
- * Shows meds, tasks, incidents, leads, billing, and compliance events
- * aggregated per day. Clicking any event chip navigates to that sub-view.
+ * Shows meds, tasks, incidents, leads, and compliance events aggregated
+ * per day. Clicking any event chip navigates to that sub-view.
+ *
+ * Note: the server response shape may still carry billing-related fields
+ * (e.g. `billingDue` aggregates, or events with `type: "billing"`) from
+ * before the Operations Billing sub-view was removed. We silently ignore
+ * those — server cleanup is tracked separately.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,7 +17,7 @@ import { cn } from "@/lib/utils";
 import {
   ChevronLeft, ChevronRight,
   Pill, ClipboardList, AlertTriangle,
-  UserPlus, Receipt, ShieldCheck,
+  UserPlus, ShieldCheck,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -23,12 +28,11 @@ interface DayOpsEvent {
   tasksTotal: number; tasksCompleted: number; tasksOverdue: number;
   incidentsTotal: number; incidentsOpen: number;
   leadsFollowups: number;
-  billingDue: number;
   complianceDue: number;
 }
 
 type CalView = "day" | "week" | "month";
-type SubView = "emar" | "residents" | "incidents" | "crm" | "billing" | "compliance";
+type SubView = "emar" | "residents" | "incidents" | "crm" | "compliance";
 
 // Filter applied across all calendar views. "all" = no filter (default);
 // any other value narrows the calendar to that single category.
@@ -40,7 +44,6 @@ const FILTER_LABEL: Record<FilterKey, string> = {
   residents: "tasks",
   incidents: "incidents",
   crm: "leads",
-  billing: "billing items",
   compliance: "compliance items",
 };
 
@@ -48,8 +51,15 @@ const FILTER_LABEL: Record<FilterKey, string> = {
 // ── Time-grid types (Day + Week hourly views) ─────────────────────────────────
 
 // Unified event shape from /api/ops/facilities/:f/calendar/events. Mirrors
-// CalendarEventRow in server/ops/opsStorage.ts.
-type EventType = "meds" | "tasks" | "incidents" | "leads" | "billing" | "compliance";
+// CalendarEventRow in server/ops/opsStorage.ts. The server may still emit
+// `billing`-typed rows; we filter those out client-side (see KNOWN_EVENT_TYPES).
+type EventType = "meds" | "tasks" | "incidents" | "leads" | "compliance";
+
+// Allow-list for filtering server payloads. Anything not in this set
+// (e.g. legacy `billing` events) is dropped silently.
+const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set<EventType>([
+  "meds", "tasks", "incidents", "leads", "compliance",
+]);
 
 interface CalendarEvent {
   id: string;                   // namespaced: "meds-123", "tasks-45"
@@ -70,7 +80,6 @@ const SUBVIEW_BY_TYPE: Record<EventType, SubView> = {
   tasks:      "residents",
   incidents:  "incidents",
   leads:      "crm",
-  billing:    "billing",
   compliance: "compliance",
 };
 const TYPE_BY_SUBVIEW = Object.fromEntries(
@@ -83,7 +92,6 @@ const TYPE_STYLE: Record<EventType, string> = {
   tasks:      "bg-violet-100  text-violet-800  border-violet-300",
   incidents:  "bg-orange-100  text-orange-800  border-orange-300",
   leads:      "bg-blue-100    text-blue-800    border-blue-300",
-  billing:    "bg-emerald-100 text-emerald-800 border-emerald-300",
   compliance: "bg-rose-100    text-rose-800    border-rose-300",
 };
 
@@ -233,7 +241,6 @@ const TYPE_ICON: Record<EventType, React.ElementType> = {
   tasks:      ClipboardList,
   incidents:  AlertTriangle,
   leads:      UserPlus,
-  billing:    Receipt,
   compliance: ShieldCheck,
 };
 
@@ -285,15 +292,6 @@ const CHIPS: ChipDef[] = [
     urgent: () => false,
     chip:       "bg-blue-100   text-blue-700   border-blue-200",
     chipUrgent: "bg-blue-100   text-blue-700   border-blue-200",
-  },
-  {
-    key: "billing",
-    Icon: Receipt,
-    label: "due",
-    count: (e) => e.billingDue,
-    urgent: (e) => e.billingDue > 0,
-    chip:       "bg-emerald-100 text-emerald-700 border-emerald-200",
-    chipUrgent: "bg-red-100     text-red-700     border-red-300",
   },
   {
     key: "compliance",
@@ -549,7 +547,7 @@ function assignLanes(
 
 // ── Hook: unified calendar events for a date range ────────────────────────────
 // Replaces the old per-day med-pass fetch. One request returns events from
-// every source module (meds, tasks, incidents, leads, billing, compliance).
+// every source module (meds, tasks, incidents, leads, compliance).
 // Optional `types` narrows the request server-side so the filter chip applies
 // at the network level too.
 
@@ -676,7 +674,9 @@ function DayTimeGrid({
     staleTime: 60_000,
   });
 
-  const items = data?.data ?? [];
+  // Filter unknown event types (e.g. legacy `billing` rows from the server)
+  // so they never reach chip rendering / lane assignment.
+  const items = (data?.data ?? []).filter((e) => KNOWN_EVENT_TYPES.has(e.type));
   const visibleLanes = useMemo(
     () => {
       const within = items.filter((e) => {
@@ -705,7 +705,7 @@ function DayTimeGrid({
   // meds-only summary (given/pending/late) when the user is filtered to meds.
   const totals = useMemo(() => {
     const byType: Record<EventType, number> = {
-      meds: 0, tasks: 0, incidents: 0, leads: 0, billing: 0, compliance: 0,
+      meds: 0, tasks: 0, incidents: 0, leads: 0, compliance: 0,
     };
     let medsGiven = 0, medsPending = 0, medsLateMissed = 0;
     for (const e of items) {
@@ -846,6 +846,8 @@ function WeekTimeGrid({
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
     for (const e of data?.data ?? []) {
+      // Drop unknown event types (e.g. legacy `billing` rows).
+      if (!KNOWN_EVENT_TYPES.has(e.type)) continue;
       if (!map.has(e.date)) map.set(e.date, []);
       map.get(e.date)!.push(e);
     }
@@ -1041,7 +1043,7 @@ function readFilterFromUrl(): FilterKey {
   if (qIdx === -1) return "all";
   const params = new URLSearchParams(hash.slice(qIdx + 1));
   const raw = params.get("calFilter");
-  const valid: FilterKey[] = ["all", "emar", "residents", "incidents", "crm", "billing", "compliance"];
+  const valid: FilterKey[] = ["all", "emar", "residents", "incidents", "crm", "compliance"];
   return valid.includes(raw as FilterKey) ? (raw as FilterKey) : "all";
 }
 

@@ -160,8 +160,7 @@ async function navigateToMedicationsTab(user: ReturnType<typeof userEvent.setup>
   // Wait for the resident header to render so we know data has loaded
   // before flipping tabs. Radix tabs interact via pointer events —
   // fireEvent.click doesn't change the active tab on its own; userEvent
-  // emulates the full pointer sequence. Reference:
-  //   client/src/__tests__/TrustAccountsTab.test.tsx:146-149.
+  // emulates the full pointer sequence.
   await screen.findByText(/Ada Lovelace/);
   const tab = await screen.findByRole("tab", { name: /Medications/i });
   await user.click(tab);
