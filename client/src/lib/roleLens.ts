@@ -26,7 +26,6 @@ export type KpiKey =
   | "tasks"
   | "incidents"
   | "leads"
-  | "invoices"
   | "compliance";
 
 export type AlertTier = "clinical" | "regulatory" | "care" | "ops" | "info";
@@ -52,13 +51,13 @@ export interface RoleLens {
 }
 
 const COMMON_KPIS: KpiKey[] = [
-  "residents", "meds", "tasks", "incidents", "leads", "invoices", "compliance",
+  "residents", "meds", "tasks", "incidents", "leads", "compliance",
 ];
 
 const LENSES: Record<Role, RoleLens> = {
   super_admin: {
     label: "Owner / Operator",
-    kpis: ["residents", "incidents", "compliance", "invoices", "leads", "meds", "tasks"],
+    kpis: ["residents", "incidents", "compliance", "leads", "meds", "tasks"],
     tierBoost: { regulatory: -1 },
     quickActions: ["postNote", "openCompliance", "addIncident", "addLead"],
   },
@@ -70,7 +69,7 @@ const LENSES: Record<Role, RoleLens> = {
   },
   supervisor: {
     label: "Supervisor",
-    kpis: ["meds", "incidents", "tasks", "residents", "compliance", "leads", "invoices"],
+    kpis: ["meds", "incidents", "tasks", "residents", "compliance", "leads"],
     tierBoost: { clinical: -1 },
     quickActions: ["chartMed", "addIncident", "postNote", "addLead"],
   },

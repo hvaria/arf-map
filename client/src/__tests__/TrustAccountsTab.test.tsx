@@ -17,7 +17,6 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
@@ -34,13 +33,11 @@ vi.mock("@/lib/queryClient", async () => {
 });
 
 import { apiRequest } from "@/lib/queryClient";
-import { BillingContent } from "../components/operations/BillingContent";
 import {
   TrustAccountsTab,
   type TrustAccount,
   type TrustLedgerEntry,
 } from "../components/operations/TrustAccountsTab";
-import type { RegSettingRow } from "../components/operations/RegSettingsContent";
 
 const mockApi = apiRequest as unknown as ReturnType<typeof vi.fn>;
 
@@ -81,10 +78,6 @@ function account(overrides: Partial<TrustAccount> = {}): TrustAccount {
   };
 }
 
-function regSetting(key: string, value: string): RegSettingRow {
-  return { key, value, placeholder: false, validated: true };
-}
-
 function ledgerEntry(
   overrides: Partial<TrustLedgerEntry> = {},
 ): TrustLedgerEntry {
@@ -120,43 +113,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// ── 1. Feature-gated empty state ─────────────────────────────────────────────
-
-describe("BillingContent — Trust tab feature gate", () => {
-  it("shows the disabled card when RESIDENT_TRUST_ENABLED is not true", async () => {
-    const qc = freshClient();
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/reg-settings")) {
-        return Promise.resolve(
-          jsonResponse({
-            success: true,
-            data: [regSetting("RESIDENT_TRUST_ENABLED", "false")],
-          }),
-        );
-      }
-      return Promise.resolve(jsonResponse({ success: true, data: [] }));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const user = userEvent.setup();
-    render(<BillingContent facilityNumber="197600001" />, {
-      wrapper: wrapper(qc),
-    });
-
-    // Radix tabs interact via pointer events — fireEvent.click doesn't
-    // change the active tab on its own. userEvent.click() emulates the
-    // full pointer sequence.
-    await user.click(await screen.findByTestId("billing-tab-trust"));
-    expect(
-      await screen.findByTestId("trust-feature-disabled"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Resident trust accounts are not enabled/i),
-    ).toBeInTheDocument();
-  });
-});
-
-// ── 2. Account list with formatted balance ───────────────────────────────────
+// ── 1. Account list with formatted balance ───────────────────────────────────
 
 describe("TrustAccountsTab — list renders", () => {
   it("renders the account list with the balance formatted as dollars", async () => {

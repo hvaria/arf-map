@@ -46,7 +46,7 @@ import {
 } from "@/lib/roleLens";
 import {
   Users, Pill, ClipboardList, AlertTriangle,
-  UserPlus, Receipt, ShieldCheck,
+  UserPlus, ShieldCheck,
   MessageSquare, Bell, ArrowRight, Clock,
   CheckCircle2, Inbox, UserCog, Keyboard,
   Calendar as CalendarIcon, Activity,
@@ -63,7 +63,6 @@ import { ResidentsContent } from "@/components/operations/ResidentsContent";
 import { EmarContent } from "@/components/operations/EmarContent";
 import { IncidentsContent } from "@/components/operations/IncidentsContent";
 import { CrmContent } from "@/components/operations/CrmContent";
-import { BillingContent } from "@/components/operations/BillingContent";
 import { StaffContent } from "@/components/operations/StaffContent";
 import { ComplianceContent } from "@/components/operations/ComplianceContent";
 import { AuditReadinessContent } from "@/components/operations/AuditReadinessContent";
@@ -174,7 +173,6 @@ type SubView =
   | "tasks"
   | "incidents"
   | "crm"
-  | "billing"
   | "staff"
   | "compliance"
   | "audit_readiness"
@@ -195,7 +193,6 @@ const NAV_ITEMS: Array<{ key: SubView | null; label: string; icon: React.Element
   { key: "compliance", label: "Compliance",  icon: ShieldCheck },
   { key: "audit_readiness", label: "Audit Readiness", icon: ShieldCheck },
   { key: "crm",        label: "CRM",         icon: UserPlus },
-  { key: "billing",    label: "Billing",     icon: Receipt },
   { key: "staff",      label: "Staff",       icon: UserCog },
   { key: "reports",    label: "Reports",     icon: FileText },
   { key: "calendar",   label: "Calendar",    icon: CalendarIcon },
@@ -1273,11 +1270,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         tone: dashboard.pendingLeads > 0 ? "info" : "ok",
       };
 
-      out.billing = {
-        count: dashboard.overdueInvoices,
-        tone: dashboard.overdueInvoices > 0 ? "danger" : "ok",
-      };
-
       out.compliance = {
         count: dashboard.overdueCompliance,
         tone: dashboard.overdueCompliance > 0 ? "warn" : "ok",
@@ -1512,16 +1504,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
         icon: UserPlus,
         tone: dashboard.pendingLeads > 0 ? "info" : "ok",
         subView: "crm",
-      },
-      {
-        key: "invoices",
-        label: "Overdue Invoices",
-        count: dashboard.overdueInvoices,
-        subtitle:
-          dashboard.overdueInvoices > 0 ? "Past due A/R" : "All current",
-        icon: Receipt,
-        tone: dashboard.overdueInvoices > 0 ? "danger" : "ok",
-        subView: "billing",
       },
       {
         key: "compliance",
@@ -1854,7 +1836,6 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     subView === "tasks"      ? <TasksContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "incidents"  ? <IncidentsContent  facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "crm"        ? <CrmContent        facilityNumber={facilityNumber} onBack={subViewBack} /> :
-    subView === "billing"    ? <BillingContent    facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "audit_readiness" ? <AuditReadinessContent facilityNumber={facilityNumber} onBack={subViewBack} /> :

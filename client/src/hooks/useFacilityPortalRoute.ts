@@ -44,7 +44,6 @@ export type SubView =
   | "tasks"
   | "incidents"
   | "crm"
-  | "billing"
   | "staff"
   | "compliance"
   | "audit_readiness"
@@ -81,7 +80,6 @@ const URL_TO_SUBVIEW: Record<string, SubView> = {
   tasks: "tasks",
   incidents: "incidents",
   crm: "crm",
-  billing: "billing",
   staff: "staff",
   compliance: "compliance",
   "audit-readiness": "audit_readiness",
@@ -96,7 +94,6 @@ const SUBVIEW_TO_URL: Record<SubView, string> = {
   tasks: "tasks",
   incidents: "incidents",
   crm: "crm",
-  billing: "billing",
   staff: "staff",
   compliance: "compliance",
   audit_readiness: "audit-readiness",
