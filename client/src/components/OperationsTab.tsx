@@ -1474,9 +1474,17 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
       },
       {
         key: "tasks",
-        label: "Overdue Tasks",
-        count: dashboard.overdueTasks,
-        subtitle: dashboard.overdueTasks > 0 ? "Past due window" : "Caught up",
+        // KPI mirrors the sidebar Tasks badge: today's pending workload,
+        // falling back to overdueTasks for older server builds. Tone stays
+        // tied to actual past-due work so a normal today queue doesn't go red.
+        label: "Open Tasks Today",
+        count: dashboard.todaysOpenTasks ?? dashboard.overdueTasks,
+        subtitle:
+          (dashboard.todaysOpenTasks ?? dashboard.overdueTasks) > 0
+            ? dashboard.overdueTasks > 0
+              ? "Includes past due"
+              : "Due today"
+            : "Caught up",
         icon: ClipboardList,
         tone: dashboard.overdueTasks > 0 ? "danger" : "ok",
         subView: "tasks",

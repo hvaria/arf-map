@@ -94,6 +94,7 @@ export function AddTaskDialog({
           if (typeof k !== "string") return false;
           if (k.startsWith(`/api/ops/facilities/${facilityNumber}/calendar`)) return true;
           if (k.startsWith(`/api/ops/facilities/${facilityNumber}/dashboard`)) return true;
+          if (k.startsWith(`/api/ops/facilities/${facilityNumber}/overdue-tasks`)) return true;
           if (k.startsWith(`/api/ops/residents/`)) return true;
           // Resident-scoped daily-tasks under the facility namespace.
           if (
