@@ -236,6 +236,39 @@ function ReportIncidentDialog({
     setForm((f) => ({ ...f, [key]: value }));
   const [showErrors, setShowErrors] = useState(false);
 
+  // Toggle a notification: checking ON auto-stamps the *NotifiedAt field
+  // with the current local datetime-local string (YYYY-MM-DDTHH:MM) so the
+  // operator can submit immediately without manually picking a time.
+  // Mirrors the W4 inline "Mark X notified" action, which server-stamps
+  // Date.now() (see markMutation, line ~860). Unchecking clears both
+  // fields so a half-filled timestamp doesn't get sent.
+  const toggleNotified = (key: "supervisor" | "family" | "physician", checked: boolean) => {
+    setForm((f) => {
+      if (checked && !f[`${key}NotifiedAt`]) {
+        const d = new Date();
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const localDt = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        return { ...f, [`${key}Notified`]: true, [`${key}NotifiedAt`]: localDt };
+      }
+      if (!checked) {
+        return { ...f, [`${key}Notified`]: false, [`${key}NotifiedAt`]: "" };
+      }
+      return { ...f, [`${key}Notified`]: checked };
+    });
+  };
+
+  // Defensive: `new Date(s).getTime()` returns NaN on a malformed input,
+  // and NaN serializes to JSON `null` (silently). For the three nullable
+  // notification timestamps that's tolerable, but a NaN slipping into
+  // incidentDate would surface as the misleading server error
+  // "Expected number, received null". Guard with isFinite so callers
+  // always get a clean number-or-null shape.
+  const toEpochMsOrNull = (s: string): number | null => {
+    if (!s) return null;
+    const t = new Date(s).getTime();
+    return Number.isFinite(t) ? t : null;
+  };
+
   const mutation = useMutation({
     mutationFn: async () => {
       // Use toLocalEpochMs for date-only fields so users west of UTC don't
@@ -256,20 +289,17 @@ function ReportIncidentDialog({
         location: form.location.trim() || null,
         injuryInvolved: form.injuryInvolved ? 1 : 0,
         supervisorNotified: form.supervisorNotified ? 1 : 0,
-        supervisorNotifiedAt:
-          form.supervisorNotified && form.supervisorNotifiedAt
-            ? new Date(form.supervisorNotifiedAt).getTime()
-            : null,
+        supervisorNotifiedAt: form.supervisorNotified
+          ? toEpochMsOrNull(form.supervisorNotifiedAt)
+          : null,
         familyNotified: form.familyNotified ? 1 : 0,
-        familyNotifiedAt:
-          form.familyNotified && form.familyNotifiedAt
-            ? new Date(form.familyNotifiedAt).getTime()
-            : null,
+        familyNotifiedAt: form.familyNotified
+          ? toEpochMsOrNull(form.familyNotifiedAt)
+          : null,
         physicianNotified: form.physicianNotified ? 1 : 0,
-        physicianNotifiedAt:
-          form.physicianNotified && form.physicianNotifiedAt
-            ? new Date(form.physicianNotifiedAt).getTime()
-            : null,
+        physicianNotifiedAt: form.physicianNotified
+          ? toEpochMsOrNull(form.physicianNotifiedAt)
+          : null,
       };
       const res = await apiRequest("POST", `/api/ops/incidents`, body);
       return res.json();
@@ -404,7 +434,7 @@ function ReportIncidentDialog({
                   <Checkbox
                     id={`notif-${key}`}
                     checked={form[`${key}Notified`]}
-                    onCheckedChange={(v) => set(`${key}Notified`, !!v)}
+                    onCheckedChange={(v) => toggleNotified(key, !!v)}
                   />
                   <label htmlFor={`notif-${key}`} className="text-sm cursor-pointer">{label} notified</label>
                 </div>
