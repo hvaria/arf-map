@@ -59,6 +59,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { useIsWritable } from "@/context/AuditorContext";
+import { IncidentCard } from "@/components/incidents/IncidentCard";
 
 interface Resident {
   id: number;
@@ -939,7 +940,7 @@ function IncidentChecklistPanel({
           )}
           data-testid="incident-severity-badge"
         >
-          {cl.eventSeverity === "serious" ? "serious" : "non emergent"}
+          {cl.eventSeverity === "serious" ? "Serious" : "Non-Emergent"}
         </span>
       </div>
 
@@ -1357,31 +1358,19 @@ function IncidentRow({ incident, facilityNumber }: { incident: Incident; facilit
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-sm capitalize">{incident.incidentType?.replace(/_/g, " ")}</span>
-            {headerSeverity && (
-              <span
-                className={cn(
-                  "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] border capitalize",
-                  headerSeverity === "serious"
-                    ? "bg-red-100 text-red-700 border-red-200"
-                    : "bg-slate-100 text-slate-700 border-slate-200",
-                )}
-              >
-                {headerSeverity === "serious" ? "serious" : "non emergent"}
-              </span>
-            )}
-            {incident.lic624Required && !incident.lic624Submitted && (
+        <IncidentCard
+          incidentType={incident.incidentType}
+          incidentDate={incident.incidentDate}
+          incidentTime={incident.incidentTime}
+          residentName={incident.residentName}
+          reportedBy={incident.reportedBy}
+          severity={headerSeverity}
+          extras={
+            incident.lic624Required && !incident.lic624Submitted ? (
               <Badge className="bg-orange-100 text-orange-700 border-orange-300 text-xs">LIC 624 Required</Badge>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {new Date(incident.incidentDate).toLocaleDateString()} {incident.incidentTime}
-            {incident.residentName && ` · ${incident.residentName}`}
-            {` · ${incident.reportedBy}`}
-          </p>
-        </div>
+            ) : null
+          }
+        />
         <Badge className={cn("text-xs shrink-0", STATUS_COLORS[incident.status] ?? "")}>
           {incident.status?.replace(/_/g, " ")}
         </Badge>

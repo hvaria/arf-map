@@ -33,6 +33,7 @@ import { AddTaskDialog } from "@/components/operations/AddTaskDialog";
 import { ChartCompletenessPanel } from "@/components/operations/ChartCompletenessBanner";
 import { useChartCompletenessForResident } from "@/hooks/useChartCompleteness";
 import { useIsWritable } from "@/context/AuditorContext";
+import { IncidentCard } from "@/components/incidents/IncidentCard";
 
 interface Resident {
   id: number;
@@ -113,6 +114,10 @@ interface Incident {
   description: string;
   status: string;
   reportedBy: string;
+  // Server-derived severity (W4 Incident Lifecycle). Optional so older
+  // server builds without the column still type-check; the IncidentCard
+  // header hides the badge when absent.
+  eventSeverity?: "serious" | "non_emergent" | null;
 }
 
 function FieldRow({ label, value }: { label: string; value: string }) {
@@ -1932,15 +1937,19 @@ export function ResidentProfileContent({
           ) : (
             <div className="space-y-2">
               {incidents.map((i) => (
-                <div key={i.id} className="rounded-lg p-3" style={{ border: '1px solid #E0E7FF', background: '#F0F4FF' }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm capitalize">{i.incidentType?.replace(/_/g, " ")}</span>
-                    <Badge variant="outline">{i.status}</Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {new Date(i.incidentDate).toLocaleDateString()} &middot; {i.reportedBy}
-                  </p>
-                  <p className="text-sm mt-1 line-clamp-2">{i.description}</p>
+                <div
+                  key={i.id}
+                  className="rounded-lg p-3 flex items-start gap-3"
+                  style={{ border: '1px solid #E0E7FF', background: '#F0F4FF' }}
+                >
+                  <IncidentCard
+                    incidentType={i.incidentType}
+                    incidentDate={i.incidentDate}
+                    reportedBy={i.reportedBy}
+                    severity={i.eventSeverity ?? null}
+                    description={i.description}
+                  />
+                  <Badge variant="outline" className="shrink-0 capitalize">{i.status?.replace(/_/g, " ")}</Badge>
                 </div>
               ))}
             </div>
