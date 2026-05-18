@@ -42,16 +42,20 @@ import { IncidentCard } from "@/components/incidents/IncidentCard";
 // ── URL ↔ internal tab mapping ───────────────────────────────────────────────
 //
 // The URL contract exposes 5 kebab-case slugs (details / assessments /
-// care-plan / meds / incidents), but the component only renders 4 visible
-// tabs (Profile / Care Plan / Medications / Incidents) — Assessment History
-// lives INSIDE the Profile tab. Both URL slugs "details" and "assessments"
-// map to the same internal tab so deep-links from older code keep working;
-// the round-trip prefers "details" (the URL emitted by clicks).
-type InternalResidentTab = "profile" | "careplan" | "medications" | "incidents";
+// care-plan / meds / incidents); the component renders 5 matching visible
+// tabs (Profile / Assessments / Care Plan / Medications / Incidents). The
+// URL slugs round-trip 1:1 with the internal tab values via the two maps
+// below.
+type InternalResidentTab =
+  | "profile"
+  | "assessments"
+  | "careplan"
+  | "medications"
+  | "incidents";
 
 const URL_TO_INTERNAL_RESIDENT_TAB: Record<ResidentTab, InternalResidentTab> = {
   details: "profile",
-  assessments: "profile",
+  assessments: "assessments",
   "care-plan": "careplan",
   meds: "medications",
   incidents: "incidents",
@@ -59,6 +63,7 @@ const URL_TO_INTERNAL_RESIDENT_TAB: Record<ResidentTab, InternalResidentTab> = {
 
 const INTERNAL_TO_URL_RESIDENT_TAB: Record<InternalResidentTab, ResidentTab> = {
   profile: "details",
+  assessments: "assessments",
   careplan: "care-plan",
   medications: "meds",
   incidents: "incidents",
@@ -1440,10 +1445,11 @@ export function ResidentProfileContent({
 
   // URL-driven inner tab (Bug 3). The URL contract uses kebab-case slugs
   // (details/assessments/care-plan/meds/incidents) while the component's
-  // internal Tabs values stay as `profile/careplan/medications/incidents`
-  // so the existing <TabsContent> blocks below don't need to be relabelled.
-  // "assessments" maps to "profile" because Assessment History lives inside
-  // the Profile tab — both URLs round-trip to the same view.
+  // internal Tabs values stay as
+  // `profile/assessments/careplan/medications/incidents` so the existing
+  // <TabsContent> blocks below don't need to be relabelled. Each URL slug
+  // round-trips 1:1 with its internal tab value via the two maps near the
+  // top of this file.
   const route = useFacilityPortalRoute();
   const internalResidentTab = URL_TO_INTERNAL_RESIDENT_TAB[route.residentTab];
   const onResidentTabChange = (next: InternalResidentTab) => {
@@ -1666,6 +1672,7 @@ export function ResidentProfileContent({
       >
         <TabsList className="w-full overflow-x-auto">
           <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="assessments">Assessments</TabsTrigger>
           <TabsTrigger value="careplan">Care Plan</TabsTrigger>
           <TabsTrigger value="medications">Medications</TabsTrigger>
           <TabsTrigger value="incidents">Incidents</TabsTrigger>
@@ -1687,7 +1694,10 @@ export function ResidentProfileContent({
             result={chartResult}
             isLoading={chartLoading}
           />
+        </TabsContent>
 
+        {/* Assessments Tab */}
+        <TabsContent value="assessments" className="mt-4 space-y-4">
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-medium">Assessment History</h2>
