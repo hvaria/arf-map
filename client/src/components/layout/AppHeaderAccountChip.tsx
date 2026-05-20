@@ -12,12 +12,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useAppHeaderAuth } from "@/hooks/useAppHeaderAuth";
+import { isSeekerOnlyApp } from "@/lib/installApp";
 
 export interface AppHeaderAccountChipProps {
   /**
    * Optional override for what happens when an anonymous user clicks
-   * "Sign in". When omitted we route to `/jobseeker/login`. JobSeekerPage
-   * supplies this to keep the user on the page (the form is inline).
+   * "Sign in". When omitted we route to `/job-seeker` (the canonical
+   * auth surface with login + register + verify-email tabs).
+   * JobSeekerPage supplies an override to keep the user on the page.
    */
   onSignInOverride?: () => void;
 }
@@ -42,11 +44,19 @@ export function AppHeaderAccountChip({
         size="sm"
         className="h-8 text-xs gap-1.5"
         onClick={() => {
+          // Seeker-only native app: the override (web role-picker dialog)
+          // is meaningless here — there's no facility tile to pick. Skip
+          // the override and route to /job-seeker (login + register tabs)
+          // which is the right entry for a fresh seeker.
+          if (isSeekerOnlyApp()) {
+            setLocation("/job-seeker");
+            return;
+          }
           if (onSignInOverride) {
             onSignInOverride();
             return;
           }
-          setLocation("/jobseeker/login");
+          setLocation("/job-seeker");
         }}
       >
         <UserIcon className="h-3.5 w-3.5" />
@@ -118,7 +128,10 @@ export function AppHeaderAccountChip({
         <DropdownMenuItem
           onSelect={async () => {
             await auth.signOut();
-            setLocation("/map");
+            // Seeker-only native app post-logout: bounce to the seeker
+            // auth surface, not the map (the map's seeker-only-mode gate
+            // would just redirect them here anyway).
+            setLocation(isSeekerOnlyApp() ? "/job-seeker" : "/map");
           }}
         >
           <LogOut className="h-4 w-4" />

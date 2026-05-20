@@ -11,5 +11,8 @@ vite.config.ts.*
 "claude.exe"
 .claude/worktrees/
 
+# JetBrains IDE config — local to each developer
+.idea/
+
 # Local debug artifacts from ETL scripts (raw API dumps, sample probes)
 data/_*

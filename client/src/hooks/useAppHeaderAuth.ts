@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/hooks/useSession";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
+import { isSeekerOnlyApp } from "@/lib/installApp";
 
 interface SeekerHeaderProfile {
   firstName: string | null;
@@ -35,7 +36,7 @@ export interface AppHeaderAuth {
    * seekers who haven't uploaded a photo — caller renders initials.
    */
   avatarUrl: string | null;
-  homePath: "/facility-portal" | "/jobseeker/dashboard" | "/map";
+  homePath: "/facility-portal" | "/jobseeker/dashboard" | "/map" | "/job-seeker";
   roleLabel: "Operator" | "Seeker" | null;
   signOut: () => Promise<void>;
 }
@@ -56,8 +57,14 @@ function computeInitials(source: string | null): string | null {
 
 export function useAppHeaderAuth(): AppHeaderAuth {
   const qc = useQueryClient();
-  const { data: facility } = useSession();
+  const { data: facilityRaw } = useSession();
   const { user: seeker, logout: seekerLogout } = useAuth();
+
+  // In the seeker-only native app a facility session is logically
+  // impossible — there's no UI path to facility login. Treat any
+  // stray cookie as nonexistent so the header never flips to operator
+  // chrome inside the seeker app even if an old session lingers.
+  const facility = isSeekerOnlyApp() ? null : facilityRaw;
 
   // Seeker profile (avatar + name). Shares the queryKey used by every
   // other place that reads the profile (JobSeekerPage, DashboardPage,
@@ -136,7 +143,10 @@ export function useAppHeaderAuth(): AppHeaderAuth {
       email: null,
       initials: null,
       avatarUrl: null,
-      homePath: "/map",
+      // Seeker-only app: brand-logo "home" for anon goes to the seeker
+      // auth surface, not the map (which in the seeker app would just
+      // redirect them back here anyway — see MapPage's gate).
+      homePath: isSeekerOnlyApp() ? "/job-seeker" : "/map",
       roleLabel: null,
       signOut: anonSignOut,
     };

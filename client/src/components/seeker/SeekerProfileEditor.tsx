@@ -12,22 +12,13 @@ import WorkExperienceSection from "@/components/seeker/WorkExperienceSection";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface JobSeekerProfile {
-  id: number;
-  accountId: number;
-  firstName: string | null;
-  lastName: string | null;
-  phone: string | null;
-  address: string | null;
-  city: string | null;
-  state: string | null;
-  zipCode: string | null;
-  profilePictureUrl: string | null;
-  yearsExperience: number | null;
-  jobTypes: string[];
-  bio: string | null;
-  updatedAt: number;
-}
+// The profile shape now lives in a leaf module so non-UI consumers
+// (onboarding wizard, dashboard redirect logic, etc.) can import the
+// type without pulling in the editor's heavy graph. Re-exported here
+// for back-compat with the many `from "@/components/seeker/SeekerProfileEditor"`
+// import sites that pre-date the extraction.
+export type { JobSeekerProfile } from "@/lib/seekerProfileTypes";
+import type { JobSeekerProfile } from "@/lib/seekerProfileTypes";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

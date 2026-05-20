@@ -23,6 +23,10 @@ import { useFacilityPins } from "@/hooks/useFacilityPins";
 import type { NearbyArea, BBox } from "@/hooks/useFacilityPins";
 import type { ViewportBounds } from "@/components/MapView";
 import type { FacilityPin } from "@shared/schema";
+import { requestGeolocationOnce } from "@/lib/geolocation";
+import { isSeekerOnlyApp } from "@/lib/installApp";
+import { isWalkthroughSeen } from "@/lib/seekerLocalStorage";
+import { useLocation } from "wouter";
 
 export default function MapPage() {
   const [selectedFacility, setSelectedFacility] = useState<FacilityPin | null>(null);
@@ -89,38 +93,24 @@ export default function MapPage() {
     geoResolved ? viewportBbox : null,
   );
 
-  // Geolocation on mount — fly to user if granted, fall back to California default
+  // Geolocation on mount — fly to user if granted, fall back to California default.
+  // Releases `geoResolved` either way (after success, denial, or a 1.5s hard
+  // timeout inside requestGeolocationOnce) so the map starts loading the
+  // visible viewport instead of staring at an empty canvas.
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setGeoResolved(true);
-      return;
-    }
-    let settled = false;
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      setGeoResolved(true);
-    };
-    // Hard fallback: if the permission prompt sits idle for 1.5s, release
-    // the gate so the map at least starts loading the visible viewport
-    // instead of staring at an empty canvas.
-    const fallback = window.setTimeout(settle, 1500);
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
+    let cancelled = false;
+    requestGeolocationOnce().then((coords) => {
+      if (cancelled) return;
+      if (coords) {
         const loc = { lat: coords.latitude, lng: coords.longitude };
         setUserLocation(loc);
         setCircleCenter(loc);
-        window.clearTimeout(fallback);
-        settle();
-      },
-      () => {
-        // Permission denied or unavailable — stay at California default
-        window.clearTimeout(fallback);
-        settle();
-      },
-      { timeout: 10000, maximumAge: 60000 }
-    );
-    return () => window.clearTimeout(fallback);
+      }
+      setGeoResolved(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // First-load CTA: dismissed once user takes any action (geolocates,
@@ -131,24 +121,15 @@ export default function MapPage() {
     !areaCtaDismissed &&
     !filters.search.trim();
 
-  const requestGeolocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      setAreaCtaDismissed(true);
-      return;
+  const requestGeolocation = useCallback(async () => {
+    const coords = await requestGeolocationOnce();
+    if (coords) {
+      setUserLocation({ lat: coords.latitude, lng: coords.longitude });
+      setCircleCenter({ lat: coords.latitude, lng: coords.longitude });
     }
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        const loc = { lat: coords.latitude, lng: coords.longitude };
-        setUserLocation(loc);
-        setCircleCenter(loc);
-        setAreaCtaDismissed(true);
-      },
-      () => {
-        // User denied — hide the CTA so they can keep browsing without nag.
-        setAreaCtaDismissed(true);
-      },
-      { timeout: 10000, maximumAge: 60000 }
-    );
+    // Hide the CTA whether the user accepted, denied, or no API exists —
+    // we don't want to nag once they've made a choice.
+    setAreaCtaDismissed(true);
   }, []);
 
   const { user: jobSeeker, isReady: jobSeekerReady } = useAuth();
@@ -160,12 +141,32 @@ export default function MapPage() {
   // translucent backdrop (see <Dialog overlayClassName> below) so the map
   // teases through — visible enough to create curiosity, gated enough that
   // they can't actually interact with it until they pick a role.
+  //
+  // SEEKER-ONLY native app: the role picker is meaningless (no facility
+  // surface exists here, and a separate facility app is planned). Skip
+  // the gate entirely — the redirect below pushes anon visitors to the
+  // seeker auth surface instead.
+  const seekerOnly = isSeekerOnlyApp();
   const sessionsReady = jobSeekerReady && !facilitySessionLoading;
   const hasSession = Boolean(jobSeeker || facilityUser);
-  const gateActive = sessionsReady && !hasSession;
+  const gateActive = !seekerOnly && sessionsReady && !hasSession;
   useEffect(() => {
     if (gateActive) setLoginDialogOpen(true);
   }, [gateActive]);
+
+  // Seeker-only app: anon visitors must not see the map. Bounce them
+  // to the walkthrough (first run) or the auth surface (returning) as
+  // soon as session checks resolve. A stale facility cookie is treated
+  // as anon here — the seeker app has no facility surface to land on.
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    if (!seekerOnly) return;
+    if (!sessionsReady) return;
+    if (jobSeeker) return; // signed-in seeker: map stays accessible
+    navigate(isWalkthroughSeen() ? "/job-seeker" : "/jobs/welcome", {
+      replace: true,
+    });
+  }, [seekerOnly, sessionsReady, jobSeeker, navigate]);
 
   const handleSelectFacility = useCallback((facility: FacilityPin) => {
     setSelectedFacility(facility);
@@ -394,7 +395,7 @@ export default function MapPage() {
               How will you use this site?
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 pt-2">
+          <div className={cn("grid gap-3 pt-2", seekerOnly ? "grid-cols-1" : "grid-cols-2")}>
             <a href="/#/job-seeker" onClick={() => setLoginDialogOpen(false)}>
               <button
                 className="w-full flex flex-col items-start gap-4 rounded-lg border bg-white p-4 transition-colors text-left group hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
@@ -414,25 +415,32 @@ export default function MapPage() {
                 </div>
               </button>
             </a>
-            <a href="/#/facility-portal" onClick={() => setLoginDialogOpen(false)}>
-              <button
-                className="w-full flex flex-col items-start gap-4 rounded-lg border bg-white p-4 transition-colors text-left group hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
-                style={{ borderColor: "var(--portal-border-subtle)" }}
-              >
-                <span
-                  className="h-9 w-9 rounded-md flex items-center justify-center bg-stone-100 text-stone-600 group-hover:bg-[var(--portal-accent-soft)] group-hover:text-[var(--portal-accent)] transition-colors"
-                  aria-hidden="true"
+            {/* Facility portal tile — hidden in the seeker-only native app.
+                The seeker app has no facility surface (a dedicated facility
+                app is planned separately), so even though SeekerAppBounce
+                would catch a tap on `/facility-portal`, the operator option
+                should never be shown to a seeker-app visitor. */}
+            {!seekerOnly && (
+              <a href="/#/facility-portal" onClick={() => setLoginDialogOpen(false)}>
+                <button
+                  className="w-full flex flex-col items-start gap-4 rounded-lg border bg-white p-4 transition-colors text-left group hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                  style={{ borderColor: "var(--portal-border-subtle)" }}
                 >
-                  <Building2 className="h-4 w-4" />
-                </span>
-                <div>
-                  <p className="font-semibold text-[14px] text-stone-900 leading-none">Facility portal</p>
-                  <p className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
-                    Manage your listing and run daily operations.
-                  </p>
-                </div>
-              </button>
-            </a>
+                  <span
+                    className="h-9 w-9 rounded-md flex items-center justify-center bg-stone-100 text-stone-600 group-hover:bg-[var(--portal-accent-soft)] group-hover:text-[var(--portal-accent)] transition-colors"
+                    aria-hidden="true"
+                  >
+                    <Building2 className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <p className="font-semibold text-[14px] text-stone-900 leading-none">Facility portal</p>
+                    <p className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
+                      Manage your listing and run daily operations.
+                    </p>
+                  </div>
+                </button>
+              </a>
+            )}
           </div>
         </DialogContent>
       </Dialog>

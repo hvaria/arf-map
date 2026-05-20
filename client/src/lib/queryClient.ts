@@ -2,7 +2,9 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 // In native Capacitor builds, set VITE_API_URL to your deployed server, e.g.:
 //   VITE_API_URL=https://your-server.com npm run mobile:build
-const API_BASE =
+// Exported so the ApiUnreachableOverlay diagnostic can show what
+// origin every fetch is actually targeting.
+export const API_BASE =
   import.meta.env.VITE_API_URL ||
   ("__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__");
 
