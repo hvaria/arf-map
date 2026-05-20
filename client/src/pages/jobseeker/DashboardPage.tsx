@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { User as UserIcon } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { getQueryFn } from "@/lib/queryClient";
+import { isOnboardingDismissed } from "@/lib/seekerLocalStorage";
+import { BrandLoader } from "@/components/BrandLoader";
 import { MyInterestsTab, type SeekerInterest } from "@/components/MyInterestsTab"; // NEW: expression-of-interest
 import { AppHeader } from "@/components/layout/AppHeader";
 import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
@@ -30,10 +31,10 @@ export default function DashboardPage() {
   const [, setLocation] = useLocation();
 
   // Profile-editor visibility — opens inline below the read-only card.
-  // Auto-opens once for a brand-new seeker whose /profile returns null so
-  // the first thing they see is the form to fill out.
+  // The wizard at /jobs/onboard handles the "brand-new seeker" path, so
+  // we no longer auto-open the inline editor here (the dashboard is
+  // post-onboarding; the wizard is pre-onboarding).
   const [editingProfile, setEditingProfile] = useState(false);
-  const didAutoOpen = useRef(false);
 
   // NEW: expression-of-interest — live Applications count
   const { data: interests = [] } = useQuery<SeekerInterest[]>({
@@ -53,37 +54,36 @@ export default function DashboardPage() {
     staleTime: 60000,
   });
 
-  // First-time seekers (no profile row yet) get the editor expanded on
-  // first visit so the very first action is "fill out my profile".
+  // CareFinder onboarding (Phase 1) — brand-new seekers (no profile
+  // row yet) get pushed into the dedicated wizard at /jobs/onboard
+  // instead of seeing the dashboard with an empty profile card.
+  // `seeker.onboardingDismissed` opts the seeker out (they can always
+  // edit the profile inline from this page); the flag is cleared by
+  // AuthContext.logout() so a different account on the same device
+  // gets a fresh shot.
   useEffect(() => {
-    if (!didAutoOpen.current && profile === null) {
-      didAutoOpen.current = true;
-      setEditingProfile(true);
-    }
-  }, [profile]);
+    if (profile !== null) return; // still loading OR already has data
+    if (isOnboardingDismissed()) return;
+    setLocation("/jobs/onboard", { replace: true });
+  }, [profile, setLocation]);
 
   // Credentials chip strip — same shared cache the ProfileEditor
   // section writes to, so additions show up here without a refetch.
   const { data: credentials } = useCredentials({ enabled: !!user });
   const credentialList = credentials ?? [];
 
-  // Guard: redirect unauthenticated visitors to the login page.
+  // Guard: redirect unauthenticated visitors to the auth surface
+  // (login + register + verify-email tabs).
   useEffect(() => {
     if (isReady && !user) {
-      setLocation("/jobseeker/login");
+      setLocation("/job-seeker");
     }
   }, [user, isReady, setLocation]);
 
   if (!isReady || !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <div className="flex items-center gap-3" style={{ color: "#6B7280" }}>
-          <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <span className="text-sm">Loading…</span>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-[#FFF8F1]">
+        <BrandLoader size="md" label="Loading…" />
       </div>
     );
   }
@@ -91,43 +91,25 @@ export default function DashboardPage() {
   // Sign-out flows through the AppHeader's account chip → useAppHeaderAuth,
   // which calls AuthContext.logout(). The old inline button is retired.
 
-  // Derived bits — first-name greeting + avatar.
-  // Prefer the profile's firstName (BA copy: "Hi {firstName}"); fall back
-  // to the email's local part for brand-new seekers who haven't filled
-  // in their name yet, so the greeting still feels personal.
-  const firstName = profile?.firstName?.trim() || null;
-  const displayName = firstName ?? user.email.split("@")[0];
-  const avatarUrl = profile?.profilePictureUrl ?? null;
-
   return (
     <div className="min-h-screen bg-white">
-      {/* Unified AppHeader — no back button (this surface IS the seeker
-          home), account chip on the right surfaces identity + sign-out. */}
-      <AppHeader />
+      {/* Unified AppHeader — same `variant="glass"` configuration as
+          MapPage so the seeker-app's two main surfaces (map + dashboard)
+          share the exact same header chrome. No back button (this
+          surface IS the seeker home); account chip on the right
+          surfaces identity + sign-out. */}
+      <AppHeader variant="glass" />
 
-      {/* Main content */}
-      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 space-y-4">
-        {/* Welcome row — avatar on the left, name + email beneath.
-            Replaces the old plain "Welcome back" heading so a returning
-            seeker recognises themself at a glance. */}
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-stone-200 flex items-center justify-center shrink-0 overflow-hidden">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <UserIcon className="h-6 w-6 text-stone-500" aria-hidden="true" />
-            )}
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold truncate" style={{ color: "#1E1B4B" }}>
-              Hi {displayName}
-            </h1>
-            <p className="text-sm text-muted-foreground truncate">Welcome back</p>
-          </div>
-        </div>
-
+      {/* Main content. Mobile uses `p-3` matching MapPage's overlay
+          padding so both surfaces sit the same distance below the
+          AppHeader. Desktop falls through to sm:p-6 sm:py-8. */}
+      <main className="mx-auto max-w-5xl p-3 sm:p-6 sm:py-8 space-y-4">
         {/* Stat tiles — operator KPI tile pattern (rounded-lg p-3 + soft
-            indigo neutral; status tones reserved for actual status values). */}
+            indigo neutral; status tones reserved for actual status values).
+            The previous welcome row (avatar + "Hi {firstName}") was
+            removed: SeekerProfileCard below already shows a 64px avatar,
+            the full name, email, and city, so the welcome row was a
+            visual duplicate ~200px above its real source of truth. */}
         <div className="grid gap-3 sm:grid-cols-3">
           {[
             { label: "Jobs applied to", value: String(interests.length), icon: "📋" },

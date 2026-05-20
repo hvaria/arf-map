@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>ARF Map</string>
+	<string>Neighbourhood Care Finder</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -45,5 +45,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- Privacy usage descriptions. Apple rejects builds that access
+	     these APIs without a string explaining WHY. Strings are shown
+	     verbatim in the iOS permission prompts and on the App Store
+	     listing's "App Privacy" page. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Neighbourhood Care Finder uses your location to show care facilities and job opportunities near you. We never store your precise location.</string>
 </dict>
 </plist>

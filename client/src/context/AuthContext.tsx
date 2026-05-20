@@ -15,6 +15,7 @@ import {
   type ApiError,
 } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
+import { clearSeekerSessionLocalStorage } from "@/lib/seekerLocalStorage";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // CareFinder onboarding (Phase 1) — clear the per-account local
+    // wizard state BEFORE we mutate session state so a stale draft from
+    // one account never bleeds into another seeker's flow on the same
+    // device. The walkthrough-seen flag is intentionally NOT cleared
+    // (device-scoped — see client/src/lib/seekerLocalStorage.ts).
+    clearSeekerSessionLocalStorage();
     setState((s) => ({ ...s, isLoading: true }));
     try {
       await logoutJobSeeker();

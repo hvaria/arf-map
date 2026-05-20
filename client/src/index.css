@@ -111,9 +111,14 @@ html, body {
   touch-action: pan-x pan-y;
 }
 
-/* Full-screen layout accounts for notch / home indicator */
+/* Full-screen layout accounts for notch / home indicator.
+   `--safe-top` is intentionally NOT applied here — the AppHeader handles
+   its own top inset so `position: sticky` keeps the brand mark below
+   the status bar without doubling up the padding on pages where the
+   header is the first safe-area-sensitive surface. Pages without an
+   AppHeader (WalkthroughPage, OnboardingWizard, BrandSplash) declare
+   their own paddingTop: env(safe-area-inset-top). */
 #root {
-  padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
   padding-left: var(--safe-left);
   padding-right: var(--safe-right);

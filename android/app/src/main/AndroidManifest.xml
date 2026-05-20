@@ -38,4 +38,13 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Location — required by the WebView's navigator.geolocation API.
+         Used by MapPage's initial "fly to user" and by the CareFinder
+         onboarding LocationStep's "Use my location" confirmation. Coarse
+         is sufficient (we only validate "in California" and never store
+         lat/lng); fine is requested as a fallback so high-precision
+         devices don't downgrade unexpectedly. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>

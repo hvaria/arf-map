@@ -27,7 +27,15 @@ export default defineConfig({
         },
         test: {
           name: "client",
-          include: ["client/src/__tests__/**/*.test.tsx", "client/src/__tests__/**/*.test.ts"],
+          include: [
+            "client/src/__tests__/**/*.test.tsx",
+            "client/src/__tests__/**/*.test.ts",
+            // Co-located test folders under client/src/<area>/__tests__/...
+            // so library helpers (e.g. bioTemplate) can live next to their
+            // source and still be picked up by `npm run test:client`.
+            "client/src/**/__tests__/**/*.test.tsx",
+            "client/src/**/__tests__/**/*.test.ts",
+          ],
           environment: "jsdom",
           globals: true,
           setupFiles: ["./client/src/__tests__/setup.ts"],

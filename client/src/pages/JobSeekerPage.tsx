@@ -16,6 +16,7 @@ import {
 import { AppHeader } from "@/components/layout/AppHeader";
 import { useToast } from "@/hooks/use-toast";
 import { getPendingAction, clearPendingAction } from "@/lib/pendingAction"; // NEW: expression-of-interest
+import { clearWalkthroughSeen } from "@/lib/seekerLocalStorage";
 import {
   SeekerProfileEditor,
   type JobSeekerProfile,
@@ -227,6 +228,25 @@ function AuthSection({
         <p className="text-sm text-muted-foreground mt-1">Find work at ARFs, RCFEs and group homes near you</p>
       </div>
 
+      {/* CareFinder onboarding (Phase 1) — re-entry into the walkthrough
+          for returning users. Wouter's hash router can't match a route
+          with a query string, so we can't bypass the "already seen" flag
+          via `?force=1`; instead we clear the flag inline and navigate
+          to the bare route, which lets WalkthroughPage's mount guard
+          fall through and render. */}
+      <div className="text-center mb-4">
+        <button
+          type="button"
+          className="text-xs font-medium text-primary hover:underline bg-transparent border-0 p-0 cursor-pointer"
+          onClick={() => {
+            clearWalkthroughSeen();
+            window.location.hash = "#/jobs/welcome";
+          }}
+        >
+          First time? See how it works →
+        </button>
+      </div>
+
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList className="w-full mb-5">
           <TabsTrigger value="login" className="flex-1">Sign In</TabsTrigger>
@@ -434,6 +454,7 @@ function VerifyEmailScreen({ email, onVerified }: { email: string; onVerified: (
   const { toast } = useToast();
   const { setUser } = useAuth();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const [otp, setOtp] = useState("");
 
   const verifyMutation = useMutation({
@@ -449,7 +470,25 @@ function VerifyEmailScreen({ email, onVerified }: { email: string; onVerified: (
         id: data.id,
         email: data.email,
       });
+      // CareFinder onboarding (Phase 1) — brand-new accounts go straight
+      // into the wizard at /jobs/onboard. The pendingAction branch
+      // (express_interest) takes precedence and is handled by the
+      // page-level effect below, which fires `clearPendingAction()` and
+      // navigates to /map; that effect lives outside this mutation, so
+      // we only need to redirect when there is NO pending action. Using
+      // a length-0 read of the storage to avoid pulling in an import
+      // cycle for a one-line check.
       onVerified();
+      try {
+        const pending = sessionStorage.getItem("pending_action");
+        if (!pending) {
+          navigate("/jobs/onboard", { replace: true });
+        }
+      } catch {
+        // sessionStorage unavailable — fall back to the wizard route so
+        // a fresh account never lands on the auth surface.
+        navigate("/jobs/onboard", { replace: true });
+      }
     },
     onError: (err: any) => toast({ title: "Verification failed", description: err.message, variant: "destructive" }),
   });
@@ -602,6 +641,13 @@ export default function JobSeekerPage() {
   // the dashboard at /#/jobseeker/dashboard is. We only stay on /#/job-seeker
   // long enough to finish the pending-action handoff (express_interest);
   // every other authed visit is redirected forward.
+  //
+  // CareFinder onboarding (Phase 1) — VerifyEmailScreen owns the post-OTP
+  // navigation for brand-new accounts (it pushes to /jobs/onboard). This
+  // effect must therefore NOT clobber an explicit forward navigation by
+  // overwriting it with /jobseeker/dashboard. The hash-path guard below
+  // is the single source of truth: if we're no longer on /job-seeker the
+  // effect is a no-op.
   useEffect(() => {
     if (!account) return;
     const action = getPendingAction();
@@ -618,7 +664,14 @@ export default function JobSeekerPage() {
         });
       return;
     }
-    // No pending action — the dashboard is the canonical home.
+    // Mutation-driven navigations (e.g. VerifyEmailScreen → /jobs/onboard)
+    // already moved the URL forward; don't override.
+    if (typeof window !== "undefined") {
+      const hashPath = window.location.hash.replace(/^#/, "").split("?")[0];
+      if (hashPath && hashPath !== "/job-seeker") return;
+    }
+    // No pending action and still on /job-seeker — the dashboard is the
+    // canonical home.
     navigate("/jobseeker/dashboard");
   }, [account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -635,12 +688,13 @@ export default function JobSeekerPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Unified AppHeader. The "Sign in" affordance on this page is a
-          no-op for anonymous users because the inline auth form below
-          IS the sign in surface — they're already where they need to be. */}
+      {/* Auth surface — the inline form below IS the sign-in. No back
+          affordance (the seeker app has nothing to go back to from
+          here), no hamburger menu (nothing useful to put in it when
+          you're trying to authenticate). `logoOnly` suppresses the
+          right-side cluster; dropping `backTo` removes the chevron. */}
       <AppHeader
-        backTo="/jobs"
-        backLabel="Find jobs"
+        logoOnly
         onSignInOverride={() => {
           // Already on the auth surface — no navigation needed. Make sure
           // we're in the default "auth" view in case the user is in the
@@ -649,7 +703,7 @@ export default function JobSeekerPage() {
         }}
       />
 
-      <div className="max-w-2xl mx-auto px-4 py-6">
+      <div className="mx-auto max-w-2xl p-3 sm:p-6 sm:py-8">
         {isLoading ? (
           <div className="space-y-4">
             {[1, 2].map((i) => <div key={i} className="h-32 rounded-xl bg-muted animate-pulse" />)}

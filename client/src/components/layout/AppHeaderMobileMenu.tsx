@@ -13,6 +13,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useAppHeaderAuth } from "@/hooks/useAppHeaderAuth";
+import { isSeekerOnlyApp } from "@/lib/installApp";
 
 export interface AppHeaderMobileMenuProps {
   /** Optional extras rendered below the account block (e.g. notes bell). */
@@ -67,7 +68,7 @@ export function AppHeaderMobileMenu({
                   onSignInOverride();
                   return;
                 }
-                setLocation("/jobseeker/login");
+                setLocation("/job-seeker");
               }}
             >
               <UserIcon className="h-3.5 w-3.5" />
@@ -134,7 +135,12 @@ export function AppHeaderMobileMenu({
               onClick={async () => {
                 close();
                 await auth.signOut();
-                setLocation("/map");
+                // Match AppHeaderAccountChip's branch — the seeker-only
+                // native app has no `/map` surface, so sign-out there must
+                // route to the seeker auth screen. Otherwise MapPage's
+                // SeekerAppBounce immediately punts the user out, giving
+                // a brief "map flash" on sign-out.
+                setLocation(isSeekerOnlyApp() ? "/job-seeker" : "/map");
               }}
             >
               <LogOut className="h-4 w-4" />

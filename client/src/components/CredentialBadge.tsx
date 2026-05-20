@@ -3,28 +3,14 @@ import { ShieldCheck, BadgeCheck, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getQueryFn } from "@/lib/queryClient";
 import type { JobSeekerCredential, CredentialKind } from "@shared/schema";
+// CREDENTIAL_LABEL moved to a JSX-free module so non-component code
+// (e.g. client/src/lib/bioTemplate.ts) can import the labels without
+// pulling JSX into its dependency graph.
+import { CREDENTIAL_LABEL } from "@/lib/credentialLabels";
 
-// Display labels for each credential kind. Used everywhere a credential
-// is rendered (badge, edit form, dashboard list) so the user-visible
-// names stay consistent. For `OTHER`, callers fall back to the row's
-// free-form `label`.
-export const CREDENTIAL_LABEL: Record<CredentialKind, string> = {
-  CNA: "CNA",
-  LVN: "LVN",
-  RN: "RN",
-  RCFE_ADMIN: "RCFE Administrator",
-  ARF_ADMIN: "ARF Administrator",
-  DSP_YEAR_1: "DSP Year 1",
-  DSP_YEAR_2: "DSP Year 2",
-  MED_TECH: "Med Tech",
-  MANDATED_REPORTER: "Mandated Reporter",
-  RCFE_40_HOUR: "RCFE 40-hr Training",
-  LIVE_SCAN: "Live Scan Clearance",
-  TB: "TB Clearance",
-  CPR: "CPR",
-  FIRST_AID: "First Aid",
-  OTHER: "Other",
-};
+// Re-export so existing import sites (`import { CREDENTIAL_LABEL } from
+// "@/components/CredentialBadge"`) keep working unchanged.
+export { CREDENTIAL_LABEL };
 
 // Visual grouping — drives the icon and informs whether a missing
 // expiry is "normal" (clearance/training) vs. info-noted (license).
