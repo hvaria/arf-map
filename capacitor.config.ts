@@ -12,7 +12,7 @@ const devServerUrl = process.env.CAP_SERVER_URL;
 
 const config: CapacitorConfig = {
   appId: "com.arfmap.app",
-  appName: "ARF Map",
+  appName: "Neighbourhood Care Finder",
   // Points at the Vite build output
   webDir: "dist/public",
   server: {
