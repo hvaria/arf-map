@@ -83,6 +83,37 @@ const EMPTY_FORM: LeadFormData = {
   notes: "",
 };
 
+/**
+ * Default Tour slot: the next reasonable business-hour :00/:30 mark in local
+ * TZ, formatted as a datetime-local input value (`YYYY-MM-DDTHH:MM`).
+ *
+ *  - Before 9:00       → today 10:00
+ *  - 09:00 → 16:30     → next :00 or :30
+ *  - After 16:30       → tomorrow 10:00
+ *
+ * Tours are scheduled during business hours, so a 1 AM default (the naive
+ * "next half-hour" produces this if the user opens the form late at night)
+ * is worse than useless — it also falls inside the calendar's hidden NOC
+ * shift (00:00–05:00) which makes the tour look missing on the Day view.
+ */
+function nextTourSlot(): string {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  const hour = d.getHours();
+  const minute = d.getMinutes();
+  if (hour < 9) {
+    d.setHours(10, 0, 0, 0);
+  } else if (hour > 16 || (hour === 16 && minute > 30)) {
+    d.setDate(d.getDate() + 1);
+    d.setHours(10, 0, 0, 0);
+  } else {
+    // Inside business hours: round up to next :30.
+    d.setMinutes(minute < 30 ? 30 : 60);
+  }
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function AddLeadDialog({
   open,
   onOpenChange,
@@ -214,7 +245,7 @@ function TourDialog({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [tourDatetime, setTourDatetime] = useState("");
+  const [tourDatetime, setTourDatetime] = useState<string>(nextTourSlot);
 
   // POST /leads/:id/tours now atomically (a) inserts the ops_tours row and
   // (b) advances the lead's stage to "tour_scheduled" server-side. The FE

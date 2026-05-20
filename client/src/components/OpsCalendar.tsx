@@ -28,6 +28,7 @@ interface DayOpsEvent {
   tasksTotal: number; tasksCompleted: number; tasksOverdue: number;
   incidentsTotal: number; incidentsOpen: number;
   leadsFollowups: number;
+  toursScheduled: number;
   complianceDue: number;
 }
 
@@ -288,7 +289,11 @@ const CHIPS: ChipDef[] = [
     key: "crm",
     Icon: UserPlus,
     label: "leads",
-    count: (e) => e.leadsFollowups,
+    // Lead activity for the day = follow-ups due + tours scheduled. Both are
+    // CRM work; we sum into the single chip rather than introducing a new one.
+    // `?? 0` keeps this safe during a rolling deploy where an older server
+    // hasn't shipped the toursScheduled field yet.
+    count: (e) => e.leadsFollowups + (e.toursScheduled ?? 0),
     urgent: () => false,
     chip:       "bg-blue-100   text-blue-700   border-blue-200",
     chipUrgent: "bg-blue-100   text-blue-700   border-blue-200",

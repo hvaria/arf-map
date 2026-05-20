@@ -817,6 +817,7 @@ export interface DayOpsEvent {
   incidentsTotal: number;
   incidentsOpen:  number;
   leadsFollowups: number;
+  toursScheduled: number;
   billingDue:     number;
   complianceDue:  number;
 }
@@ -830,28 +831,31 @@ export async function getCalendarSummary(
   type TaskRow = { date: string; total: number; completed: number; overdue: number };
   type IncRow  = { date: string; total: number; open: number };
   type LRow    = { date: string; followups: number };
+  type TourRow = { date: string; tours: number };
   type BRow    = { date: string; due: number };
   type CRow    = { date: string; due: number };
 
   const pg = (col: string) => `TO_CHAR(TO_TIMESTAMP(${col}/1000.0),'YYYY-MM-DD')`;
-  const [r1, r2, r3, r4, r5, r6] = await Promise.all([
+  const [r1, r2, r3, r4, rTours, r5, r6] = await Promise.all([
     pool.query<MedRow>(`SELECT ${pg('scheduled_datetime')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='given' THEN 1 ELSE 0 END)::int AS given,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)::int AS pending,SUM(CASE WHEN status='late' THEN 1 ELSE 0 END)::int AS late,SUM(CASE WHEN status='missed' THEN 1 ELSE 0 END)::int AS missed FROM ops_med_passes WHERE facility_number=$1 AND scheduled_datetime>=$2 AND scheduled_datetime<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<TaskRow>(`SELECT ${pg('task_date')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END)::int AS completed,SUM(CASE WHEN status='pending' AND task_date < $4 THEN 1 ELSE 0 END)::int AS overdue FROM ops_daily_tasks WHERE facility_number=$1 AND task_date>=$2 AND task_date<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs, Date.now()]),
     pool.query<IncRow>(`SELECT ${pg('incident_date')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='open' THEN 1 ELSE 0 END)::int AS open FROM ops_incidents WHERE facility_number=$1 AND incident_date>=$2 AND incident_date<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<LRow>(`SELECT ${pg('next_follow_up_date')} AS date,COUNT(*)::int AS followups FROM ops_leads WHERE facility_number=$1 AND next_follow_up_date IS NOT NULL AND next_follow_up_date>=$2 AND next_follow_up_date<$3 AND stage NOT IN ('admitted','lost') GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+    pool.query<TourRow>(`SELECT ${pg('scheduled_at')} AS date,COUNT(*)::int AS tours FROM ops_tours WHERE facility_number=$1 AND scheduled_at>=$2 AND scheduled_at<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<BRow>(`SELECT ${pg('due_date')} AS date,COUNT(*)::int AS due FROM ops_invoices WHERE facility_number=$1 AND due_date>=$2 AND due_date<$3 AND status NOT IN ('paid','void') AND balance_due>0 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<CRow>(`SELECT ${pg('due_date')} AS date,COUNT(*)::int AS due FROM ops_compliance_calendar WHERE facility_number=$1 AND due_date>=$2 AND due_date<$3 AND status='pending' GROUP BY 1`, [facilityNumber, fromMs, toMs]),
   ]);
 
   const map = new Map<string, DayOpsEvent>();
   const get = (d: string): DayOpsEvent => {
-    if (!map.has(d)) map.set(d, { date: d, medsTotal:0, medsGiven:0, medsPending:0, medsLate:0, medsMissed:0, tasksTotal:0, tasksCompleted:0, tasksOverdue:0, incidentsTotal:0, incidentsOpen:0, leadsFollowups:0, billingDue:0, complianceDue:0 });
+    if (!map.has(d)) map.set(d, { date: d, medsTotal:0, medsGiven:0, medsPending:0, medsLate:0, medsMissed:0, tasksTotal:0, tasksCompleted:0, tasksOverdue:0, incidentsTotal:0, incidentsOpen:0, leadsFollowups:0, toursScheduled:0, billingDue:0, complianceDue:0 });
     return map.get(d)!;
   };
   for (const r of r1.rows) { const e = get(r.date); e.medsTotal=r.total; e.medsGiven=r.given; e.medsPending=r.pending; e.medsLate=r.late; e.medsMissed=r.missed; }
   for (const r of r2.rows) { const e = get(r.date); e.tasksTotal=r.total; e.tasksCompleted=r.completed; e.tasksOverdue=r.overdue; }
   for (const r of r3.rows) { const e = get(r.date); e.incidentsTotal=r.total; e.incidentsOpen=r.open; }
   for (const r of r4.rows) { get(r.date).leadsFollowups = r.followups; }
+  for (const r of rTours.rows) { get(r.date).toursScheduled = r.tours; }
   for (const r of r5.rows) { get(r.date).billingDue = r.due; }
   for (const r of r6.rows) { get(r.date).complianceDue = r.due; }
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
