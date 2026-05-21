@@ -225,6 +225,8 @@ The canonical HTTP error shape returned to the client is:
 
 **New routes must use `respondError`.** Do not invent new error shapes; if you need a new failure mode, add an `AppError` with a new `code`.
 
+**Auth hardening (S-02 / S-03).** OTPs for both portals are never persisted in plain text — `server/routes.ts` hashes raw tokens with `hashOtp()` (SHA-256) before writing to `verification_token`, and `safeCompareOtp()` performs a constant-time comparison on verify. Every auth surface across both portals — register, verify-email, resend-otp, login, forgot-password, reset-password — is protected by `authRateLimiter` (`server/middleware/rateLimiter.ts`), capped at 5 attempts per 15 minutes per IP. The legacy `POST /api/facility/send-otp` endpoint and its in-memory `facilityOtpStore` Map were removed (the production OTP flow uses the DB column on the account row).
+
 ### Environment Variables
 
 | Variable | Purpose |

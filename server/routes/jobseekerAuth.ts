@@ -48,7 +48,7 @@ export const jobseekerAuthRouter = Router();
  *   verify them via an ExternalIdentityProviderAdapter, then set the session
  *   the same way this route does.
  */
-jobseekerAuthRouter.post("/login", async (req, res, next) => {
+jobseekerAuthRouter.post("/login", authRateLimiter, async (req, res, next) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
