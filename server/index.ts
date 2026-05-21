@@ -1,4 +1,9 @@
 import "dotenv/config";
+// Sentry must be initialised BEFORE Express (and any module Sentry
+// instruments — http, fs, express) so the auto-instrumentation hooks attach
+// to the original implementations. Keep this import + init pair at the top.
+import { initSentry, captureExceptionFromRequest } from "./observability/sentry";
+initSentry();
 import express, { type Request, Response, NextFunction } from "express";
 import compression from "compression";
 import { registerRoutes } from "./routes";
@@ -185,29 +190,17 @@ export function log(message: string, source = "express") {
 }
 
 app.use((req, res, next) => {
+  // Request logger: emit only method/path/status/duration. We DO NOT capture
+  // response bodies — auth/profile/billing responses contained PII (emails,
+  // Stripe last-4, etc.) and ended up in `fly logs` and any drain attached
+  // downstream. If a request needs deeper diagnostics, raise it to Sentry.
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
+    if (!path.startsWith("/api")) return;
     const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      // Skip serializing large array responses (e.g. /api/facilities) to avoid blocking the event loop
-      if (capturedJsonResponse && !Array.isArray(capturedJsonResponse)) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      } else if (Array.isArray(capturedJsonResponse)) {
-        logLine += ` :: [${capturedJsonResponse.length} items]`;
-      }
-
-      log(logLine);
-    }
+    log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
   });
 
   next();
@@ -235,11 +228,15 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    // Keep console.error for local visibility / `fly logs`. Sentry capture is
+    // fire-and-forget — Sentry batches sends, so awaiting here would block
+    // the error response. When SENTRY_DSN is unset, this is a no-op.
     console.error("Internal Server Error:", err);
+    captureExceptionFromRequest(err, req);
 
     if (res.headersSent) {
       return next(err);
