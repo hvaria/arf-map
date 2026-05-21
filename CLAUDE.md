@@ -182,9 +182,21 @@ Both flows use 6-digit OTP email verification (15-minute expiry) and support pas
 | `STRIPE_CHECKOUT_SUCCESS_URL` | Where Stripe redirects after a successful Checkout, e.g. `.../#/facility-portal?billing=success` |
 | `STRIPE_CHECKOUT_CANCEL_URL` | Where Stripe redirects on a cancelled Checkout |
 | `STRIPE_PORTAL_RETURN_URL` | Where the Stripe Customer Portal returns the user when they close it |
+| `SENTRY_DSN` | Optional. Sentry DSN for error tracking. App boots normally if missing. |
+| `FLY_IMAGE_REF` | Set by Fly.io at deploy time; used as Sentry `release` tag when present |
 
 **Local Stripe webhook testing**: `stripe listen --forward-to localhost:5000/api/billing/webhook` — copy the printed `whsec_...` into `STRIPE_WEBHOOK_SECRET`. The webhook route is mounted with `express.raw()` BEFORE the global JSON parser so Stripe's signature verification sees the unparsed body.
 
 ### Deployment
 
 Deployed on Fly.io. `npm run deploy` runs `fly deploy`. Sessions and the SQLite DB persist via a Fly volume. The ETL enrichment child process writes to the same SQLite file using WAL mode for concurrent reads.
+
+### Secrets (Fly.io)
+
+Production secrets are managed via `fly secrets`. To configure error tracking in prod:
+
+```bash
+fly secrets set SENTRY_DSN=<your-dsn-here>
+```
+
+Other secrets follow the same pattern: `fly secrets set NAME=value`. Setting a secret triggers a deploy; use `fly secrets set --stage` to batch multiple updates before deploying.
