@@ -111,29 +111,33 @@ const MAIN_PG_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_job_postings_facility ON job_postings(facility_number);
 
+  -- Phase 2 R1: address/city/county/zip/phone/licensee/administrator/
+  -- first_license_date/closed_date/last_inspection_date/geocode_quality
+  -- are nullable. The empty-string sentinel is gone -- write NULL for
+  -- unknown values. App code uses nullish-coalescing on read.
   CREATE TABLE IF NOT EXISTS facilities (
     number                TEXT PRIMARY KEY,
     name                  TEXT NOT NULL,
     facility_type         TEXT NOT NULL DEFAULT '',
     facility_group        TEXT NOT NULL DEFAULT '',
     status                TEXT NOT NULL,
-    address               TEXT NOT NULL DEFAULT '',
-    city                  TEXT NOT NULL DEFAULT '',
-    county                TEXT NOT NULL DEFAULT '',
-    zip                   TEXT NOT NULL DEFAULT '',
-    phone                 TEXT NOT NULL DEFAULT '',
-    licensee              TEXT NOT NULL DEFAULT '',
-    administrator         TEXT NOT NULL DEFAULT '',
+    address               TEXT,
+    city                  TEXT,
+    county                TEXT,
+    zip                   TEXT,
+    phone                 TEXT,
+    licensee              TEXT,
+    administrator         TEXT,
     capacity              INTEGER DEFAULT 0,
-    first_license_date    TEXT DEFAULT '',
-    closed_date           TEXT DEFAULT '',
-    last_inspection_date  TEXT DEFAULT '',
+    first_license_date    TEXT,
+    closed_date           TEXT,
+    last_inspection_date  TEXT,
     total_visits          INTEGER DEFAULT 0,
     total_type_b          INTEGER DEFAULT 0,
     citations             INTEGER DEFAULT 0,
     lat                   DOUBLE PRECISION,
     lng                   DOUBLE PRECISION,
-    geocode_quality       TEXT DEFAULT '',
+    geocode_quality       TEXT,
     updated_at            BIGINT NOT NULL,
     enriched_at           BIGINT
   );

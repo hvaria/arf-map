@@ -15,13 +15,14 @@ primary_region = 'lax'
   NODE_ENV = 'production'
   PORT = '8080'
 
-# Legacy volume from the SQLite era. Kept mounted (but unused by the app)
-# so existing machines don't fail the deploy reconciliation. Safe to remove
-# along with the volume itself in a follow-up: `fly volumes destroy arf_data`.
-[[mounts]]
-  source = 'arf_data'
-  destination = '/data'
-  processes = ['app']
+# NOTE (Phase 2 R1): the legacy `arf_data` Fly volume mount from the
+# SQLite era has been removed. The app no longer writes to /data —
+# Postgres (Neon/Supabase) is the system of record. To free the volume
+# bytes after the next successful deploy:
+#     fly volumes list                # find the vol id
+#     fly volumes destroy <vol-id>    # one-shot, irreversible
+# The deploy reconciliation no longer requires the mount because every
+# machine now boots without /data on its filesystem.
 
 [http_service]
   internal_port = 8080

@@ -181,29 +181,43 @@ export const jobPostingsTable = pgTable("job_postings", {
 });
 
 // Persistent store for all California CCLD facilities (all types, all counties)
+//
+// Phase 2 (Round 1) lockdown: address/city/county/zip/phone/licensee/
+// administrator/first_license_date/closed_date/last_inspection_date/
+// geocode_quality were previously `text NOT NULL DEFAULT ''`. The empty-
+// string sentinel is now NULL (true absence of data). App code that reads
+// these uses `?? ''` so the runtime impact is nil; the change forces clean
+// distinction between "we don't know" (NULL) vs. "this row affirmatively
+// has no value" (empty string — no longer used). The 0001 migration
+// converts existing '' values to NULL and drops the defaults.
+//
+// facility_type / facility_group keep `NOT NULL DEFAULT ''` for now because
+// they are read on the map's hot path and have a tighter coupling to the
+// taxonomy mapping in shared/etl-types.ts — switching them to nullable is a
+// follow-up after the search/taxonomy queries are audited.
 export const facilitiesTable = pgTable("facilities", {
   number: text("number").primaryKey(),
   name: text("name").notNull(),
   facilityType: text("facility_type").notNull().default(""),
   facilityGroup: text("facility_group").notNull().default(""),
   status: text("status").notNull(),
-  address: text("address").notNull().default(""),
-  city: text("city").notNull().default(""),
-  county: text("county").notNull().default(""),
-  zip: text("zip").notNull().default(""),
-  phone: text("phone").notNull().default(""),
-  licensee: text("licensee").notNull().default(""),
-  administrator: text("administrator").notNull().default(""),
+  address: text("address"),
+  city: text("city"),
+  county: text("county"),
+  zip: text("zip"),
+  phone: text("phone"),
+  licensee: text("licensee"),
+  administrator: text("administrator"),
   capacity: integer("capacity").default(0),
-  firstLicenseDate: text("first_license_date").default(""),
-  closedDate: text("closed_date").default(""),
-  lastInspectionDate: text("last_inspection_date").default(""),
+  firstLicenseDate: text("first_license_date"),
+  closedDate: text("closed_date"),
+  lastInspectionDate: text("last_inspection_date"),
   totalVisits: integer("total_visits").default(0),
   totalTypeB: integer("total_type_b").default(0),
   citations: integer("citations").default(0),
   lat: doublePrecision("lat"),
   lng: doublePrecision("lng"),
-  geocodeQuality: text("geocode_quality").default(""),
+  geocodeQuality: text("geocode_quality"),
   updatedAt: ts("updated_at").notNull(),
   enrichedAt: ts("enriched_at"),
 });

@@ -172,9 +172,12 @@ export const trackerEntries = pgTable("tracker_entries", {
   deletedByAccountId:            fk("deleted_by_account_id"),
 });
 
+// Phase 2 R1 lockdown: entry_id is now a real FK to tracker_entries.id
+// with ON DELETE CASCADE (migration 0001). Single-column FK because
+// the version snapshot's tenant is implied by the entry's facility.
 export const trackerEntryVersions = pgTable("tracker_entry_versions", {
   id:                          serial("id").primaryKey(),
-  entryId:                     fk("entry_id").notNull(),
+  entryId:                     fk("entry_id").notNull().references(() => trackerEntries.id, { onDelete: "cascade" }),
   versionNumber:               integer("version_number").notNull(),
   payloadSnapshot:             text("payload_snapshot").notNull(),
   changedByFacilityAccountId:  fk("changed_by_facility_account_id").notNull(),
