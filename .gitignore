@@ -10,6 +10,7 @@ vite.config.ts.*
 *.db-wal
 "claude.exe"
 .claude/worktrees/
+.claude/agent-memory/
 
 # JetBrains IDE config — local to each developer
 .idea/
