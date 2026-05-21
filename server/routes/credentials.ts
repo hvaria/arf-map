@@ -1,9 +1,14 @@
 // Job seeker credentials — license / certification / clearance management.
 // All routes are scoped to the authenticated job seeker via requireJobSeekerAuth.
+//
+// This router is the Phase 0 reference implementation of the canonical error
+// envelope (see server/lib/respondError.ts). All error responses go through
+// `respondError` / `AppError` and produce the shape `{ code, message, details? }`.
 import { Router } from "express";
 import { storage } from "../storage";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
 import { credentialInputSchema } from "@shared/schema";
+import { respondError, AppError } from "../lib/respondError";
 
 export const credentialsRouter = Router();
 
@@ -21,81 +26,103 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /** GET /api/jobseeker/credentials — list this seeker's credentials */
-credentialsRouter.get("/jobseeker/credentials", requireJobSeekerAuth, async (req, res, next) => {
+credentialsRouter.get("/jobseeker/credentials", requireJobSeekerAuth, async (req, res) => {
   try {
     const rows = await storage.listJobSeekerCredentials(req.session.jobSeekerId!);
     res.json(rows);
   } catch (err) {
-    next(err);
+    return respondError(res, err);
   }
 });
 
 /** POST /api/jobseeker/credentials — create a new credential */
-credentialsRouter.post("/jobseeker/credentials", requireJobSeekerAuth, async (req, res, next) => {
+credentialsRouter.post("/jobseeker/credentials", requireJobSeekerAuth, async (req, res) => {
+  const parsed = credentialInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return respondError(res, parsed.error);
+  }
   try {
-    const parsed = credentialInputSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: parsed.error.errors[0].message });
-    }
-    try {
-      const row = await storage.createJobSeekerCredential(
-        req.session.jobSeekerId!,
-        parsed.data
-      );
-      res.status(201).json(row);
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        return res
-          .status(409)
-          .json({ message: "You already have this credential on file." });
-      }
-      throw err;
-    }
+    const row = await storage.createJobSeekerCredential(
+      req.session.jobSeekerId!,
+      parsed.data
+    );
+    res.status(201).json(row);
   } catch (err) {
-    next(err);
+    if (isUniqueViolation(err)) {
+      return respondError(
+        res,
+        new AppError(
+          "CREDENTIAL_DUPLICATE",
+          "You already have this credential on file.",
+          409,
+        ),
+      );
+    }
+    return respondError(res, err);
   }
 });
 
 /** PUT /api/jobseeker/credentials/:id — update a credential owned by this seeker */
-credentialsRouter.put("/jobseeker/credentials/:id", requireJobSeekerAuth, async (req, res, next) => {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+credentialsRouter.put("/jobseeker/credentials/:id", requireJobSeekerAuth, async (req, res) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) {
+    return respondError(
+      res,
+      new AppError("INVALID_PARAM", "Invalid id", 400),
+    );
+  }
 
-    const parsed = credentialInputSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: parsed.error.errors[0].message });
-    }
-    try {
-      const updated = await storage.updateJobSeekerCredential(
-        id,
-        req.session.jobSeekerId!,
-        parsed.data
+  const parsed = credentialInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return respondError(res, parsed.error);
+  }
+  try {
+    const updated = await storage.updateJobSeekerCredential(
+      id,
+      req.session.jobSeekerId!,
+      parsed.data
+    );
+    if (!updated) {
+      return respondError(
+        res,
+        new AppError("CREDENTIAL_NOT_FOUND", "Credential not found", 404),
       );
-      if (!updated) return res.status(404).json({ message: "Credential not found" });
-      res.json(updated);
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        return res
-          .status(409)
-          .json({ message: "You already have this credential on file." });
-      }
-      throw err;
     }
+    res.json(updated);
   } catch (err) {
-    next(err);
+    if (isUniqueViolation(err)) {
+      return respondError(
+        res,
+        new AppError(
+          "CREDENTIAL_DUPLICATE",
+          "You already have this credential on file.",
+          409,
+        ),
+      );
+    }
+    return respondError(res, err);
   }
 });
 
 /** DELETE /api/jobseeker/credentials/:id — remove a credential */
-credentialsRouter.delete("/jobseeker/credentials/:id", requireJobSeekerAuth, async (req, res, next) => {
+credentialsRouter.delete("/jobseeker/credentials/:id", requireJobSeekerAuth, async (req, res) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) {
+    return respondError(
+      res,
+      new AppError("INVALID_PARAM", "Invalid id", 400),
+    );
+  }
   try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
     const deleted = await storage.deleteJobSeekerCredential(id, req.session.jobSeekerId!);
-    if (!deleted) return res.status(404).json({ message: "Credential not found" });
+    if (!deleted) {
+      return respondError(
+        res,
+        new AppError("CREDENTIAL_NOT_FOUND", "Credential not found", 404),
+      );
+    }
     res.json({ ok: true });
   } catch (err) {
-    next(err);
+    return respondError(res, err);
   }
 });

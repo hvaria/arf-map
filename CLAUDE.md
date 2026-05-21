@@ -165,6 +165,31 @@ Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-sche
 
 Both flows use 6-digit OTP email verification (15-minute expiry) and support password reset via the same OTP mechanism.
 
+### Error envelope
+
+The canonical HTTP error shape returned to the client is:
+
+```ts
+{ code: string, message: string, details?: unknown }
+```
+
+- `code` — stable, SCREAMING_SNAKE_CASE identifier the FE can branch on (e.g. `VALIDATION_ERROR`, `SUBSCRIPTION_REQUIRED`, `CREDENTIAL_DUPLICATE`, `INTERNAL_ERROR`).
+- `message` — human-readable, safe to surface in UI.
+- `details` — optional structured data. For `VALIDATION_ERROR` this is `{ issues: ZodIssue[] }`. Stack traces are attached here in non-production only and never in `NODE_ENV=production`.
+
+**Helper.** [`server/lib/respondError.ts`](server/lib/respondError.ts) exports:
+
+- `respondError(res, err, status?)` — turns a `ZodError`, an `AppError` (or any `{ code, statusCode }` object), or an unknown error into the canonical envelope. Always logs the original via `console.error` so a future Sentry hook attaches at one place.
+- `AppError` — `new AppError(code, message, statusCode?, details?)` for handlers that throw deliberately.
+
+**Status of migration.** Phase 0 ships the helper plus one reference route — [`server/routes/credentials.ts`](server/routes/credentials.ts). The legacy shapes elsewhere remain in place until a later mechanical migration phase:
+
+- `{ message }` — `server/routes.ts`, `server/routes/jobseekerAuth.ts`, `server/routes/workExperience.ts`, …
+- `{ success: false, error }` — `server/ops/opsRouter.ts`, `server/ops/auditorMiddleware.ts`
+- The 402 `SUBSCRIPTION_REQUIRED` envelope from `server/middleware/requireActiveSubscription.ts` is already aligned with the target shape (it has `code` + `message` + an extra `upgradeUrl`) and is intentionally left as-is.
+
+**New routes must use `respondError`.** Do not invent new error shapes; if you need a new failure mode, add an `AppError` with a new `code`.
+
 ### Environment Variables
 
 | Variable | Purpose |
