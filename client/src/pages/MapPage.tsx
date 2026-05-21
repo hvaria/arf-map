@@ -152,7 +152,13 @@ export default function MapPage() {
   const gateActive = !seekerOnly && sessionsReady && !hasSession;
   useEffect(() => {
     if (gateActive) setLoginDialogOpen(true);
-  }, [gateActive]);
+    // Auto-close if the user signed in via any flow (e.g. they picked
+    // "I'm looking for work", authenticated on /job-seeker, and were
+    // navigated back here). Without this, a dialog opened on an earlier
+    // anonymous render would persist after login. `hasSession` also
+    // covers the header Sign In button case once the user authenticates.
+    else if (hasSession) setLoginDialogOpen(false);
+  }, [gateActive, hasSession]);
 
   // Seeker-only app: anon visitors must not see the map. Bounce them
   // to the walkthrough (first run) or the auth surface (returning) as
@@ -368,7 +374,9 @@ export default function MapPage() {
        * icon when hovered, so the panel doesn't shout in orange.
        */}
       <Dialog
-        open={loginDialogOpen}
+        // Defensive: never render the role-picker to a signed-in user,
+        // even if `loginDialogOpen` lingers true from an earlier render.
+        open={loginDialogOpen && !hasSession}
         onOpenChange={(next) => {
           // While the gate is active the dialog is the only way forward —
           // ignore outside clicks / Escape so the visitor must pick a role.
