@@ -23,14 +23,18 @@ import { bootstrapMainSchema } from "./db/bootstrap";
 import { stripeWebhookHandler } from "./billing/webhookHandler";
 import { startDailySummaryScheduler } from "./ops/dailySummaryScheduler";
 import { startObligationExpireScheduler } from "./ops/obligationExpireScheduler";
-import type { FacilityAccount } from "@shared/schema";
+import { type SessionUser, toSessionUser } from "./types/session-user";
+import { csrfTokenMiddleware } from "./middleware/csrfToken";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
 const MAX_FACILITY_FAILED_ATTEMPTS = 10;
 
+// Express.User is narrowed to SessionUser — strips the password hash + OTP
+// columns so handlers cannot accidentally serialise them into responses. The
+// full FacilityAccount row is still reachable via storage.getFacilityAccount.
 declare global {
   namespace Express {
-    interface User extends FacilityAccount {}
+    interface User extends SessionUser {}
   }
 }
 
@@ -85,21 +89,57 @@ if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET environment variable is required in production");
 }
 
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "arf-map-facility-portal-secret-dev-only",
-    resave: false,
-    saveUninitialized: false,
-    store: sessionStore,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-              sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days default; overridable per-session
-    },
-  }),
-);
+// ── Split session cookies by app surface ─────────────────────────────────────
+// Facility-owner sessions and job-seeker sessions are independent: each has
+// its own cookie name so a logout in one portal does not invalidate the other
+// in the same browser. Both cookies use the same Postgres store (one row per
+// session) — only the cookie identity differs.
+const SESSION_SECRET =
+  process.env.SESSION_SECRET || "arf-map-facility-portal-secret-dev-only";
+const SESSION_COOKIE_BASE = {
+  secure: process.env.NODE_ENV === "production",
+  httpOnly: true,
+  sameSite: "lax" as const,
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days default; overridable per-session
+  path: "/",
+};
 
+export const FACILITY_SESSION_COOKIE = "arf_facility_sid";
+export const SEEKER_SESSION_COOKIE = "arf_seeker_sid";
+
+const facilitySession = session({
+  name: FACILITY_SESSION_COOKIE,
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  store: sessionStore,
+  cookie: { ...SESSION_COOKIE_BASE },
+});
+
+const seekerSession = session({
+  name: SEEKER_SESSION_COOKIE,
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  store: sessionStore,
+  cookie: { ...SESSION_COOKIE_BASE },
+});
+
+// Route requests to the correct session middleware by URL prefix. The
+// job-seeker portal lives under /api/jobseeker; everything else (facility
+// admin, ops, billing, static asset hits that happen to land here) gets the
+// facility session.
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/jobseeker")) {
+    return seekerSession(req, res, next);
+  }
+  return facilitySession(req, res, next);
+});
+
+// Passport.session() deserialises req.user from the session cookie. The
+// job-seeker portal does NOT use passport (it sets req.session.jobSeekerId
+// directly), so passport.session() is a no-op for that branch — which is
+// exactly what we want.
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -128,6 +168,12 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
+
+// ── S-01b: Per-session CSRF token ─────────────────────────────────────────────
+// Real CSRF token sourced from req.session.csrfToken. The FE reads the token
+// once per login from /api/facility/me or /api/jobseeker/me and replays it via
+// the X-CSRF-Token header on every mutation. See server/middleware/csrfToken.ts.
+app.use(csrfTokenMiddleware());
 
 // ── F-01: Facility account lockout — Passport LocalStrategy ───────────────────
 passport.use(
@@ -161,13 +207,19 @@ passport.use(
 );
 
 passport.serializeUser((user, done) => {
-  done(null, (user as FacilityAccount).id);
+  // user here is whatever the LocalStrategy passed to done() — either the raw
+  // FacilityAccount (on login) or the already-narrowed SessionUser (on
+  // subsequent deserialise round-trips). Both shapes carry .id.
+  done(null, (user as { id: number }).id);
 });
 
 passport.deserializeUser(async (id: number, done) => {
   try {
     const account = await storage.getFacilityAccount(id);
-    done(null, account ?? false);
+    if (!account) return done(null, false);
+    // Strip password + OTP columns before they enter req.user. Anything that
+    // genuinely needs the full row can re-fetch via storage.getFacilityAccount.
+    done(null, toSessionUser(account));
   } catch (err) {
     done(err);
   }

@@ -17,6 +17,7 @@ import { workExperienceRouter } from "./routes/workExperience";
 import { billingRouter } from "./routes/billing";
 import { facilityProfileRouter } from "./routes/facilityProfile";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
+import { getOrCreateCsrfToken } from "./middleware/csrfToken";
 import {
   getCachedFacilities,
   invalidateFacilitiesCache,
@@ -716,7 +717,8 @@ export async function registerRoutes(server: Server, app: Express) {
       // S-09: destroy session and clear cookie (was missing clearCookie)
       req.session.destroy((destroyErr) => {
         if (destroyErr) console.error("[facility/logout] session destroy error:", destroyErr);
-        res.clearCookie("connect.sid");
+        // Cookie name is split per-app (Phase 1) — see server/index.ts.
+        res.clearCookie("arf_facility_sid");
         res.set("Cache-Control", "no-store"); // S-06
         res.json({ ok: true });
       });
@@ -800,7 +802,15 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/facility/me", async (req, res) => {
     res.set("Cache-Control", "no-store"); // S-06: don't cache auth state
     if (!req.isAuthenticated() || !req.user) {
-      return res.status(401).json({ message: "Not authenticated" });
+      // Phase 1 hardening — mint + return a CSRF token even on the
+      // unauthenticated path so the FE can submit pre-auth POSTs (register,
+      // login, verify-email, forgot-password) without a chicken-and-egg
+      // token bootstrap problem. The session row is created on demand
+      // when getOrCreateCsrfToken writes to req.session.
+      return res.status(401).json({
+        message: "Not authenticated",
+        csrfToken: getOrCreateCsrfToken(req),
+      });
     }
     // CCLD prefill summary — surfaces the timestamp + the columns that the
     // signup-time prefill wrote so the dashboard can show a one-time toast
@@ -832,6 +842,10 @@ export async function registerRoutes(server: Server, app: Express) {
       username: req.user.username,
       role: req.user.role ?? "facility_admin",
       ccldPrefill,
+      // Phase 1 backend hardening — per-session CSRF token. Lazily minted on
+      // first read; the FE stores this and replays it as X-CSRF-Token on
+      // every mutation. See server/middleware/csrfToken.ts.
+      csrfToken: getOrCreateCsrfToken(req),
       subscription: {
         status: req.user.subscriptionStatus ?? null,
         currentPeriodEnd: req.user.subscriptionCurrentPeriodEnd ?? null,
