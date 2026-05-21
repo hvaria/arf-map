@@ -77,6 +77,7 @@ import { FormField, onSubmitKey } from "@/components/operations/FormField";
 import { LogoUpload } from "@/components/facility/LogoUpload";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
+import { getCsrfToken, refreshCsrfTokenFromMe } from "@/lib/csrfToken";
 import { cn } from "@/lib/utils";
 
 // ── Types (shape mirrors /api/facility/profile envelope) ─────────────────────
@@ -254,12 +255,33 @@ export function FacilityDetailsTab({
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch("/api/facility/profile/logo", {
-        method: "POST",
-        credentials: "include",
-        headers: { "X-Requested-With": "XMLHttpRequest" },
-        body: fd,
-      });
+      // Multipart upload — can't go through apiRequest() (it serialises JSON).
+      // Headers mirror apiRequest exactly: X-Requested-With sentinel +
+      // X-CSRF-Token per-session token (Phase 1). Note: NO Content-Type —
+      // the browser sets it (with boundary) for FormData.
+      const buildHeaders = (): Record<string, string> => {
+        const h: Record<string, string> = {
+          "X-Requested-With": "XMLHttpRequest",
+        };
+        const csrf = getCsrfToken();
+        if (csrf) h["X-CSRF-Token"] = csrf;
+        return h;
+      };
+      const doPost = () =>
+        fetch("/api/facility/profile/logo", {
+          method: "POST",
+          credentials: "include",
+          headers: buildHeaders(),
+          body: fd,
+        });
+      let res = await doPost();
+      if (res.status === 403) {
+        const probe = await res.clone().json().catch(() => null);
+        if ((probe as { code?: string } | null)?.code === "CSRF_TOKEN_INVALID") {
+          await refreshCsrfTokenFromMe("facility");
+          res = await doPost();
+        }
+      }
       if (!res.ok) {
         let msg = `HTTP ${res.status}`;
         try {

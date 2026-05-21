@@ -32,6 +32,7 @@ import {
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import { getCsrfToken, refreshCsrfTokenFromMe } from "@/lib/csrfToken";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -169,12 +170,32 @@ export const AttachEvidence = forwardRef<AttachEvidenceHandle, Props>(
         fd.append("entityId", String(knownEntityId));
         fd.append("kind", file.type.startsWith("image/") ? "photo" : "file");
         fd.append("file", file);
-        const res = await fetch(`/api/ops/evidence`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "X-Requested-With": "XMLHttpRequest" },
-          body: fd,
-        });
+        // Multipart upload — bypass apiRequest() (JSON-only). Mirror its
+        // CSRF behavior: sentinel header + per-session token + one-shot
+        // 403-retry. See lib/csrfToken.ts.
+        const buildHeaders = (): Record<string, string> => {
+          const h: Record<string, string> = {
+            "X-Requested-With": "XMLHttpRequest",
+          };
+          const csrf = getCsrfToken();
+          if (csrf) h["X-CSRF-Token"] = csrf;
+          return h;
+        };
+        const doPost = () =>
+          fetch(`/api/ops/evidence`, {
+            method: "POST",
+            credentials: "include",
+            headers: buildHeaders(),
+            body: fd,
+          });
+        let res = await doPost();
+        if (res.status === 403) {
+          const probe = await res.clone().json().catch(() => null);
+          if ((probe as { code?: string } | null)?.code === "CSRF_TOKEN_INVALID") {
+            await refreshCsrfTokenFromMe("facility");
+            res = await doPost();
+          }
+        }
         if (!res.ok) {
           let msg = `HTTP ${res.status}`;
           try {

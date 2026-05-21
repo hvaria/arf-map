@@ -1,4 +1,9 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import {
+  getCsrfToken,
+  pickScopeForUrl,
+  refreshCsrfTokenFromMe,
+} from "./csrfToken";
 
 // In native Capacitor builds, set VITE_API_URL to your deployed server, e.g.:
 //   VITE_API_URL=https://your-server.com npm run mobile:build
@@ -15,25 +20,109 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+/** Methods that the server's CSRF middleware gates. Mirrors the
+ *  STATE_CHANGING_METHODS set in server/middleware/csrfToken.ts. */
+const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Build the request headers for a single apiRequest() call.
+ *
+ *  - `X-Requested-With: XMLHttpRequest` is the original CSRF sentinel; the
+ *    server still enforces it as belt-and-braces. Sent on every call.
+ *  - `Content-Type: application/json` only when a JSON body is being sent.
+ *  - `X-CSRF-Token` is added on state-changing /api/* calls when a token has
+ *    been captured from a prior /me response. If we don't have a token yet
+ *    the server will respond 403 and we'll trigger the recovery path below.
+ */
+function buildHeaders(
+  method: string,
+  url: string,
+  hasBody: boolean,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "X-Requested-With": "XMLHttpRequest",
+  };
+  if (hasBody) headers["Content-Type"] = "application/json";
+
+  if (
+    STATE_CHANGING_METHODS.has(method.toUpperCase()) &&
+    url.startsWith("/api/")
+  ) {
+    const csrf = getCsrfToken();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+  }
+  return headers;
+}
+
+/**
+ * Detect the 403 `CSRF_TOKEN_INVALID` response shape from
+ * server/middleware/csrfToken.ts WITHOUT consuming the body — we may need
+ * to surface it to the caller if the retry also fails.
+ *
+ * Returns the parsed body (so the caller can use it) and whether it was a
+ * CSRF rejection.
+ */
+async function inspectCsrfFailure(
+  res: Response,
+): Promise<{ isCsrf: boolean; body: unknown }> {
+  if (res.status !== 403) return { isCsrf: false, body: undefined };
+  // Clone so the original Response is still readable by throwIfResNotOk if
+  // we end up bubbling.
+  let body: unknown = undefined;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return { isCsrf: false, body: undefined };
+  }
+  const code = (body as { code?: unknown })?.code;
+  return { isCsrf: code === "CSRF_TOKEN_INVALID", body };
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  // S-01: include the CSRF sentinel header on all state-changing requests.
-  // The server middleware in index.ts rejects POST/PUT/DELETE/PATCH that
-  // lack this header, preventing cross-site form-submission attacks.
-  const headers: Record<string, string> = {
-    "X-Requested-With": "XMLHttpRequest",
-  };
-  if (data) headers["Content-Type"] = "application/json";
+  // S-01 + Phase-1 CSRF token. Server middleware in `server/middleware/csrfToken.ts`
+  // rejects POST/PUT/PATCH/DELETE on /api/* without a matching X-CSRF-Token.
+  // The token lives in `lib/csrfToken.ts`, populated whenever /me resolves.
+  //
+  // Truthy-only body check preserves prior behavior (data=null/0/"" → no body,
+  // no Content-Type — matches the original `if (data)` semantics that every
+  // existing call site relies on).
+  const hasBody = !!data;
+  const body = hasBody ? JSON.stringify(data) : undefined;
 
-  const res = await fetch(`${API_BASE}${url}`, {
-    method,
-    credentials: "include",
-    headers,
-    body: data ? JSON.stringify(data) : undefined,
-  });
+  const doFetch = () =>
+    fetch(`${API_BASE}${url}`, {
+      method,
+      credentials: "include",
+      headers: buildHeaders(method, url, hasBody),
+      body,
+    });
+
+  const res = await doFetch();
+
+  // ── 403 CSRF_TOKEN_INVALID recovery ────────────────────────────────────
+  // The token may have rotated (server restart, session destroy on the
+  // server side, our local copy got out of sync). Refetch /me to pick up
+  // the fresh token and retry the original call EXACTLY ONCE. A second
+  // failure bubbles to the caller via throwIfResNotOk below so we don't
+  // loop on a permanently bad token.
+  if (res.status === 403) {
+    const { isCsrf } = await inspectCsrfFailure(res);
+    if (isCsrf) {
+      await refreshCsrfTokenFromMe(pickScopeForUrl(url), API_BASE);
+      const retry = await fetch(`${API_BASE}${url}`, {
+        method,
+        credentials: "include",
+        headers: buildHeaders(method, url, hasBody),
+        body,
+      });
+      await throwIfResNotOk(retry);
+      return retry;
+    }
+  }
 
   await throwIfResNotOk(res);
   return res;

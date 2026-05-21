@@ -17,6 +17,8 @@
  *   - notes.note.viewed
  *   - notes.note.acked
  */
+import { getCsrfToken } from "./csrfToken";
+
 export type NotesSurface = "drawer" | "page";
 
 export type TelemetryEvent =
@@ -51,11 +53,19 @@ export function track(
 
   // Fire-and-forget. We DO inspect the response so we can log a single
   // helpful debug line on the first 404 (endpoint not yet deployed).
+  // CSRF headers are added inline (without retry) so a missing token just
+  // gets a quiet 403 — same fail-soft behavior as the 404 path above.
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+    };
+    const csrf = getCsrfToken();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
     fetch("/api/telemetry/event", {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
       keepalive: true,
     })

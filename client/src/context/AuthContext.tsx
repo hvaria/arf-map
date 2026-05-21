@@ -16,6 +16,11 @@ import {
 } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
 import { clearSeekerSessionLocalStorage } from "@/lib/seekerLocalStorage";
+import {
+  refreshCsrfTokenFromMe,
+  setCsrfToken,
+  setCsrfTokenFromMeBody,
+} from "@/lib/csrfToken";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +50,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: null, // null = still checking
     isLoading: false,
   });
+
+  // Phase 1 CSRF — global cache subscriber. Any place in the app that hits
+  // /api/facility/me or /api/jobseeker/me (useSession, useQuery in
+  // FacilityPortal, NotesPage's auth gate, etc.) drops its response into the
+  // shared TanStack Query cache. Subscribing here means we capture csrfToken
+  // exactly once per fetch regardless of which consumer made the call. The
+  // alternative — auditing every call site — leaves landmines for future
+  // pages that read /me directly.
+  useEffect(() => {
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated") return;
+      const key = event.query.queryKey;
+      if (!Array.isArray(key) || key.length === 0) return;
+      const first = key[0];
+      if (
+        first !== "/api/facility/me" &&
+        first !== "/api/jobseeker/me"
+      ) {
+        return;
+      }
+      // The data may be null (401-returnNull), an object (200 body), or
+      // a stale value during refetch. setCsrfTokenFromMeBody tolerates all.
+      setCsrfTokenFromMeBody(event.query.state.data);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // On mount, rehydrate the session from the server cookie.
   // Also sync to React Query cache so any useQuery(["/api/jobseeker/me"])
@@ -98,6 +129,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Remove any stale profile cache so Dashboard always fetches fresh data
       // for the newly authenticated user. Mirrors what logout() does in reverse.
       queryClient.removeQueries({ queryKey: ["/api/jobseeker/profile"] });
+      // Phase 1 CSRF — req.session.regenerate() on the BE login handler
+      // mints a fresh session, which means any token we had from a prior
+      // /me hit is invalid against the new session. The login response
+      // itself does NOT carry csrfToken today, so we pull a fresh one
+      // explicitly. apiRequest's 403-retry path would also recover this
+      // lazily, but proactive refresh avoids the cost on the next mutation.
+      void refreshCsrfTokenFromMe("jobseeker");
     } catch (err) {
       setState((s) => ({ ...s, isLoading: false }));
       throw err as ApiError;
@@ -118,6 +156,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ user: undefined, isLoading: false });
       queryClient.setQueryData(["/api/jobseeker/me"], null);
       queryClient.removeQueries({ queryKey: ["/api/jobseeker/profile"] });
+      // Phase 1 CSRF — server destroyed the session, so the cached token
+      // is dead. Clear it and pull a fresh one from /me (this will return
+      // 401 + no token today, but works once the BE 401 path mints one).
+      setCsrfToken(null);
+      void refreshCsrfTokenFromMe("jobseeker");
     }
   }, []);
 

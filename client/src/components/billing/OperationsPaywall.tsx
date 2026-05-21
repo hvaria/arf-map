@@ -43,6 +43,7 @@ import {
   OPERATIONS_PRO_PRICE_LABEL,
   type FacilitySubscription,
 } from "@/lib/subscription";
+import { getCsrfToken, refreshCsrfTokenFromMe } from "@/lib/csrfToken";
 
 interface OperationsPaywallProps {
   subscription: FacilitySubscription | null;
@@ -179,15 +180,32 @@ export function OperationsPaywall({ subscription }: OperationsPaywallProps) {
     setCodeError(null);
     setIsRedeemingCode(true);
     try {
-      const res = await fetch("/api/billing/redeem-code", {
-        method: "POST",
-        credentials: "include",
-        headers: {
+      // Headers built per-call so a token rotation between redeem+checkout
+      // is picked up without re-mounting. Phase 1 CSRF — see lib/csrfToken.
+      const buildHeaders = (): Record<string, string> => {
+        const h: Record<string, string> = {
           "Content-Type": "application/json",
           "X-Requested-With": "XMLHttpRequest",
-        },
-        body: JSON.stringify({ code: trimmed }),
-      });
+        };
+        const csrf = getCsrfToken();
+        if (csrf) h["X-CSRF-Token"] = csrf;
+        return h;
+      };
+      const doPost = () =>
+        fetch("/api/billing/redeem-code", {
+          method: "POST",
+          credentials: "include",
+          headers: buildHeaders(),
+          body: JSON.stringify({ code: trimmed }),
+        });
+      let res = await doPost();
+      if (res.status === 403) {
+        const probe = await res.clone().json().catch(() => null);
+        if ((probe as { code?: string } | null)?.code === "CSRF_TOKEN_INVALID") {
+          await refreshCsrfTokenFromMe("facility");
+          res = await doPost();
+        }
+      }
       if (res.status === 503) {
         setCodeError("Promo codes aren't enabled on this environment.");
         return;
@@ -223,15 +241,30 @@ export function OperationsPaywall({ subscription }: OperationsPaywallProps) {
       // without exposing the response body, and we need to distinguish
       // 503 STRIPE_NOT_CONFIGURED (non-retryable) from 500 CHECKOUT_FAILED
       // (retryable) to drive different UI. Headers still mirror the
-      // helper (credentials + CSRF sentinel).
-      const res = await fetch("/api/billing/checkout", {
-        method: "POST",
-        credentials: "include",
-        headers: {
+      // helper (credentials + CSRF sentinel + per-session token).
+      const buildHeaders = (): Record<string, string> => {
+        const h: Record<string, string> = {
           "Content-Type": "application/json",
           "X-Requested-With": "XMLHttpRequest",
-        },
-      });
+        };
+        const csrf = getCsrfToken();
+        if (csrf) h["X-CSRF-Token"] = csrf;
+        return h;
+      };
+      const doPost = () =>
+        fetch("/api/billing/checkout", {
+          method: "POST",
+          credentials: "include",
+          headers: buildHeaders(),
+        });
+      let res = await doPost();
+      if (res.status === 403) {
+        const probe = await res.clone().json().catch(() => null);
+        if ((probe as { code?: string } | null)?.code === "CSRF_TOKEN_INVALID") {
+          await refreshCsrfTokenFromMe("facility");
+          res = await doPost();
+        }
+      }
 
       if (res.status === 503) {
         // STRIPE_NOT_CONFIGURED — dev / staging without keys, or live ops

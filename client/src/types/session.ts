@@ -19,4 +19,9 @@ export interface SessionUser {
   username: string;
   role?: string;
   subscription?: FacilitySubscription | null;
+  /** Phase 1 CSRF — present on authenticated /api/facility/me responses.
+   *  Captured into the module-level CSRF store by `useSession()`. Components
+   *  never need to read it directly; it's typed here so TS recognises the
+   *  field on the cached object. */
+  csrfToken?: string;
 }
