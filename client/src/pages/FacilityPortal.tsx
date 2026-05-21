@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
+import { getCsrfToken, refreshCsrfTokenFromMe } from "@/lib/csrfToken";
 import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-of-interest
 import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
 import { FacilityDetailsTab } from "@/components/facility/FacilityDetailsTab";
@@ -107,16 +108,35 @@ function LoginForm({
 
   const mutation = useMutation({
     mutationFn: async (data: LoginForm) => {
-      // S-01: include CSRF sentinel header (same as apiRequest in queryClient.ts)
-      const res = await fetch("/api/facility/login", {
-        method: "POST",
-        credentials: "include",
-        headers: {
+      // S-01 + Phase-1 CSRF token. We can't use apiRequest() here because we
+      // need to read body.code on 4xx to distinguish ACCOUNT_LOCKED /
+      // EMAIL_NOT_VERIFIED from generic failure, and apiRequest throws on
+      // non-2xx with only the message. Headers mirror apiRequest exactly.
+      const buildHeaders = (): Record<string, string> => {
+        const h: Record<string, string> = {
           "Content-Type": "application/json",
           "X-Requested-With": "XMLHttpRequest",
-        },
-        body: JSON.stringify(data),
-      });
+        };
+        const csrf = getCsrfToken();
+        if (csrf) h["X-CSRF-Token"] = csrf;
+        return h;
+      };
+      const doPost = () =>
+        fetch("/api/facility/login", {
+          method: "POST",
+          credentials: "include",
+          headers: buildHeaders(),
+          body: JSON.stringify(data),
+        });
+      let res = await doPost();
+      // 403 CSRF recovery — refresh /me and retry once.
+      if (res.status === 403) {
+        const probe = await res.clone().json().catch(() => null);
+        if ((probe as { code?: string } | null)?.code === "CSRF_TOKEN_INVALID") {
+          await refreshCsrfTokenFromMe("facility");
+          res = await doPost();
+        }
+      }
       const body = await res.json();
       if (!res.ok) {
         const err = new Error(body.message || "Login failed") as any;
@@ -131,6 +151,11 @@ function LoginForm({
     onSuccess: (data) => {
       onSuccess(data);
       toast({ title: "Logged in successfully" });
+      // Phase 1 CSRF — BE login regenerates the session, so any token we
+      // held is stale. The login response body itself doesn't carry
+      // csrfToken, so pull the new one from /me proactively. apiRequest's
+      // 403-retry path would also recover lazily on first mutation.
+      void refreshCsrfTokenFromMe("facility");
     },
     onError: (err: any) => {
       if (err.code === "EMAIL_NOT_VERIFIED") {

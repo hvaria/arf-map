@@ -15,6 +15,7 @@ import { useSession } from "@/hooks/useSession";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { isSeekerOnlyApp } from "@/lib/installApp";
+import { refreshCsrfTokenFromMe, setCsrfToken } from "@/lib/csrfToken";
 
 interface SeekerHeaderProfile {
   firstName: string | null;
@@ -88,6 +89,12 @@ export function useAppHeaderAuth(): AppHeaderAuth {
       qc.setQueryData(["/api/facility/me"], null);
       qc.invalidateQueries({ queryKey: ["/api/facility/me"] });
       qc.invalidateQueries({ queryKey: ["facility-session"] });
+      // Phase 1 CSRF — server destroyed the session; the cached token is
+      // dead. Clear locally then opportunistically pull a fresh one from
+      // the post-logout /me (returns 401 today; works the moment BE
+      // patches the 401 path to mint a token).
+      setCsrfToken(null);
+      void refreshCsrfTokenFromMe("facility");
     }
   }, [qc]);
 
