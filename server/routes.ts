@@ -33,8 +33,6 @@ import {
 } from "./storage";
 import { pool } from "./db/index";
 
-const facilityOtpStore = new Map<string, { otp: string; expiry: number }>();
-
 // ── S-02: Token hashing helpers ───────────────────────────────────────────────
 // OTP tokens stored in the DB are SHA-256 hashes; raw tokens are sent via email.
 function hashOtp(raw: string): string {
@@ -533,17 +531,8 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ── Facility Auth ────────────────────────────────────────────────────────────
 
-  app.post("/api/facility/send-otp", async (req, res) => {
-    const { email } = req.body as { email?: string };
-    if (!email) return res.status(400).json({ message: "Email is required" });
-
-    const otp = generateOTP();
-    facilityOtpStore.set(email, { otp, expiry: Date.now() + 15 * 60 * 1000 });
-    await sendVerificationEmail(email, otp);
-    res.json({ emailSent: true });
-  });
-
-  app.post("/api/facility/register", async (req, res) => {
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/facility/register", authRateLimiter, async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
@@ -594,7 +583,8 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Verify facility OTP → log in
-  app.post("/api/facility/verify-email", async (req, res, next) => {
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/facility/verify-email", authRateLimiter, async (req, res, next) => {
     const { email, otp } = req.body as { email?: string; otp?: string };
     if (!email || !otp) {
       return res.status(400).json({ message: "Email and OTP are required" });
@@ -655,7 +645,8 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Resend facility OTP
-  app.post("/api/facility/resend-otp", async (req, res) => {
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/facility/resend-otp", authRateLimiter, async (req, res) => {
     const { email } = req.body as { email?: string };
     if (!email) return res.status(400).json({ message: "Email is required" });
 
@@ -673,7 +664,8 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json({ emailSent: true });
   });
 
-  app.post("/api/facility/login", async (req, res, next) => {
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/facility/login", authRateLimiter, async (req, res, next) => {
     res.set("Cache-Control", "no-store"); // S-06
     passport.authenticate("local", async (err: any, user: Express.User | false, info: any) => {
       if (err) return next(err);
@@ -1011,7 +1003,9 @@ export async function registerRoutes(server: Server, app: Express) {
   // ── Job Seeker Auth ──────────────────────────────────────────────────────────
 
   // Register: email + password, sends OTP verification email
-  app.post("/api/jobseeker/register", async (req, res) => {
+  // S-02: store SHA-256 hash of OTP, send raw OTP via email
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/jobseeker/register", authRateLimiter, async (req, res) => {
     const parsed = jobSeekerRegisterSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
@@ -1027,7 +1021,7 @@ export async function registerRoutes(server: Server, app: Express) {
         const expiry = Date.now() + 15 * 60 * 1000; // 15 minutes
         await storage.updateJobSeekerAccount(existingByEmail.id, {
           password: hashed,
-          verificationToken: otp,
+          verificationToken: hashOtp(otp), // S-02: store hash, send raw
           verificationExpiry: expiry,
         });
         await sendVerificationEmail(email, otp);
@@ -1045,7 +1039,7 @@ export async function registerRoutes(server: Server, app: Express) {
       email,
       password: hashed,
       emailVerified: 0,
-      verificationToken: otp,
+      verificationToken: hashOtp(otp), // S-02: store hash, send raw
       verificationExpiry: expiry,
       createdAt: Date.now(),
     });
@@ -1056,7 +1050,9 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Verify OTP
-  app.post("/api/jobseeker/verify-email", async (req, res) => {
+  // S-02: constant-time hash comparison
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/jobseeker/verify-email", authRateLimiter, async (req, res) => {
     const { email, otp } = req.body as { email?: string; otp?: string };
     if (!email || !otp) {
       return res.status(400).json({ message: "Email and OTP are required" });
@@ -1069,7 +1065,7 @@ export async function registerRoutes(server: Server, app: Express) {
     if (account.emailVerified) {
       return res.status(400).json({ message: "Email already verified" });
     }
-    if (!account.verificationToken || account.verificationToken !== otp) {
+    if (!account.verificationToken || !safeCompareOtp(account.verificationToken, otp)) {
       return res.status(400).json({ message: "Invalid verification code" });
     }
     if (!account.verificationExpiry || Date.now() > account.verificationExpiry) {
@@ -1100,7 +1096,9 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Resend OTP
-  app.post("/api/jobseeker/resend-otp", async (req, res) => {
+  // S-02: store SHA-256 hash of OTP, send raw OTP via email
+  // S-03: rate-limited to 5 requests per 15 minutes per IP
+  app.post("/api/jobseeker/resend-otp", authRateLimiter, async (req, res) => {
     const { email } = req.body as { email?: string };
     if (!email) return res.status(400).json({ message: "Email is required" });
 
@@ -1111,7 +1109,7 @@ export async function registerRoutes(server: Server, app: Express) {
     const otp = generateOTP();
     const expiry = Date.now() + 15 * 60 * 1000;
     await storage.updateJobSeekerAccount(account.id, {
-      verificationToken: otp,
+      verificationToken: hashOtp(otp), // S-02: store hash, send raw
       verificationExpiry: expiry,
     });
     await sendVerificationEmail(email, otp);
