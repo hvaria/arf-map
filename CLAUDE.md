@@ -153,6 +153,26 @@ The core data is California CCLD licensed-care facilities. There are two modes:
 - `schema.ts` — All Drizzle table definitions and inferred TypeScript types. Single source of truth for DB schema and Zod validation schemas. `server/db/schema.ts` re-exports from here.
 - `etl-types.ts` — `FacilityDbRow` type, `typeToGroup()` mapping, `TYPE_TO_NAME` lookup, `formatPhone()` — used by both server and ETL scripts.
 
+### Schema invariants (Phase 2)
+
+The Phase 2 R1 structural lockdown (`migrations/0001_phase_2_structural_lockdown.sql`) added enforced invariants that every new schema change MUST preserve. Breaking any of these requires an explicit migration and a heads-up to backend-engineer.
+
+**Foreign keys + composite tenant integrity.** Every child→parent reference in the ops_*, notes_*, and tracker_* schemas is a real FK now — not a soft FK by naming convention. The standard pattern is:
+
+- **`ON DELETE RESTRICT`** for clinical / financial parents (resident, medication, invoice, care_plan, staff, lead, trust account, share_link, fixture, catalog, inspection, complaint). Never cascade-delete medical or money data.
+- **`ON DELETE CASCADE`** only for explicit child collections (note_tags, note_mentions, note_attachments, note_acknowledgments, note_versions, complaint investigation notes, inspection citations, tracker_entry_versions).
+- **Composite FK against `(id, facility_number)`** when both parent and child carry `facility_number`. The FK target is a separate `UNIQUE (id, facility_number)` constraint on the parent — DB-level enforcement that a child in facility A cannot point at a parent in facility B. When adding a NEW parent that children will reference, add the composite UNIQUE on the parent in the same migration. The 14 parent tables with this UNIQUE today: `ops_residents`, `ops_medications`, `ops_med_passes`, `ops_care_plans`, `ops_leads`, `ops_invoices`, `ops_staff`, `ops_temperature_fixtures`, `ops_inspections`, `ops_complaints`, `ops_obligations`, `ops_share_links`, `ops_posting_catalog`, `ops_resident_trust_accounts`.
+
+**CHECK constraints on enum-like TEXT columns.** Every `TEXT NOT NULL DEFAULT '<value>'` column whose canonical value list lives in a `shared/<x>.ts` const array or `z.enum([...])` carries a matching `CHECK (col IN ('a','b','c'))`. When adding a new enum value, update the shared TS const AND add a migration that drops + re-adds the CHECK with the expanded set. When renaming a value, backfill old rows first (the CHECK refuses to apply otherwise — see the runbook).
+
+**Soft-delete is preserved (not changed in Phase 2).** Tables that already use `deleted_at BIGINT` (notes, tracker_entries, staff_credentials, obligations, evidence_attachments, reports) keep doing so. New parent tables that may need soft-delete should follow the same `deleted_at BIGINT` + partial index pattern, not a `status='deleted'` enum, so the FK + CHECK lockdowns don't have to be widened for a transient state.
+
+**NULL replaces empty-string sentinels on `facilities`.** The columns `address`, `city`, `county`, `zip`, `phone`, `licensee`, `administrator`, `first_license_date`, `closed_date`, `last_inspection_date`, `geocode_quality` are nullable. The empty string is no longer a valid value — write NULL when the field is unknown. App code uses `?? ''` on read so the runtime impact is nil. Do not reintroduce empty-string defaults on these columns.
+
+**`pg_trgm` index on `facilities.name`.** A GIN trigram index (`idx_facilities_name_trgm`) exists on `LOWER(name)`. The current `searchFacilitiesAutocompleteAsync` query still uses `LIKE '%q%'` — a later phase will switch it to `LOWER(name) % $1` (similarity) or `ILIKE '%' || $1 || '%'` (substring) so the index is consulted. Don't drop the extension or the index.
+
+**Orphan rows + migration failures.** See [docs/runbooks/phase-2-migration-orphan-cleanup.md](docs/runbooks/phase-2-migration-orphan-cleanup.md) for what to do when an FK or CHECK addition fails on existing prod data.
+
 ### Tracker Module
 
 Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-schemas/). Adding a tracker is a registry entry — no new routes, no DB migration, no shell changes (assuming an existing render pattern fits).

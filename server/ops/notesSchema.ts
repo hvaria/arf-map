@@ -192,9 +192,16 @@ export const opsNotes = pgTable("ops_notes", {
   updatedAt:                ts("updated_at").notNull(),
 });
 
+// Phase 2 R1 lockdown: noteId on the five note-child tables below is now a
+// real FK to ops_notes.id with ON DELETE CASCADE (migration 0001). The
+// `references()` annotation here keeps Drizzle's TS-level diff aware of
+// the constraint so future `db:generate` runs don't propose to add it
+// again. Single-column FK because these child tables don't carry their
+// own facility_number — the parent's facility_number is the tenant
+// boundary.
 export const opsNoteVersions = pgTable("ops_note_versions", {
   id:                  serial("id").primaryKey(),
-  noteId:              fk("note_id").notNull(),
+  noteId:              fk("note_id").notNull().references(() => opsNotes.id, { onDelete: "cascade" }),
   version:             integer("version").notNull(),
   title:               text("title"),
   body:                text("body").notNull(),
@@ -205,7 +212,7 @@ export const opsNoteVersions = pgTable("ops_note_versions", {
 
 export const opsNoteAttachments = pgTable("ops_note_attachments", {
   id:                     serial("id").primaryKey(),
-  noteId:                 fk("note_id").notNull(),
+  noteId:                 fk("note_id").notNull().references(() => opsNotes.id, { onDelete: "cascade" }),
   uploadedByAccountId:    fk("uploaded_by_account_id").notNull(),
   storageKey:             text("storage_key").notNull(),
   filename:               text("filename").notNull(),
@@ -221,7 +228,7 @@ export const opsNoteAttachments = pgTable("ops_note_attachments", {
 
 export const opsNoteMentions = pgTable("ops_note_mentions", {
   id:                serial("id").primaryKey(),
-  noteId:            fk("note_id").notNull(),
+  noteId:            fk("note_id").notNull().references(() => opsNotes.id, { onDelete: "cascade" }),
   mentionedStaffId:  fk("mentioned_staff_id"),
   mentionedRole:     text("mentioned_role"),
   readAt:            ts("read_at"),
@@ -230,7 +237,7 @@ export const opsNoteMentions = pgTable("ops_note_mentions", {
 
 export const opsNoteAcknowledgments = pgTable("ops_note_acknowledgments", {
   id:                                serial("id").primaryKey(),
-  noteId:                            fk("note_id").notNull(),
+  noteId:                            fk("note_id").notNull().references(() => opsNotes.id, { onDelete: "cascade" }),
   acknowledgerFacilityAccountId:     fk("acknowledger_facility_account_id").notNull(),
   acknowledgerStaffId:               fk("acknowledger_staff_id"),
   acknowledgedAt:                    ts("acknowledged_at").notNull(),
@@ -238,7 +245,7 @@ export const opsNoteAcknowledgments = pgTable("ops_note_acknowledgments", {
 });
 
 export const opsNoteTags = pgTable("ops_note_tags", {
-  noteId: fk("note_id").notNull(),
+  noteId: fk("note_id").notNull().references(() => opsNotes.id, { onDelete: "cascade" }),
   tag:    text("tag").notNull(),
 });
 
