@@ -227,6 +227,25 @@ The canonical HTTP error shape returned to the client is:
 
 **Auth hardening (S-02 / S-03).** OTPs for both portals are never persisted in plain text — `server/routes.ts` hashes raw tokens with `hashOtp()` (SHA-256) before writing to `verification_token`, and `safeCompareOtp()` performs a constant-time comparison on verify. Every auth surface across both portals — register, verify-email, resend-otp, login, forgot-password, reset-password — is protected by `authRateLimiter` (`server/middleware/rateLimiter.ts`), capped at 5 attempts per 15 minutes per IP. The legacy `POST /api/facility/send-otp` endpoint and its in-memory `facilityOtpStore` Map were removed (the production OTP flow uses the DB column on the account row).
 
+**Split session cookies (Phase 1 hardening).** The two portals use distinct session cookies so a logout in one does not invalidate the other in the same browser:
+
+| Portal | Cookie name | Mounted on |
+|---|---|---|
+| Facility owner | `arf_facility_sid` | every request path **except** `/api/jobseeker/*` |
+| Job seeker | `arf_seeker_sid` | requests under `/api/jobseeker/*` |
+
+Both cookies share the same Postgres `session` table — only the cookie identity differs. The prefix-based dispatcher and the `FACILITY_SESSION_COOKIE` / `SEEKER_SESSION_COOKIE` constants live in [server/index.ts](server/index.ts). Logout handlers must `clearCookie` the correct name; using the legacy `connect.sid` is a no-op.
+
+**Per-session CSRF token (Phase 1 hardening).** In addition to the `X-Requested-With: XMLHttpRequest` preflight, every state-changing `/api/*` request must carry a per-session CSRF token:
+
+- The token is a 32-byte hex string lazily minted on first read of `/api/facility/me` or `/api/jobseeker/me` and stored on `req.session.csrfToken`. Both `/me` endpoints return the token even on their 401 (unauthenticated) responses so pre-auth POSTs (register, login, verify-email, etc.) can carry a valid token; `requireJobSeekerAuth` likewise mints + returns a token on its 401 response.
+- The FE reads the token from the body of `/me` (the AuthContext rehydration call) and replays it as the `X-CSRF-Token` request header on every POST/PUT/PATCH/DELETE under `/api/`.
+- Missing or mismatching tokens get a `403 { code: "CSRF_TOKEN_INVALID" }`.
+- `/api/billing/webhook` is bypassed (Stripe cannot send our session cookie); the route is also mounted before the session middleware with `express.raw()`.
+- Middleware: [server/middleware/csrfToken.ts](server/middleware/csrfToken.ts) — `csrfTokenMiddleware()` enforces the check; `getOrCreateCsrfToken(req)` is the helper the `/me` handlers and the jobseeker auth middleware use to mint/return the token.
+
+**`SessionUser` type pattern (Phase 1 hardening).** `Express.User` is declared as the narrowed [`SessionUser`](server/types/session-user.ts) type — `Omit<FacilityAccount, "password" | "verificationToken" | "verificationExpiry">`. The `passport.deserializeUser` hook calls `toSessionUser(account)` before assigning to `req.user`, so handlers cannot accidentally serialise the password hash or OTP columns into a JSON response. If a handler genuinely needs the full row (e.g. a password-change flow), re-fetch it via `storage.getFacilityAccount(req.user.id)` — never read `req.user.password`, that field is no longer in the type.
+
 ### Environment Variables
 
 | Variable | Purpose |

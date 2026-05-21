@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AuthService } from "../services/authService";
 import { PgJobSeekerRepository } from "../repositories/postgres/pgJobSeekerRepository";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
+import { getOrCreateCsrfToken } from "../middleware/csrfToken";
 import { sendPasswordResetEmail } from "../email";
 import { pool } from "../db/index";
 import { authRateLimiter } from "../middleware/rateLimiter";
@@ -111,7 +112,8 @@ jobseekerAuthRouter.post("/login", authRateLimiter, async (req, res, next) => {
 jobseekerAuthRouter.post("/logout", (req, res, next) => {
   req.session.destroy((err) => {
     if (err) return next(err);
-    res.clearCookie("connect.sid");
+    // Cookie name is split per-app (Phase 1) — see server/index.ts.
+    res.clearCookie("arf_seeker_sid");
     res.json({ ok: true });
   });
 });
@@ -129,7 +131,10 @@ jobseekerAuthRouter.get("/me", requireJobSeekerAuth, async (req, res, next) => {
       req.session.destroy(() => {});
       return res.status(401).json({ message: "Session is no longer valid." });
     }
-    return res.json(profile);
+    // Phase 1 backend hardening — per-session CSRF token. The FE stores this
+    // and replays it as X-CSRF-Token on every mutation. The profile object
+    // shape is preserved; csrfToken is an additive sibling field.
+    return res.json({ ...profile, csrfToken: getOrCreateCsrfToken(req) });
   } catch (err) {
     next(err);
   }
