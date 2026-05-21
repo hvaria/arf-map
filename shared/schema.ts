@@ -636,16 +636,19 @@ export {
   trackerEntries,
   trackerEntryVersions,
   trackerAuditLog,
+  trackerAlerts,
   // Select types (DB rows)
   type TrackerDefinitionRow,
   type TrackerEntryRow,
   type TrackerEntryVersionRow,
   type TrackerAuditLogRow,
+  type TrackerAlertRow,
   // Insert types
   type NewTrackerDefinitionRow,
   type NewTrackerEntryRow,
   type NewTrackerEntryVersionRow,
   type NewTrackerAuditLogRow,
+  type NewTrackerAlertRow,
   // Zod enums (audit-only — entry status & shift moved to @shared/tracker-schemas)
   trackerAuditActionSchema,
   trackerAuditEntityTypeSchema,
