@@ -182,6 +182,7 @@ Both flows use 6-digit OTP email verification (15-minute expiry) and support pas
 | `STRIPE_CHECKOUT_SUCCESS_URL` | Where Stripe redirects after a successful Checkout, e.g. `.../#/facility-portal?billing=success` |
 | `STRIPE_CHECKOUT_CANCEL_URL` | Where Stripe redirects on a cancelled Checkout |
 | `STRIPE_PORTAL_RETURN_URL` | Where the Stripe Customer Portal returns the user when they close it |
+| `LOGTAIL_SOURCE_TOKEN` | Optional. Better Stack (Logtail) source token for centralized log shipping from Fly.io. Used by the `ncu-log-shipper` companion Fly app (and optionally by `ncu` for direct logging). See `docs/runbooks/logging.md`. |
 
 **Local Stripe webhook testing**: `stripe listen --forward-to localhost:5000/api/billing/webhook` — copy the printed `whsec_...` into `STRIPE_WEBHOOK_SECRET`. The webhook route is mounted with `express.raw()` BEFORE the global JSON parser so Stripe's signature verification sees the unparsed body.
 
