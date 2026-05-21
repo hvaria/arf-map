@@ -56,7 +56,9 @@ npm start             # Run production build
 npm run check         # tsc — no emit, just type errors
 
 # Database
-npm run db:push       # Push Drizzle schema changes to SQLite
+npm run db:generate   # Generate a new migration from schema diff (run after editing schema files)
+npm run db:migrate    # Apply pending migrations to the database (run in CI/deploy and locally on pull)
+npm run db:push       # DEPRECATED — prefer db:migrate; kept for emergency dev use only
 npm run db:seed       # Seed facility overrides / accounts
 
 # Facilities data ETL
@@ -77,6 +79,39 @@ npm run mobile:ios      # Open Xcode
 # Deploy (Fly.io)
 npm run deploy
 ```
+
+## Working with Migrations
+
+Schema changes in this project follow a two-track system:
+
+### The canonical workflow (migrations)
+
+All new schema changes must go through `drizzle-kit` migrations:
+
+1. **Edit the Drizzle table definition** in `shared/schema.ts`, `server/ops/opsSchema.ts`, `server/ops/notesSchema.ts`, or `server/trackers/trackerSchema.ts`.
+2. **Generate a migration**: `npm run db:generate` — this diffs the current Drizzle schema against the last migration snapshot and writes a new `.sql` file to `migrations/`.
+3. **Apply the migration**: `npm run db:migrate` — this runs all pending `.sql` files in order against the target database.
+
+### When to run each command
+
+| Command | When |
+|---------|------|
+| `npm run db:generate` | After editing any Drizzle schema file — creates the migration |
+| `npm run db:migrate` | In CI/deploy pipelines AND locally after pulling changes that include new migrations |
+
+### Bootstrap files — fallback only, do not edit for new schema
+
+The bootstrap SQL files (`server/db/bootstrap.ts`, `server/ops/opsSchema.ts` `OPS_PG_SCHEMA_SQL`, `server/ops/notesSchema.ts` `NOTES_PG_SCHEMA_SQL`, `server/trackers/trackerSchema.ts` `TRACKERS_PG_SCHEMA_SQL`) remain as-is. They run `CREATE TABLE IF NOT EXISTS` at server startup as a safety net for fresh dev databases that have never had `db:migrate` run. They are **not** the source of truth for schema going forward.
+
+- **Do NOT add new tables or columns to the bootstrap SQL.** New schema goes through the migration workflow above.
+- The bootstrap functions (`bootstrapMainSchema`, `bootstrapOpsSchema`, etc.) are not deleted — they remain as idempotent fallbacks.
+- `db:push` is deprecated in favor of `db:migrate`. It bypasses the migration history and should only be used in true emergencies on a dev-only database.
+
+### Migration file location
+
+All migration SQL files live in `migrations/`. The `drizzle-kit` journal (`migrations/meta/_journal.json`) tracks which migrations have been applied. Never hand-edit files in `migrations/` — always use `npm run db:generate`.
+
+---
 
 ## Architecture
 
