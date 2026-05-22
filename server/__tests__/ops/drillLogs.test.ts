@@ -83,24 +83,21 @@ describe("drillLogs — JSON column round-trip", () => {
     expect(row.status).toBe("executed");
   });
 
-  it("malformed JSON in DB does not crash the read path (defaults to [])", async () => {
-    // Insert a row with deliberately corrupt JSON in one of the array
-    // columns so the parse defensive fallback gets exercised.
-    const res = await pool.query<{ id: number }>(
-      `INSERT INTO ops_drill_logs
-         (facility_number, drill_kind, executed_at,
-          participants_json, residents_involved_json, corrective_actions_json,
-          status, created_by, created_at, updated_at)
-       VALUES ($1, 'fire', $2, '{not-json', NULL, '[bad', 'executed', 'seed', $2, $2)
-       RETURNING id`,
-      [FACILITY_A, Date.now()],
-    );
-    const row = await getDrillLog(Number(res.rows[0].id), FACILITY_A);
-    expect(row).toBeDefined();
-    const decoded = decodeDrillLog(row!);
-    expect(decoded.participants).toEqual([]);
-    expect(decoded.residentsInvolved).toEqual([]);
-    expect(decoded.correctiveActions).toEqual([]);
+  it("malformed JSON is rejected at INSERT (Phase 2 R2: JSONB enforces validity)", async () => {
+    // Pre-Phase-2 these columns were TEXT, so corrupt strings could land and
+    // the read path's defensive parse defaulted to []. With JSONB the DB
+    // itself refuses to accept invalid JSON — a stronger guarantee that
+    // makes the defensive read fallback unnecessary going forward.
+    await expect(
+      pool.query(
+        `INSERT INTO ops_drill_logs
+           (facility_number, drill_kind, executed_at,
+            participants_json, residents_involved_json, corrective_actions_json,
+            status, created_by, created_at, updated_at)
+         VALUES ($1, 'fire', $2, '{not-json', NULL, '[bad', 'executed', 'seed', $2, $2)`,
+        [FACILITY_A, Date.now()],
+      ),
+    ).rejects.toThrow(/invalid input syntax for type json/i);
   });
 
   it("undefined / null JSON columns project as empty arrays", async () => {

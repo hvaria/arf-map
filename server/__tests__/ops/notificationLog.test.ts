@@ -172,16 +172,24 @@ describe("notificationLog — JSON + bodyPreview truncation", () => {
       scheduledFor: Date.now(),
       deliveryStatus: "sent",
     });
-    const r = await pool.query<{ triage_snapshot: string }>(
+    // Phase 2 R2: triage_snapshot is JSONB. Oversized payloads are replaced
+    // with a sentinel object (was a byte-truncated string with a marker).
+    const r = await pool.query<{ triage_snapshot: unknown }>(
       `SELECT triage_snapshot FROM ops_notification_log WHERE facility_number = $1`,
       [FACILITY_A],
     );
     expect(r.rows.length).toBe(1);
-    const blob = r.rows[0].triage_snapshot;
-    expect(Buffer.byteLength(blob, "utf8")).toBeLessThanOrEqual(
-      NOTIFICATION_SNAPSHOT_MAX_BYTES,
-    );
-    expect(blob.endsWith("...(truncated)")).toBe(true);
+    const snapshot = r.rows[0].triage_snapshot as {
+      _truncated: boolean;
+      _originalSizeBytes: number;
+      _maxBytes: number;
+      _preview: string;
+    };
+    expect(snapshot._truncated).toBe(true);
+    expect(snapshot._originalSizeBytes).toBeGreaterThan(NOTIFICATION_SNAPSHOT_MAX_BYTES);
+    expect(snapshot._maxBytes).toBe(NOTIFICATION_SNAPSHOT_MAX_BYTES);
+    expect(typeof snapshot._preview).toBe("string");
+    expect(snapshot._preview.length).toBeLessThanOrEqual(512);
   });
 
   it("body_preview is trimmed to NOTIFICATION_BODY_PREVIEW_MAX chars", async () => {
@@ -217,11 +225,13 @@ describe("notificationLog — JSON + bodyPreview truncation", () => {
       scheduledFor: Date.now(),
       deliveryStatus: "sent",
     });
-    const r = await pool.query<{ body_preview: string; triage_snapshot: string }>(
+    // Phase 2 R2: triage_snapshot is JSONB. node-postgres returns the parsed
+    // value directly — no JSON.parse needed.
+    const r = await pool.query<{ body_preview: string; triage_snapshot: unknown }>(
       `SELECT body_preview, triage_snapshot FROM ops_notification_log WHERE facility_number = $1`,
       [FACILITY_A],
     );
     expect(r.rows[0].body_preview).toBe("ok");
-    expect(JSON.parse(r.rows[0].triage_snapshot)).toEqual({ totalItems: 0 });
+    expect(r.rows[0].triage_snapshot).toEqual({ totalItems: 0 });
   });
 });
