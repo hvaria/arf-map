@@ -22,6 +22,12 @@ import {
   type JobSeekerProfile,
 } from "@/components/seeker/SeekerProfileEditor";
 import { SeekerProfileCard } from "@/components/seeker/SeekerProfileCard";
+import {
+  Clickwrap,
+  EMPTY_ACCEPTANCE,
+  isFullyAccepted,
+  type ClickwrapAcceptance,
+} from "@/components/legal/Clickwrap";
 
 interface JobSeekerAccount {
   id: number;
@@ -34,11 +40,19 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
   const { toast } = useToast();
   const [form, setForm] = useState({ email: "", password: "", confirm: "" });
   const [showPassword, setShowPassword] = useState(false);
+  // Phase 4 — clickwrap state. BE rejects register without all three booleans true.
+  const [acceptance, setAcceptance] = useState<ClickwrapAcceptance>(EMPTY_ACCEPTANCE);
 
   const mutation = useMutation({
     mutationFn: () => {
       if (form.password !== form.confirm) throw new Error("Passwords do not match");
-      return apiRequest("POST", "/api/jobseeker/register", { email: form.email, password: form.password });
+      return apiRequest("POST", "/api/jobseeker/register", {
+        email: form.email,
+        password: form.password,
+        acceptedTerms: acceptance.acceptedTerms,
+        acceptedPrivacy: acceptance.acceptedPrivacy,
+        acceptedAup: acceptance.acceptedAup,
+      });
     },
     onSuccess: () => onNeedsVerification(form.email),
     onError: (err: any) => toast({ title: "Registration failed", description: err.message, variant: "destructive" }),
@@ -80,13 +94,20 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
           placeholder="Repeat password"
           value={form.confirm}
           onChange={(e) => setForm((f) => ({ ...f, confirm: e.target.value }))}
-          onKeyDown={(e) => e.key === "Enter" && mutation.mutate()}
+          onKeyDown={(e) => e.key === "Enter" && isFullyAccepted(acceptance) && mutation.mutate()}
         />
       </div>
+      <Clickwrap onChange={setAcceptance} disabled={mutation.isPending} />
       <Button
         className="w-full"
         onClick={() => mutation.mutate()}
-        disabled={mutation.isPending || !form.email || !form.password || !form.confirm}
+        disabled={
+          mutation.isPending ||
+          !form.email ||
+          !form.password ||
+          !form.confirm ||
+          !isFullyAccepted(acceptance)
+        }
       >
         {mutation.isPending ? "Creating account…" : "Create Account"}
         {!mutation.isPending && <ChevronRight className="h-4 w-4 ml-1" />}

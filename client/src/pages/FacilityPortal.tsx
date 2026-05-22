@@ -26,6 +26,12 @@ import { ApplicantsTab } from "@/components/ApplicantsTab"; // NEW: expression-o
 import { NotesNotificationButton } from "@/components/operations/NotesNotificationButton";
 import { FacilityDetailsTab } from "@/components/facility/FacilityDetailsTab";
 import { useFacilityPortalRoute, type PortalTab } from "@/hooks/useFacilityPortalRoute";
+import {
+  Clickwrap,
+  EMPTY_ACCEPTANCE,
+  isFullyAccepted,
+  type ClickwrapAcceptance,
+} from "@/components/legal/Clickwrap";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -261,6 +267,9 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
     return () => clearTimeout(timer);
   }, [searchTerm, selectedFacility]);
 
+  // Phase 4 — clickwrap state. BE rejects register without all three booleans true.
+  const [acceptance, setAcceptance] = useState<ClickwrapAcceptance>(EMPTY_ACCEPTANCE);
+
   const registerMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", "/api/facility/register", {
@@ -268,6 +277,9 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
         username,
         email,
         password,
+        acceptedTerms: acceptance.acceptedTerms,
+        acceptedPrivacy: acceptance.acceptedPrivacy,
+        acceptedAup: acceptance.acceptedAup,
       }),
     onSuccess: () => onNeedsVerification(email),
     onError: (err: Error) => {
@@ -275,7 +287,12 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
     },
   });
 
-  const canSubmit = !!selectedFacility && username.length >= 3 && email.includes("@") && password.length >= 8;
+  const canSubmit =
+    !!selectedFacility &&
+    username.length >= 3 &&
+    email.includes("@") &&
+    password.length >= 8 &&
+    isFullyAccepted(acceptance);
 
   return (
     <div className="space-y-4">
@@ -379,6 +396,8 @@ function RegisterForm({ onNeedsVerification }: { onNeedsVerification: (email: st
           </button>
         </div>
       </div>
+
+      <Clickwrap onChange={setAcceptance} disabled={registerMutation.isPending} />
 
       <Button
         className="w-full"

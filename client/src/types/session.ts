@@ -12,6 +12,7 @@
  * subscription record".
  */
 import type { FacilitySubscription } from "@/lib/subscription";
+import type { LegalDocSlug } from "@/lib/legal";
 
 export interface SessionUser {
   id: number;
@@ -24,4 +25,10 @@ export interface SessionUser {
    *  never need to read it directly; it's typed here so TS recognises the
    *  field on the cached object. */
   csrfToken?: string;
+  /**
+   * Phase 4 — legal acceptance gate. Slugs the current facility account
+   * has NOT yet accepted at the current document version. Older server
+   * builds may omit the field; treat undefined as `[]`.
+   */
+  pendingAcceptances?: LegalDocSlug[];
 }

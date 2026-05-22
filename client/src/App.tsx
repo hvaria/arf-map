@@ -23,7 +23,9 @@ import JobDetailPage from "./pages/jobs/JobDetailPage";
 import NotesPage from "./pages/notes/NotesPage";
 import MarketingLanding from "./pages/MarketingLanding";
 import AuditorPage from "./pages/AuditorPage";
+import LegalDocPage from "./pages/legal/LegalDocPage";
 import NotFound from "./pages/not-found";
+import { LegalAcceptanceModal } from "@/components/legal/LegalAcceptanceModal";
 
 // /facility-portal is the only canonical operations route. All `/portal/*`
 // URLs (including the legacy tracker module deep-links) redirect here.
@@ -173,12 +175,22 @@ function AppRouter() {
             /api/ops/auditor/me; expired/revoked tokens render a friendly
             placeholder. Hash-routed so the URL is `/#/auditor/{token}`. */}
         <Route path="/auditor/:token" component={AuditorPageRoute} />
+        {/* Phase 4 — public legal documents. Anonymous-readable so a user
+            in the registration clickwrap can open them in a new tab
+            before checking the boxes. */}
+        <Route path="/legal/:slug" component={LegalDocPage} />
         {/* Legacy /portal/* deep-links → /facility-portal so saved bookmarks
             and shared links keep working. */}
         <Route path="/portal" component={LegacyPortalRedirect} />
         <Route path="/portal/:rest*" component={LegacyPortalRedirect} />
         <Route component={NotFound} />
       </Switch>
+      {/* Phase 4 — global legal-acceptance gate. Mounted once at the
+          app root so it sits above every page and reacts to changes
+          in either the seeker /me or facility /me. The component reads
+          the module-level legalState store and renders nothing when
+          there is nothing pending. */}
+      <LegalAcceptanceModal />
     </Router>
   );
 }

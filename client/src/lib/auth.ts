@@ -17,6 +17,7 @@ import {
   refreshCsrfTokenFromMe,
   setCsrfTokenFromMeBody,
 } from "./csrfToken";
+import type { LegalDocSlug } from "@/lib/legal";
 
 export interface JobSeekerProfile {
   id: number;
@@ -25,6 +26,13 @@ export interface JobSeekerProfile {
    *  Consumers should treat absence as "no change"; the field is stripped
    *  before being stored in AuthContext so React renders don't see it. */
   csrfToken?: string;
+  /**
+   * Phase 4 — legal acceptance gate. Slugs the current account has NOT
+   * yet accepted at the current document version. Server adds it to
+   * `GET /api/jobseeker/me` responses. Older server builds may omit the
+   * field; treat undefined as `[]`.
+   */
+  pendingAcceptances?: LegalDocSlug[];
 }
 
 export interface LoginCredentials {

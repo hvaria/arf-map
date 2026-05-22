@@ -4,6 +4,7 @@ import {
   pickScopeForUrl,
   refreshCsrfTokenFromMe,
 } from "./csrfToken";
+import { forceLegalModalOpen } from "@/lib/legalState";
 
 // In native Capacitor builds, set VITE_API_URL to your deployed server, e.g.:
 //   VITE_API_URL=https://your-server.com npm run mobile:build
@@ -121,6 +122,38 @@ export async function apiRequest(
       });
       await throwIfResNotOk(retry);
       return retry;
+    }
+  }
+
+  // ── 409 LEGAL_REACCEPT_REQUIRED recovery (Phase 4) ─────────────────────
+  // Server gates state-changing requests when the account's accepted legal
+  // doc versions are stale vs LEGAL_DOCS. Surface the blocking modal,
+  // async-refetch both /me to pick up new pendingAcceptances, then throw
+  // so the caller's onError sees the original failure. The user re-clicks
+  // the action naturally after accepting in the modal.
+  if (res.status === 409) {
+    try {
+      const probe = await res.clone().json();
+      if (probe && (probe as { code?: string }).code === "LEGAL_REACCEPT_REQUIRED") {
+        const audience: "seeker" | "facility" | null = url.includes("/jobseeker")
+          ? "seeker"
+          : url.includes("/facility") || url.includes("/ops")
+          ? "facility"
+          : null;
+        forceLegalModalOpen(audience);
+        void Promise.resolve().then(async () => {
+          try {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ["/api/facility/me"] }),
+              queryClient.invalidateQueries({ queryKey: ["/api/jobseeker/me"] }),
+            ]);
+          } catch {
+            /* modal is already up; refetch failure is non-fatal */
+          }
+        });
+      }
+    } catch {
+      /* body wasn't JSON — fall through to default handling */
     }
   }
 

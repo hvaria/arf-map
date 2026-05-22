@@ -21,6 +21,10 @@ import {
   setCsrfToken,
   setCsrfTokenFromMeBody,
 } from "@/lib/csrfToken";
+import {
+  setPendingAcceptances,
+  clearPendingAcceptances,
+} from "@/lib/legalState";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -86,11 +90,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log("[AuthProvider] /me result:", profile);
         setState({ user: profile ?? undefined, isLoading: false });
         queryClient.setQueryData(["/api/jobseeker/me"], profile ?? null);
+        // Phase 4 — feed the shared legal-acceptance store.
+        if (profile) setPendingAcceptances("seeker", profile.pendingAcceptances);
+        else clearPendingAcceptances("seeker");
       })
       .catch((err) => {
         console.error("[AuthProvider] /me error:", err);
         setState({ user: undefined, isLoading: false });
         queryClient.setQueryData(["/api/jobseeker/me"], null);
+        clearPendingAcceptances("seeker");
       });
   }, []);
 
@@ -104,10 +112,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .then((profile) => {
             setState({ user: profile ?? undefined, isLoading: false });
             queryClient.setQueryData(["/api/jobseeker/me"], profile ?? null);
+            if (profile) setPendingAcceptances("seeker", profile.pendingAcceptances);
+            else clearPendingAcceptances("seeker");
           })
           .catch(() => {
             setState({ user: undefined, isLoading: false });
             queryClient.setQueryData(["/api/jobseeker/me"], null);
+            clearPendingAcceptances("seeker");
           });
       }
     };
@@ -118,6 +129,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setUser = useCallback((profile: JobSeekerProfile | undefined) => {
     setState({ user: profile, isLoading: false });
     queryClient.setQueryData(["/api/jobseeker/me"], profile ?? null);
+    if (profile) setPendingAcceptances("seeker", profile.pendingAcceptances);
+    else clearPendingAcceptances("seeker");
   }, []);
 
   const login = useCallback(async (credentials: LoginCredentials) => {
@@ -126,6 +139,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const profile = await loginJobSeeker(credentials);
       setState({ user: profile, isLoading: false });
       queryClient.setQueryData(["/api/jobseeker/me"], profile);
+      // Phase 4 — capture pendingAcceptances surfaced on login.
+      setPendingAcceptances("seeker", profile.pendingAcceptances);
       // Remove any stale profile cache so Dashboard always fetches fresh data
       // for the newly authenticated user. Mirrors what logout() does in reverse.
       queryClient.removeQueries({ queryKey: ["/api/jobseeker/profile"] });
@@ -161,6 +176,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 401 + no token today, but works once the BE 401 path mints one).
       setCsrfToken(null);
       void refreshCsrfTokenFromMe("jobseeker");
+      // Phase 4 — make sure the legal modal does not linger past sign-out.
+      clearPendingAcceptances("seeker");
     }
   }, []);
 

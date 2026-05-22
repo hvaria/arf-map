@@ -25,24 +25,38 @@
 
 export type LegalDocSlug = "terms" | "privacy" | "aup";
 
-export const LEGAL_DOCS: Record<
-  LegalDocSlug,
-  { version: string; path: string; label: string }
-> = {
+/**
+ * Per-doc metadata. `title` and `label` are intentional duplicates:
+ * - `label` was the original BE-side name.
+ * - `title` is what the FE clickwrap + modal + reader components read.
+ * Keeping both as the same string avoids forcing every consumer to one
+ * spelling. Don't bother diverging them.
+ */
+export interface LegalDocMeta {
+  version: string;
+  path: string;
+  label: string;
+  title: string;
+}
+
+export const LEGAL_DOCS: Record<LegalDocSlug, LegalDocMeta> = {
   terms: {
     version: "2026-05-21",
     path: "/legal/terms",
     label: "Terms of Service",
+    title: "Terms of Service",
   },
   privacy: {
     version: "2026-05-21",
     path: "/legal/privacy",
     label: "Privacy Policy",
+    title: "Privacy Policy",
   },
   aup: {
     version: "2026-05-21",
     path: "/legal/aup",
     label: "Acceptable Use Policy",
+    title: "Acceptable Use Policy",
   },
 };
 
