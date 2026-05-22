@@ -187,6 +187,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Phase 2 R2: also clear the idempotency registry rows this test seeded
+  // so subsequent runs aren't short-circuited on event-id replay.
+  await pool.query(
+    `DELETE FROM stripe_processed_events
+      WHERE event_id LIKE 'evt_test_%' OR event_id LIKE 'evt_sub_%'
+         OR event_id LIKE 'evt_invoice_%' OR event_id = 'evt_replay_1'`,
+  );
   await pool.query(
     `DELETE FROM facility_subscriptions WHERE facility_account_id = $1`,
     [facilityAccountId],
@@ -202,6 +209,16 @@ beforeEach(async () => {
   stripeMocks.constructEvent.mockReset();
   stripeMocks.subscriptionsRetrieve.mockReset();
   await resetSubscriptionRows(facilityAccountId);
+  // Phase 2 R2: each test reuses fixed event ids (evt_test_*, evt_sub_*,
+  // evt_invoice_*, evt_replay_1). The new idempotency guard would
+  // short-circuit a second run of the same test in the same DB session.
+  // Wipe the registry rows so each test starts from a clean idempotency
+  // state.
+  await pool.query(
+    `DELETE FROM stripe_processed_events
+      WHERE event_id LIKE 'evt_test_%' OR event_id LIKE 'evt_sub_%'
+         OR event_id LIKE 'evt_invoice_%' OR event_id = 'evt_replay_1'`,
+  );
 });
 
 describe("stripeWebhookHandler", () => {
@@ -360,13 +377,18 @@ describe("stripeWebhookHandler", () => {
     const sub1 = await readSubscription(facilityAccountId);
     const cache1 = await readAccountCache(facilityAccountId);
 
-    // Replay (Stripe retries on transient network issues).
+    // Replay (Stripe retries on transient network issues). Phase 2 R2: the
+    // handler now short-circuits via the stripe_processed_events idempotency
+    // guard and responds with alreadyProcessed: true — but the converged DB
+    // state is exactly the same as after the first delivery, which is what
+    // this test actually cares about.
     const r2 = await request(app)
       .post("/api/billing/webhook")
       .set("Content-Type", "application/json")
       .set("stripe-signature", "t=123,v1=ok")
       .send(Buffer.from(JSON.stringify(event)));
     expect(r2.status).toBe(200);
+    expect(r2.body).toEqual({ received: true, alreadyProcessed: true });
     const sub2 = await readSubscription(facilityAccountId);
     const cache2 = await readAccountCache(facilityAccountId);
 

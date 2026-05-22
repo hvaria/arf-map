@@ -3867,6 +3867,30 @@ const citationCloseSchema = z.object({
   closureNote: z.string().trim().min(1).max(4000),
 }).strict();
 
+// Phase 2 R2: ops_inspections.findings_json flipped from TEXT to JSONB.
+// The wire format remains a JSON-encoded *string* (client-side editor
+// emits arbitrary stringified JSON up to 16 KB); on the way in we parse it
+// before handing to storage so Drizzle stores the object, and on the way
+// out we re-stringify so the FE keeps round-tripping the same shape.
+//
+// Parse errors fall back to NULL — the route still validated the string
+// length, and storing an opaque payload as null is preferable to crashing.
+function parseFindingsJsonForStorage(raw: string | null | undefined): unknown {
+  if (raw == null || raw === "") return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function serialiseInspectionRow<T extends { findingsJson?: unknown }>(row: T): T {
+  const fj = row.findingsJson;
+  if (fj == null) return row;
+  if (typeof fj === "string") return row; // legacy text row passes through
+  return { ...row, findingsJson: JSON.stringify(fj) };
+}
+
 opsRouter.get(
   "/facilities/:facilityNumber/inspections",
   requireOpsPermission(OPS_RESOURCES.INSPECTION, "read"),
@@ -3883,7 +3907,11 @@ opsRouter.get(
         page,
         limit,
       });
-      return res.json({ success: true, data: result.inspections, meta: { total: result.total, page, limit } });
+      return res.json({
+        success: true,
+        data: result.inspections.map((r) => serialiseInspectionRow(r)),
+        meta: { total: result.total, page, limit },
+      });
     } catch (e) {
       return handleRouteError(req, e, res);
     }
@@ -3903,7 +3931,13 @@ opsRouter.get(
       if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
       const row = await ops.getInspection(id, facilityNumber);
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
-      return res.json({ success: true, data: row });
+      // The nested shape carries the actual ops_inspections row under
+      // .inspection; re-wrap so the wire-compat shim sees the field it
+      // expects without touching the sibling citations/evidence arrays.
+      return res.json({
+        success: true,
+        data: { ...row, inspection: serialiseInspectionRow(row.inspection) },
+      });
     } catch (e) {
       return handleRouteError(req, e, res);
     }
@@ -3931,14 +3965,14 @@ opsRouter.post(
           inspectorName: parsed.data.inspectorName ?? null,
           purpose: parsed.data.purpose,
           visitAt: parsed.data.visitAt,
-          findingsJson: parsed.data.findingsJson ?? null,
+          findingsJson: parseFindingsJsonForStorage(parsed.data.findingsJson),
           createdBy: actor.id,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         },
         actor,
       );
-      return res.status(201).json({ success: true, data: row });
+      return res.status(201).json({ success: true, data: serialiseInspectionRow(row) });
     } catch (e) {
       return handleRouteError(req, e, res);
     }
@@ -3960,9 +3994,14 @@ opsRouter.put(
       if (!parsed.success) {
         return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
       }
-      const row = await ops.updateInspection(id, facilityNumber, parsed.data, getActor(req));
+      // Parse findingsJson off the validated input before passing through.
+      const update: Record<string, unknown> = { ...parsed.data };
+      if (Object.prototype.hasOwnProperty.call(parsed.data, "findingsJson")) {
+        update.findingsJson = parseFindingsJsonForStorage(parsed.data.findingsJson);
+      }
+      const row = await ops.updateInspection(id, facilityNumber, update, getActor(req));
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
-      return res.json({ success: true, data: row });
+      return res.json({ success: true, data: serialiseInspectionRow(row) });
     } catch (e) {
       return handleRouteError(req, e, res);
     }
@@ -3982,7 +4021,7 @@ opsRouter.post(
       if (id === null) return res.status(400).json({ success: false, error: "Invalid id" });
       const row = await ops.closeInspection(id, facilityNumber, getActor(req));
       if (!row) return res.status(404).json({ success: false, error: "Not found" });
-      return res.json({ success: true, data: row });
+      return res.json({ success: true, data: serialiseInspectionRow(row) });
     } catch (e) {
       return handleRouteError(req, e, res);
     }

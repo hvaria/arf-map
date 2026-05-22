@@ -131,8 +131,8 @@ export async function writeAudit(
     noteId,
     actorFacilityAccountId: actor?.facilityAccountId ?? null,
     action,
-    payloadDiff:
-      payloadDiff === undefined ? null : JSON.stringify(payloadDiff),
+    // Phase 2 R2: payload_diff is JSONB now — pass the JS value directly.
+    payloadDiff: payloadDiff === undefined ? null : payloadDiff,
     ipAddress: reqCtx?.ipAddress ?? null,
     userAgent: reqCtx?.userAgent ?? null,
     occurredAt: Date.now(),

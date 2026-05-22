@@ -7,10 +7,15 @@
  * `stripe.webhooks.constructEvent` fails signature verification (it
  * needs the unparsed Buffer, not the JSON-decoded object).
  *
- * Idempotency: all writes go through `upsertSubscriptionFromStripe`,
- * which uses INSERT ... ON CONFLICT. Replaying any event reaches the
- * same final state — Stripe's "at-least-once" delivery semantics are
- * safe here.
+ * Idempotency (Phase 2 R2 reinforcement): the handler now opens with an
+ * INSERT INTO stripe_processed_events (event_id, ...) ON CONFLICT DO
+ * NOTHING RETURNING event_id. If RETURNING yields no rows, Stripe replayed
+ * an event we already processed — the handler short-circuits with 200 so
+ * Stripe stops retrying, and crucially we never re-run the subscription
+ * upsert. This is stronger than relying on the writer's own
+ * INSERT ... ON CONFLICT semantics (which were correct for state
+ * convergence but still re-touched the row on every replay, masking real
+ * mismatches and adding write amplification).
  *
  * Logging policy: NEVER log full event payloads (they contain customer
  * email + last4). Log event id + type + error message only.
@@ -23,6 +28,8 @@ import {
   upsertSubscriptionFromStripe,
   findAccountByStripeCustomerId,
 } from "./subscriptionRepository";
+import { db } from "../db/index";
+import { stripeProcessedEvents } from "@shared/schema";
 
 /**
  * Resolve a facility_accounts.id from a Stripe Subscription, trying
@@ -68,6 +75,46 @@ export async function stripeWebhookHandler(
     console.error("[stripe-webhook] signature verification failed:", message);
     res.status(400).send(`Webhook signature verification failed: ${message}`);
     return;
+  }
+
+  // ── Phase 2 R2 idempotency guard ──────────────────────────────────────────
+  // INSERT ... ON CONFLICT DO NOTHING ... RETURNING — if RETURNING yields no
+  // rows, Stripe is replaying an event we already accepted. Short-circuit
+  // with 200 so Stripe stops retrying. Doing this before the switch means
+  // the upsert never re-runs on a replay (no write amplification, no
+  // accidental mutation if a downstream side effect drifted).
+  //
+  // The insert is best-effort: if the table is missing (e.g. an older
+  // deployment that hasn't run the 0002 migration / bootstrap yet) we log
+  // and fall through to process the event normally rather than fail the
+  // webhook. Stripe would otherwise retry forever and operator would have
+  // to dig through logs to see why.
+  try {
+    const inserted = await db
+      .insert(stripeProcessedEvents)
+      .values({
+        eventId: event.id,
+        eventType: event.type,
+        processedAt: Date.now(),
+      })
+      .onConflictDoNothing({ target: stripeProcessedEvents.eventId })
+      .returning({ eventId: stripeProcessedEvents.eventId });
+
+    if (inserted.length === 0) {
+      console.log(
+        `[stripe-webhook] event ${event.id} (${event.type}) already processed, skipping`,
+      );
+      res.json({ received: true, alreadyProcessed: true });
+      return;
+    }
+  } catch (err) {
+    // Fall through — better to risk a duplicate side-effect (which the
+    // downstream upsert is already idempotent against) than to 500 and
+    // make Stripe queue indefinitely.
+    console.error(
+      `[stripe-webhook] idempotency insert failed for ${event.id} (${event.type}):`,
+      (err as Error).message,
+    );
   }
 
   try {

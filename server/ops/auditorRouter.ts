@@ -205,6 +205,14 @@ auditorRouter.get("/preaudit-pull/:pullId", async (req, res) => {
         .status(404)
         .json({ success: false, error: "Not found" });
     }
+    // Phase 2 R2 wire-format compat: sections_json / totals_json are JSONB
+    // columns now and Drizzle returns parsed JS values. The pre-conversion
+    // wire shape was a JSON-encoded string, so re-stringify on outbound.
+    const stringifyForWire = (v: unknown): string | null => {
+      if (v == null) return null;
+      if (typeof v === "string") return v; // legacy text row passes through
+      try { return JSON.stringify(v); } catch { return null; }
+    };
     return res.json({
       success: true,
       data: {
@@ -214,8 +222,8 @@ auditorRouter.get("/preaudit-pull/:pullId", async (req, res) => {
         windowStartAt: row.windowStartAt,
         windowEndAt: row.windowEndAt,
         generatedAt: row.generatedAt,
-        sectionsJson: row.sectionsJson,
-        totalsJson: row.totalsJson,
+        sectionsJson: stringifyForWire(row.sectionsJson),
+        totalsJson: stringifyForWire(row.totalsJson),
         deliveryMethod: row.deliveryMethod,
       },
     });

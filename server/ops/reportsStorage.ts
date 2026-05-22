@@ -130,10 +130,15 @@ async function safeAudit(args: {
   }
 }
 
-function serializeParams(params: unknown): string | null {
+// Phase 2 R2: parameters_json is JSONB now — Drizzle stores the value
+// directly. We still gate on serialisability so a circular ref doesn't
+// blow up the insert; callers receive a JS value (or null) suitable for
+// passing as `parametersJson` in a Drizzle insert.
+function serializeParams(params: unknown): unknown | null {
   if (params === undefined || params === null) return null;
   try {
-    return JSON.stringify(params);
+    JSON.stringify(params); // shape-check; throws on circular refs
+    return params;
   } catch {
     return null;
   }

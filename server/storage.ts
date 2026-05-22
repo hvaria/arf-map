@@ -216,7 +216,9 @@ export class DatabaseStorage implements IStorage {
         .update(facilityOverrides)
         .set({
           prefilledFromCcldAt: now,
-          prefilledFields: JSON.stringify([]),
+          // Phase 2 R2: prefilled_fields is now JSONB — pass the JS array
+          // directly. Drizzle stringifies into the JSONB column.
+          prefilledFields: [],
           updatedAt: now,
         })
         .where(eq(facilityOverrides.facilityNumber, facilityNumber))
@@ -264,7 +266,9 @@ export class DatabaseStorage implements IStorage {
       .set({
         ...updates,
         prefilledFromCcldAt: now,
-        prefilledFields: JSON.stringify(written),
+        // Phase 2 R2: prefilled_fields is JSONB now — pass the JS array
+        // directly rather than JSON.stringify-ing it.
+        prefilledFields: written,
         updatedAt: now,
       })
       .where(eq(facilityOverrides.facilityNumber, facilityNumber))
@@ -642,7 +646,12 @@ export interface ApplicantInterestWithProfile {
   city: string | null;
   state: string | null;
   yearsExperience: number | null;
-  jobTypes: string | null;
+  // Phase 2 R2: was string|null; the underlying job_seeker_profiles.job_types
+  // column flipped from TEXT to JSONB. node-postgres returns JSONB as a
+  // parsed JS value, so the row carries an array (or null). The legacy
+  // string shape is kept in the union so routes that briefly see a
+  // pre-migration row do not throw.
+  jobTypes: string[] | string | null;
   bio: string | null;
 }
 

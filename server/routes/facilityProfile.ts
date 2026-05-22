@@ -32,6 +32,7 @@ import {
 import { getStorageAdapter } from "../ops/evidenceStorage";
 import { recordAudit } from "../ops/auditStorage";
 import { getFacilityByNumberAsync } from "../storage";
+import { serialiseFacilityOverrideRow } from "../lib/jsonbWireCompat";
 
 export const facilityProfileRouter = Router();
 
@@ -48,8 +49,10 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod schemas — strict over the union of original 4 + 26 additive columns.
-// JSON-array/object columns are validated as parsed shapes here; the storage
-// layer is responsible for JSON.stringify on write and JSON.parse on read.
+// JSON-shaped columns (hoursOfOperation, languagesSpoken, careTypesOffered,
+// accreditations) are validated as parsed shapes here and persist to JSONB
+// columns (Phase 2 R2) — the storage layer passes the JS values through to
+// Drizzle without any JSON.stringify boilerplate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LANGUAGE_CODES = FACILITY_LANGUAGES.map((l) => l.code) as ReadonlyArray<
@@ -161,7 +164,10 @@ const profileUpdateSchema = z
 
 type ProfileUpdate = z.infer<typeof profileUpdateSchema>;
 
-/** Map the parsed PUT body to the DB column shape (stringify JSON columns). */
+/** Map the parsed PUT body to the DB column shape. The four JSON-shaped
+ * columns (hoursOfOperationJson, languagesSpokenJson, careTypesOfferedJson,
+ * accreditationsJson) are JSONB in Postgres now (Phase 2 R2) — Drizzle
+ * accepts the JS value directly, no JSON.stringify needed. */
 function toOverrideColumns(input: ProfileUpdate): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const passthrough: (keyof ProfileUpdate)[] = [
@@ -196,19 +202,25 @@ function toOverrideColumns(input: ProfileUpdate): Record<string, unknown> {
     }
   }
   if (input.hoursOfOperation !== undefined) {
-    out.hoursOfOperationJson = JSON.stringify(input.hoursOfOperation);
+    out.hoursOfOperationJson = input.hoursOfOperation;
   }
   if (input.languagesSpoken !== undefined) {
-    out.languagesSpokenJson = JSON.stringify(input.languagesSpoken);
+    out.languagesSpokenJson = input.languagesSpoken;
   }
   if (input.careTypesOffered !== undefined) {
-    out.careTypesOfferedJson = JSON.stringify(input.careTypesOffered as FacilityCareType[]);
+    out.careTypesOfferedJson = input.careTypesOffered as FacilityCareType[];
   }
   if (input.accreditations !== undefined) {
-    out.accreditationsJson = JSON.stringify(input.accreditations);
+    out.accreditationsJson = input.accreditations;
   }
   return out;
 }
+
+// Wire-format compatibility (Phase 2 R2): the FacilityOverride row's JSON
+// fields flipped from TEXT to JSONB. `serialiseFacilityOverrideRow`
+// re-stringifies the affected fields on outbound so the FE wire contract is
+// bit-for-bit preserved — a follow-up round can flip the FE to expect
+// objects/arrays directly and drop the wrapper.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Multer — in-memory upload capped at FACILITY_LOGO_MAX_BYTES
@@ -267,7 +279,7 @@ facilityProfileRouter.get(
           }
         : null;
       res.set("Cache-Control", "private, no-store");
-      res.json({ overrides: override ?? null, ccld });
+      res.json({ overrides: serialiseFacilityOverrideRow(override ?? null) ?? null, ccld });
     } catch (err) {
       next(err);
     }
@@ -316,7 +328,7 @@ facilityProfileRouter.put(
         console.error("[facilityProfile] audit emit failed", auditErr);
       }
 
-      res.json(override);
+      res.json(serialiseFacilityOverrideRow(override));
     } catch (err) {
       next(err);
     }
@@ -357,7 +369,7 @@ facilityProfileRouter.post(
       }
 
       res.json({
-        override: result.override,
+        override: serialiseFacilityOverrideRow(result.override),
         prefilled: result.prefilled,
       });
     } catch (err) {
@@ -463,7 +475,7 @@ facilityProfileRouter.post(
         console.error("[facilityProfile] logo audit emit failed", auditErr);
       }
 
-      res.status(201).json(override);
+      res.status(201).json(serialiseFacilityOverrideRow(override));
     } catch (err) {
       next(err);
     }
@@ -568,7 +580,7 @@ facilityProfileRouter.delete(
         console.error("[facilityProfile] logo-delete audit failed", auditErr);
       }
 
-      res.json(override);
+      res.json(serialiseFacilityOverrideRow(override));
     } catch (err) {
       next(err);
     }

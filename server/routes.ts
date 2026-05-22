@@ -33,6 +33,10 @@ import {
   type FacilityDbRow,
 } from "./storage";
 import { pool } from "./db/index";
+import {
+  serialiseFacilityOverrideRow,
+  serialiseJobPostingRow,
+} from "./lib/jsonbWireCompat";
 
 // ── S-02: Token hashing helpers ───────────────────────────────────────────────
 // OTP tokens stored in the DB are SHA-256 hashes; raw tokens are sent via email.
@@ -425,7 +429,15 @@ export async function registerRoutes(server: Server, app: Express) {
             type: j.type,
             salary: j.salary,
             description: j.description,
-            requirements: JSON.parse(j.requirements) as string[],
+            // requirements is JSONB (Phase 2 R2) — Drizzle returns the parsed
+            // array directly. Wire format keeps emitting the array as-is
+            // (it was already wrapped in `jobPostings[].requirements` so FE
+            // never round-tripped it through JSON.parse here).
+            requirements: Array.isArray(j.requirements)
+              ? (j.requirements as string[])
+              : typeof j.requirements === "string"
+                ? (JSON.parse(j.requirements) as string[])
+                : [],
             postedDaysAgo: Math.floor((Date.now() - j.postedAt) / 86_400_000),
           })),
           isHiring: fJobs.length > 0,
@@ -813,9 +825,15 @@ export async function registerRoutes(server: Server, app: Express) {
     try {
       const override = await storage.getFacilityOverride(req.user.facilityNumber);
       if (override?.prefilledFromCcldAt) {
-        const parsed = override.prefilledFields
-          ? safeParseJsonArray(override.prefilledFields)
-          : [];
+        // prefilledFields is JSONB now (Phase 2 R2) — Drizzle returns either
+        // the parsed array or null. safeParseJsonArray remains for backstop
+        // safety against legacy text rows that may sneak through.
+        const raw = override.prefilledFields;
+        const parsed = Array.isArray(raw)
+          ? (raw as unknown[]).filter((v): v is string => typeof v === "string")
+          : typeof raw === "string"
+            ? safeParseJsonArray(raw)
+            : [];
         ccldPrefill = { fields: parsed, at: override.prefilledFromCcldAt };
       }
     } catch (err) {
@@ -878,12 +896,14 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json(
       matched.map((jp) => {
         const { payMin, payMax } = parseSalary(jp.salary);
-        return {
+        // serialiseJobPostingRow re-stringifies the JSONB `requirements`
+        // array so the wire format stays bit-for-bit compatible with FE
+        // callers that JSON.parse it (Phase 2 R2 wire-compat shim).
+        return serialiseJobPostingRow({
           ...jp,
-          requirements: JSON.parse(jp.requirements) as string[],
           payMin,
           payMax,
-        };
+        });
       }),
     );
   });
@@ -898,12 +918,13 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(404).json({ message: "Job not found" });
     }
     const { payMin, payMax } = parseSalary(jp.salary);
-    res.json({
-      ...jp,
-      requirements: JSON.parse(jp.requirements) as string[],
-      payMin,
-      payMax,
-    });
+    res.json(
+      serialiseJobPostingRow({
+        ...jp,
+        payMin,
+        payMax,
+      }),
+    );
   });
 
   // ── Public facility data ─────────────────────────────────────────────────────
@@ -948,11 +969,11 @@ export async function registerRoutes(server: Server, app: Express) {
       : null;
     res.json({
       facility,
-      overrides: overrides ?? null,
-      jobPostings: jobPostings.map((jp) => ({
-        ...jp,
-        requirements: JSON.parse(jp.requirements) as string[],
-      })),
+      // Wire-format compat: facility_overrides JSONB columns get re-
+      // stringified so existing FE consumers that JSON.parse the field keep
+      // working (Phase 2 R2).
+      overrides: serialiseFacilityOverrideRow(overrides ?? null) ?? null,
+      jobPostings: jobPostings.map((jp) => serialiseJobPostingRow(jp)),
     });
   });
 
@@ -960,12 +981,7 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/facility/jobs", requireAuth, async (req, res) => {
     const jobs = await storage.getJobPostings(req.user!.facilityNumber);
-    res.json(
-      jobs.map((jp) => ({
-        ...jp,
-        requirements: JSON.parse(jp.requirements) as string[],
-      })),
-    );
+    res.json(jobs.map((jp) => serialiseJobPostingRow(jp)));
   });
 
   app.post("/api/facility/jobs", requireAuth, async (req, res) => {
@@ -974,14 +990,17 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
     const { title, type, salary, description, requirements } = parsed.data;
+    // Phase 2 R2: requirements is JSONB now — pass the JS array straight
+    // through (Drizzle handles the JSONB encoding) and re-stringify on the
+    // outbound payload for wire-format compat.
     const job = await storage.createJobPosting(req.user!.facilityNumber, {
       title,
       type,
       salary,
       description,
-      requirements: JSON.stringify(requirements),
+      requirements,
     });
-    res.status(201).json({ ...job, requirements: JSON.parse(job.requirements) as string[] });
+    res.status(201).json(serialiseJobPostingRow(job));
   });
 
   app.put("/api/facility/jobs/:id", requireAuth, async (req, res) => {
@@ -993,16 +1012,18 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
 
-    const data: Record<string, string> = {};
+    // Phase 2 R2: requirements is JSONB. Mixed shape on `data` — string
+    // fields plus an optional array — so type as Record<string, unknown>.
+    const data: Record<string, unknown> = {};
     if (parsed.data.title) data.title = parsed.data.title;
     if (parsed.data.type) data.type = parsed.data.type;
     if (parsed.data.salary) data.salary = parsed.data.salary;
     if (parsed.data.description) data.description = parsed.data.description;
-    if (parsed.data.requirements) data.requirements = JSON.stringify(parsed.data.requirements);
+    if (parsed.data.requirements) data.requirements = parsed.data.requirements;
 
     const job = await storage.updateJobPosting(id, req.user!.facilityNumber, data);
     if (!job) return res.status(404).json({ message: "Job posting not found" });
-    res.json({ ...job, requirements: JSON.parse(job.requirements) as string[] });
+    res.json(serialiseJobPostingRow(job));
   });
 
   app.delete("/api/facility/jobs/:id", requireAuth, async (req, res) => {
@@ -1134,9 +1155,21 @@ export async function registerRoutes(server: Server, app: Express) {
   app.get("/api/jobseeker/profile", requireJobSeekerAuth, async (req, res) => {
     const profile = await storage.getJobSeekerProfile(req.session.jobSeekerId!);
     if (!profile) return res.json(null);
+    // Phase 2 R2: jobTypes is JSONB. Drizzle returns the array directly.
+    // Historically this endpoint emitted the array (NOT a stringified
+    // representation) so we keep that shape — but route it through the
+    // wire-compat shim for symmetry with the other JSONB endpoints.
+    // The shim notes only re-stringifies fields whose wire format was a
+    // string before; jobTypes' wire format was already an array, so it
+    // passes through untouched. The explicit `jobTypes: profile.jobTypes ?? []`
+    // keeps the "missing column → empty array" behaviour the FE expects.
     res.json({
       ...profile,
-      jobTypes: profile.jobTypes ? JSON.parse(profile.jobTypes) : [],
+      jobTypes: Array.isArray(profile.jobTypes)
+        ? profile.jobTypes
+        : typeof profile.jobTypes === "string"
+          ? safeParseJsonArray(profile.jobTypes)
+          : [],
     });
   });
 
@@ -1146,13 +1179,18 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
     const { jobTypes, ...rest } = parsed.data;
-    const data: any = { ...rest };
-    if (jobTypes !== undefined) data.jobTypes = JSON.stringify(jobTypes);
+    // Phase 2 R2: jobTypes is JSONB — pass the JS array straight through.
+    const data: Record<string, unknown> = { ...rest };
+    if (jobTypes !== undefined) data.jobTypes = jobTypes;
 
     const profile = await storage.upsertJobSeekerProfile(req.session.jobSeekerId!, data);
     res.json({
       ...profile,
-      jobTypes: profile.jobTypes ? JSON.parse(profile.jobTypes) : [],
+      jobTypes: Array.isArray(profile.jobTypes)
+        ? profile.jobTypes
+        : typeof profile.jobTypes === "string"
+          ? safeParseJsonArray(profile.jobTypes)
+          : [],
     });
   });
 }

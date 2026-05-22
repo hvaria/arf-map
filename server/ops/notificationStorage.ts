@@ -54,35 +54,36 @@ export interface RecordNotificationInput {
 }
 
 /**
- * Serialize a value to JSON and truncate to NOTIFICATION_SNAPSHOT_MAX_BYTES
- * bytes (UTF-8). When truncated, append a marker so readers know data was
- * cut. Returns null for null/undefined input.
+ * Cap a value to NOTIFICATION_SNAPSHOT_MAX_BYTES of serialised JSON, then
+ * return a JS value suitable for a Drizzle jsonb insert.
  *
- * Helper copied locally (rather than imported from auditStorage) because
- * the audit module did not export it. The byte-budget + marker convention
- * is identical so inspectors see the same trailing string on both tables.
+ * Phase 2 R2: triage_snapshot is JSONB now. The previous implementation
+ * byte-truncated the serialised string with a "...(truncated)" marker; that
+ * is INVALID JSON, which is fine for a TEXT column but fatal for JSONB on
+ * subsequent reads or migration casts. The replacement substitutes a
+ * sentinel object so an inspector still sees the original size + a 512-byte
+ * preview without breaking JSONB shape invariants.
+ *
+ * Callers MUST NOT JSON.stringify the result before handing it to Drizzle —
+ * jsonb wants the object itself, not a string.
  */
-function serializeAndCap(value: unknown): string | null {
+function serializeAndCap(value: unknown): unknown | null {
   if (value === undefined || value === null) return null;
   let json: string;
   try {
     json = JSON.stringify(value);
   } catch {
-    return "(unserializable)";
+    return { _truncated: true, _reason: "unserializable" };
   }
   const enc = new TextEncoder();
-  const bytes = enc.encode(json);
-  if (bytes.byteLength <= NOTIFICATION_SNAPSHOT_MAX_BYTES) return json;
-  const budget = NOTIFICATION_SNAPSHOT_MAX_BYTES - TRUNCATION_MARKER.length;
-  let lo = 0;
-  let hi = json.length;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >>> 1;
-    const len = enc.encode(json.slice(0, mid)).byteLength;
-    if (len <= budget) lo = mid;
-    else hi = mid - 1;
-  }
-  return json.slice(0, lo) + TRUNCATION_MARKER;
+  const bytes = enc.encode(json).byteLength;
+  if (bytes <= NOTIFICATION_SNAPSHOT_MAX_BYTES) return value;
+  return {
+    _truncated: true,
+    _originalSizeBytes: bytes,
+    _maxBytes: NOTIFICATION_SNAPSHOT_MAX_BYTES,
+    _preview: json.slice(0, 512),
+  };
 }
 
 function trimPreview(s: string | undefined): string | null {
