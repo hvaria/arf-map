@@ -291,6 +291,33 @@ Both cookies share the same Postgres `session` table — only the cookie identit
 
 **`SessionUser` type pattern (Phase 1 hardening).** `Express.User` is declared as the narrowed [`SessionUser`](server/types/session-user.ts) type — `Omit<FacilityAccount, "password" | "verificationToken" | "verificationExpiry">`. The `passport.deserializeUser` hook calls `toSessionUser(account)` before assigning to `req.user`, so handlers cannot accidentally serialise the password hash or OTP columns into a JSON response. If a handler genuinely needs the full row (e.g. a password-change flow), re-fetch it via `storage.getFacilityAccount(req.user.id)` — never read `req.user.password`, that field is no longer in the type.
 
+### Role-based permissions (Phase 3)
+
+Every `/api/ops/*` route is action-gated. The middleware chain on `opsRouter` is:
+
+1. `requireFacilityAuth` — Passport session check (401 if missing).
+2. `requireActiveSubscription` — Operations paywall (402 if not active/trialing).
+3. `opsRouter.param("facilityNumber")` — IDOR guard so `req.user.facilityNumber === :facilityNumber` (403 otherwise).
+4. `requireOpsPermission(resource, action)` — RBAC check (403 with `{ success: false, error: "Forbidden" }`).
+
+**`resolveRole(req)`** in [server/ops/permissions.ts](server/ops/permissions.ts) reads `req.user.role` (the `facility_accounts.role` column hydrated by `passport.deserializeUser`) and maps it to an `OpsRole` via `KNOWN_DB_TO_OPS_ROLE`. Existing DB rows default to `"facility_admin"` → OpsRole `"admin"`, so historical accounts keep full CRUD without a data migration. Unknown DB role strings fall back to `"admin"` AND emit a `console.warn` so operations can spot drift.
+
+**Adding a new role.**
+1. Add the string to the `OpsRole` type union in [server/ops/permissions.ts](server/ops/permissions.ts).
+2. Add a `KNOWN_DB_TO_OPS_ROLE` entry mapping the DB column value to the new OpsRole.
+3. Add an entry to `ROLE_PERMISSIONS` with the action list (mirror `ADMIN_ALL` / `AUDITOR_READ_ONLY` for scope).
+4. Document the role in [server/__tests__/permissions/denyPath.test.ts](server/__tests__/permissions/denyPath.test.ts) with allow + deny scenarios.
+
+**Adding a new resource.**
+1. Add a key to `OPS_RESOURCES` (the resource-string registry).
+2. Append a `Permission` entry to `ADMIN_ALL` listing every action admin can take.
+3. Append a `Permission` entry to `AUDITOR_READ_ONLY` (typically `["read"]`).
+4. Wire `requireOpsPermission(OPS_RESOURCES.NEW_KEY, "<action>")` into each route in `server/ops/opsRouter.ts`.
+5. Auditor share-link traffic uses a separate router with `requireAuditorToken` — auditor permission matrix is irrelevant there.
+
+**Auditor share-link traffic** does NOT flow through `resolveRole`. It uses `requireAuditorToken` on a parallel router and has its own scope/audience enforcement.
+>>>>>>> worktree-agent-a937a10f0081a7853
+
 ### Environment Variables
 
 | Variable | Purpose |
