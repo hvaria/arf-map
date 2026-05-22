@@ -333,13 +333,17 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_adm_lead     ON ops_admissions(lead_id);
   CREATE INDEX IF NOT EXISTS idx_ops_adm_facility ON ops_admissions(facility_number);
 
+  -- Money columns (amount) are BIGINT cents per Phase 2 R2 — see
+  -- server/lib/money.ts for the conversion convention. quantity stays as
+  -- DOUBLE PRECISION because it represents fractional units (e.g. 1.5 hours
+  -- of care) rather than money.
   CREATE TABLE IF NOT EXISTS ops_billing_charges (
     id                   BIGSERIAL PRIMARY KEY,
     facility_number      TEXT NOT NULL,
     resident_id          BIGINT NOT NULL,
     charge_type          TEXT NOT NULL,
     description          TEXT NOT NULL,
-    amount               DOUBLE PRECISION NOT NULL,
+    amount               BIGINT NOT NULL,
     unit                 TEXT,
     quantity             DOUBLE PRECISION NOT NULL DEFAULT 1,
     billing_period_start BIGINT,
@@ -356,6 +360,8 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_bc_facility  ON ops_billing_charges(facility_number);
   CREATE INDEX IF NOT EXISTS idx_ops_bc_resident  ON ops_billing_charges(resident_id);
 
+  -- Money columns (subtotal/tax/total/amount_paid/balance_due) are BIGINT
+  -- cents per Phase 2 R2 — see server/lib/money.ts.
   CREATE TABLE IF NOT EXISTS ops_invoices (
     id                   BIGSERIAL PRIMARY KEY,
     facility_number      TEXT NOT NULL,
@@ -363,11 +369,11 @@ export const OPS_PG_SCHEMA_SQL = `
     invoice_number       TEXT NOT NULL UNIQUE,
     billing_period_start BIGINT NOT NULL,
     billing_period_end   BIGINT NOT NULL,
-    subtotal             DOUBLE PRECISION NOT NULL DEFAULT 0,
-    tax                  DOUBLE PRECISION NOT NULL DEFAULT 0,
-    total                DOUBLE PRECISION NOT NULL DEFAULT 0,
-    amount_paid          DOUBLE PRECISION NOT NULL DEFAULT 0,
-    balance_due          DOUBLE PRECISION NOT NULL DEFAULT 0,
+    subtotal             BIGINT NOT NULL DEFAULT 0,
+    tax                  BIGINT NOT NULL DEFAULT 0,
+    total                BIGINT NOT NULL DEFAULT 0,
+    amount_paid          BIGINT NOT NULL DEFAULT 0,
+    balance_due          BIGINT NOT NULL DEFAULT 0,
     status               TEXT NOT NULL DEFAULT 'draft',
     due_date             BIGINT,
     sent_at              BIGINT,
@@ -383,12 +389,13 @@ export const OPS_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ops_inv_status   ON ops_invoices(status);
   CREATE INDEX IF NOT EXISTS idx_ops_inv_due_date ON ops_invoices(due_date);
 
+  -- amount is BIGINT cents per Phase 2 R2 — see server/lib/money.ts.
   CREATE TABLE IF NOT EXISTS ops_payments (
     id               BIGSERIAL PRIMARY KEY,
     invoice_id       BIGINT NOT NULL,
     facility_number  TEXT NOT NULL,
     resident_id      BIGINT NOT NULL,
-    amount           DOUBLE PRECISION NOT NULL,
+    amount           BIGINT NOT NULL,
     payment_date     BIGINT NOT NULL,
     payment_method   TEXT NOT NULL,
     reference_number TEXT,
@@ -860,13 +867,13 @@ export const OPS_PG_SCHEMA_SQL = `
 
   -- ── Wave 4 Phase 4.2 — Resident trust accounts (W12) ───────────────────────
   -- Per-resident trust account + insert-only ledger + monthly statement
-  -- snapshots. Money is stored as BIGINT cents — divergent from ops_billing_*
-  -- which uses DOUBLE PRECISION. Floats are fine for invoice totals (one-way
-  -- arithmetic, single tenant currency) but trust accounts need integer cents
-  -- to guarantee bit-exact reconciliation across many small allowance/snack
-  -- debits. Drift would compound and break the inspector-facing reconciliation
+  -- snapshots. Money is stored as BIGINT cents. Integer cents guarantee
+  -- bit-exact reconciliation across many small allowance/snack debits;
+  -- drift would compound and break the inspector-facing reconciliation
   -- surface that flags mismatches between the ledger SUM and the cached
-  -- balance.
+  -- balance. Phase 2 R2 aligned ops_billing_* (invoices/charges/payments)
+  -- to the same BIGINT cents convention — see server/lib/money.ts for
+  -- the wire/UI dollars conversion at the route boundary.
   --
   -- One row per resident per facility. Created lazily on first transaction
   -- OR when the admin explicitly enables trust for a resident. The partial
@@ -1404,8 +1411,11 @@ export const opsBillingCharges = pgTable("ops_billing_charges", {
   residentId:         bigint("resident_id", { mode: "number" }).notNull(),
   chargeType:         text("charge_type").notNull(),
   description:        text("description").notNull(),
-  amount:             doublePrecision("amount").notNull(),
+  // BIGINT cents per Phase 2 R2 — wire format is dollars; conversion happens
+  // at the route boundary via server/lib/money.ts.
+  amount:             bigint("amount", { mode: "number" }).notNull(),
   unit:               text("unit"),
+  // quantity stays float — represents fractional units (e.g. 1.5 hours), not money.
   quantity:           doublePrecision("quantity").notNull().default(1),
   billingPeriodStart: ts("billing_period_start"),
   billingPeriodEnd:   ts("billing_period_end"),
@@ -1426,11 +1436,12 @@ export const opsInvoices = pgTable("ops_invoices", {
   invoiceNumber:      text("invoice_number").notNull().unique(),
   billingPeriodStart: ts("billing_period_start").notNull(),
   billingPeriodEnd:   ts("billing_period_end").notNull(),
-  subtotal:           doublePrecision("subtotal").notNull().default(0),
-  tax:                doublePrecision("tax").notNull().default(0),
-  total:              doublePrecision("total").notNull().default(0),
-  amountPaid:         doublePrecision("amount_paid").notNull().default(0),
-  balanceDue:         doublePrecision("balance_due").notNull().default(0),
+  // BIGINT cents per Phase 2 R2 — see server/lib/money.ts.
+  subtotal:           bigint("subtotal",    { mode: "number" }).notNull().default(0),
+  tax:                bigint("tax",         { mode: "number" }).notNull().default(0),
+  total:              bigint("total",       { mode: "number" }).notNull().default(0),
+  amountPaid:         bigint("amount_paid", { mode: "number" }).notNull().default(0),
+  balanceDue:         bigint("balance_due", { mode: "number" }).notNull().default(0),
   status:             text("status").notNull().default("draft"),
   dueDate:            ts("due_date"),
   sentAt:             ts("sent_at"),
@@ -1447,7 +1458,8 @@ export const opsPayments = pgTable("ops_payments", {
   invoiceId:       bigint("invoice_id", { mode: "number" }).notNull(),
   facilityNumber:  text("facility_number").notNull(),
   residentId:      bigint("resident_id", { mode: "number" }).notNull(),
-  amount:          doublePrecision("amount").notNull(),
+  // BIGINT cents per Phase 2 R2 — see server/lib/money.ts.
+  amount:          bigint("amount", { mode: "number" }).notNull(),
   paymentDate:     ts("payment_date").notNull(),
   paymentMethod:   text("payment_method").notNull(),
   referenceNumber: text("reference_number"),
@@ -1865,8 +1877,9 @@ export const opsPostingVerifications = pgTable("ops_posting_verifications", {
 // snapshots. Money is BIGINT cents (Drizzle bigint with mode:"number"
 // stays in JS number range for any plausible per-resident balance — a
 // $90 trillion balance would be required to overflow Number.MAX_SAFE_INTEGER).
-// Divergent from ops_billing_* which uses doublePrecision — see DDL
-// comment for rationale (reconciliation needs integer cents). account_id
+// Phase 2 R2 aligned ops_billing_* to the same BIGINT cents convention;
+// trust + facility billing now share the same integer-cents storage model
+// (see server/lib/money.ts for the wire/UI dollars conversion). account_id
 // on the ledger and statement tables is application-level FK (matches
 // existing ops convention). status on opsResidentTrustAccounts is
 // 'active' | 'closed'; direction on the ledger is 'credit' | 'debit';

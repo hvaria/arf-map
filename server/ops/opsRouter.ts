@@ -11,6 +11,7 @@ import multer from "multer";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { pool } from "../db/index";
+import { centsToDollars, dollarsToCents } from "../lib/money";
 import * as ops from "./opsStorage";
 import { notesRouter } from "./notesRouter";
 import { reportsRouter } from "./reportsRouter";
@@ -209,6 +210,45 @@ function getFacilityNumber(req: Request): string {
   // Passport user object has facilityNumber
   const user = req.user as { facilityNumber?: string } | undefined;
   return user?.facilityNumber ?? "";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Money boundary helpers (Phase 2 R2)
+// ─────────────────────────────────────────────────────────────────────────────
+// Storage is BIGINT cents end-to-end (server/lib/money.ts). The wire/UI
+// format is dollars (number). These helpers shape an outbound row by
+// dividing the money columns by 100 before serializing. They tolerate
+// `undefined`/missing columns so partial rows (raw SQL projections) flow
+// through unchanged when a money column is absent.
+//
+// Inbound conversion (dollars -> cents) happens inline at each handler
+// via `dollarsToCents(parsed.data.amount)`.
+
+function chargeOut<T extends { amount?: number | null }>(row: T): T & { amount: number } {
+  return { ...row, amount: row.amount == null ? 0 : centsToDollars(row.amount) };
+}
+
+// Invoice projections come from two paths — Drizzle (camelCase keys) for
+// generated/fetched invoices, and raw pool.query("SELECT * FROM
+// ops_invoices ...") (snake_case keys) on the resident billing endpoint.
+// Convert whichever money keys are present; leave the rest unchanged.
+const INVOICE_MONEY_KEYS = [
+  "subtotal", "tax", "total",
+  "amountPaid", "balanceDue",          // camelCase (Drizzle)
+  "amount_paid", "balance_due",        // snake_case (raw SQL)
+] as const;
+
+function invoiceOut<T extends Record<string, unknown>>(row: T): T {
+  const out: Record<string, unknown> = { ...row };
+  for (const key of INVOICE_MONEY_KEYS) {
+    const v = out[key];
+    if (typeof v === "number") out[key] = centsToDollars(v);
+  }
+  return out as T;
+}
+
+function paymentOut<T extends { amount?: number | null }>(row: T): T & { amount: number } {
+  return { ...row, amount: row.amount == null ? 0 : centsToDollars(row.amount) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,6 +522,8 @@ const chargeSchema = z.object({
   residentId: z.number().int(),
   chargeType: z.string().min(1),
   description: z.string().min(1),
+  // amount is dollars on the wire (Phase 2 R2). Converted to BIGINT cents
+  // at the route boundary before passing to storage.
   amount: z.number(),
   unit: z.string().nullable().optional(),
   quantity: z.number().nullable().optional(),
@@ -507,6 +549,8 @@ const paymentSchema = z.object({
   invoiceId: z.number().int(),
   facilityNumber: z.string().min(1),
   residentId: z.number().int(),
+  // amount is dollars on the wire (Phase 2 R2). Converted to BIGINT cents
+  // at the route boundary before passing to storage.
   amount: z.number(),
   paymentDate: z.number().int(),
   paymentMethod: z.string().min(1),
@@ -1941,13 +1985,14 @@ opsRouter.get("/residents/:id/billing", async (req, res) => {
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const charges = await ops.listCharges(facilityNumber, residentId);
 
-    const r = await pool.query(
+    const r = await pool.query<Record<string, unknown>>(
       `SELECT * FROM ops_invoices WHERE facility_number = $1 AND resident_id = $2 ORDER BY created_at DESC`,
       [facilityNumber, residentId]
     );
-    const invoices = r.rows;
+    const invoices = r.rows.map(invoiceOut);
 
-    res.json({ success: true, data: { charges, invoices } });
+    // Cents -> dollars at the wire boundary (Phase 2 R2).
+    res.json({ success: true, data: { charges: charges.map(chargeOut), invoices } });
   } catch (e) {
     return handleRouteError(req, e, res);
   }
@@ -1960,8 +2005,14 @@ opsRouter.post("/billing/charges", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const charge = await ops.createCharge({ ...nullsToUndef(parsed.data), createdAt: Date.now() });
-    res.status(201).json({ success: true, data: charge });
+    // Dollars -> cents at the wire boundary (Phase 2 R2). Storage is cents.
+    const stripped = nullsToUndef(parsed.data);
+    const charge = await ops.createCharge({
+      ...stripped,
+      amount: dollarsToCents(parsed.data.amount),
+      createdAt: Date.now(),
+    });
+    res.status(201).json({ success: true, data: chargeOut(charge) });
   } catch (e) {
     return handleRouteError(req, e, res);
   }
@@ -1985,12 +2036,18 @@ opsRouter.put("/billing/charges/:id", async (req, res) => {
     )).rows[0];
     if (!existing) return res.status(404).json({ success: false, error: "Not found" });
 
+    // amount on the wire is dollars; existing["amount"] is already cents
+    // (BIGINT) — only convert when the caller supplied a new value.
+    const amountCents = d.amount !== undefined
+      ? dollarsToCents(d.amount)
+      : existing["amount"];
+
     await pool.query(
       `UPDATE ops_billing_charges SET charge_type=$1, description=$2, amount=$3, unit=$4, quantity=$5, billing_period_start=$6, billing_period_end=$7, is_recurring=$8, recurrence_interval=$9, prorated=$10, prorate_from=$11, prorate_to=$12, source=$13, clinical_ref_id=$14 WHERE id=$15`,
       [
         d.chargeType         ?? existing["charge_type"],
         d.description        ?? existing["description"],
-        d.amount             ?? existing["amount"],
+        amountCents,
         d.unit               ?? existing["unit"],
         d.quantity           ?? existing["quantity"],
         d.billingPeriodStart ?? existing["billing_period_start"],
@@ -2038,7 +2095,8 @@ opsRouter.post("/billing/invoices/generate", async (req, res) => {
       parsed.data.periodStart,
       parsed.data.periodEnd
     );
-    res.status(201).json({ success: true, data: invoice });
+    // Cents -> dollars at the wire boundary (Phase 2 R2).
+    res.status(201).json({ success: true, data: invoiceOut(invoice) });
   } catch (e) {
     return handleRouteError(req, e, res);
   }
@@ -2051,7 +2109,7 @@ opsRouter.get("/billing/invoices/:id", async (req, res) => {
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const invoice = await ops.getInvoice(id);
     if (!invoice) return res.status(404).json({ success: false, error: "Not found" });
-    res.json({ success: true, data: invoice });
+    res.json({ success: true, data: invoiceOut(invoice) });
   } catch (e) {
     return handleRouteError(req, e, res);
   }
@@ -2077,8 +2135,13 @@ opsRouter.post("/billing/payments", async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const payment = await ops.recordPayment({ ...parsed.data, createdAt: Date.now() });
-    res.status(201).json({ success: true, data: payment });
+    // Dollars -> cents at the wire boundary (Phase 2 R2). Storage is cents.
+    const payment = await ops.recordPayment({
+      ...parsed.data,
+      amount: dollarsToCents(parsed.data.amount),
+      createdAt: Date.now(),
+    });
+    res.status(201).json({ success: true, data: paymentOut(payment) });
   } catch (e) {
     return handleRouteError(req, e, res);
   }
@@ -2089,7 +2152,17 @@ opsRouter.get("/facilities/:facilityNumber/ar-aging", async (req, res) => {
   try {
     const { facilityNumber } = req.params;
     const aging = await ops.getArAging(facilityNumber);
-    res.json({ success: true, data: aging });
+    // Storage returns cents; convert to dollars for the wire (Phase 2 R2).
+    res.json({
+      success: true,
+      data: {
+        current: centsToDollars(aging.current),
+        days_30: centsToDollars(aging.days_30),
+        days_60: centsToDollars(aging.days_60),
+        days_90: centsToDollars(aging.days_90),
+        over_90: centsToDollars(aging.over_90),
+      },
+    });
   } catch (e) {
     return handleRouteError(req, e, res);
   }
@@ -2102,7 +2175,15 @@ opsRouter.get("/facilities/:facilityNumber/billing-summary", async (req, res) =>
     const start = parseInt(String(req.query.start ?? "0"), 10);
     const end = parseInt(String(req.query.end ?? Date.now()), 10);
     const summary = await ops.getBillingSummary(facilityNumber, start, end);
-    res.json({ success: true, data: summary });
+    // Storage returns cents; convert to dollars for the wire (Phase 2 R2).
+    res.json({
+      success: true,
+      data: {
+        total_billed:      centsToDollars(summary.total_billed),
+        total_paid:        centsToDollars(summary.total_paid),
+        total_outstanding: centsToDollars(summary.total_outstanding),
+      },
+    });
   } catch (e) {
     return handleRouteError(req, e, res);
   }

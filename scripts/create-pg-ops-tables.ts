@@ -307,13 +307,15 @@ const statements = [
     updated_at BIGINT NOT NULL
   )`,
 
+  // amount is BIGINT cents per Phase 2 R2; quantity stays DOUBLE PRECISION
+  // because it represents fractional units (e.g. 1.5 hours), not money.
   `CREATE TABLE IF NOT EXISTS ops_billing_charges (
     id SERIAL PRIMARY KEY,
     facility_number TEXT NOT NULL,
     resident_id INTEGER NOT NULL,
     charge_type TEXT NOT NULL,
     description TEXT NOT NULL,
-    amount DOUBLE PRECISION NOT NULL,
+    amount BIGINT NOT NULL,
     unit TEXT,
     quantity DOUBLE PRECISION NOT NULL DEFAULT 1,
     billing_period_start BIGINT,
@@ -335,11 +337,12 @@ const statements = [
     invoice_number TEXT NOT NULL UNIQUE,
     billing_period_start BIGINT NOT NULL,
     billing_period_end BIGINT NOT NULL,
-    subtotal DOUBLE PRECISION NOT NULL DEFAULT 0,
-    tax DOUBLE PRECISION NOT NULL DEFAULT 0,
-    total DOUBLE PRECISION NOT NULL DEFAULT 0,
-    amount_paid DOUBLE PRECISION NOT NULL DEFAULT 0,
-    balance_due DOUBLE PRECISION NOT NULL DEFAULT 0,
+    -- BIGINT cents per Phase 2 R2 (see server/lib/money.ts)
+    subtotal BIGINT NOT NULL DEFAULT 0,
+    tax BIGINT NOT NULL DEFAULT 0,
+    total BIGINT NOT NULL DEFAULT 0,
+    amount_paid BIGINT NOT NULL DEFAULT 0,
+    balance_due BIGINT NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'draft',
     due_date BIGINT,
     sent_at BIGINT,
@@ -351,12 +354,13 @@ const statements = [
     updated_at BIGINT NOT NULL
   )`,
 
+  // amount is BIGINT cents per Phase 2 R2 (see server/lib/money.ts)
   `CREATE TABLE IF NOT EXISTS ops_payments (
     id SERIAL PRIMARY KEY,
     invoice_id INTEGER NOT NULL,
     facility_number TEXT NOT NULL,
     resident_id INTEGER NOT NULL,
-    amount DOUBLE PRECISION NOT NULL,
+    amount BIGINT NOT NULL,
     payment_date BIGINT NOT NULL,
     payment_method TEXT NOT NULL,
     reference_number TEXT,
