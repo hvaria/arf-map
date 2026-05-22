@@ -7,10 +7,16 @@
  * router) → `requireActiveSubscription` (already in the router) →
  * `requireOpsPermission(resource, action)` (this file).
  *
- * Wave 0 v0 stance: every authenticated facility session resolves to
- * `"admin"`. The `resolveRole()` function is the seam that Wave 3 will
- * replace once auditor share-links and role assignments land. Until then
- * `auditor` exists as a read-only matrix that no live session can hit.
+ * Phase 3 stance: `resolveRole()` now reads from `req.user.role` (which
+ * Passport sets to the `facility_accounts.role` column value). Until a
+ * dedicated facility-users table lands, every facility_accounts row maps
+ * to an OpsRole via KNOWN_DB_TO_OPS_ROLE below. Unknown DB role strings
+ * fall back to `"admin"` so a column mismatch never accidentally locks
+ * out a paying facility; a console.warn surfaces drift to operations.
+ *
+ * Auditor share-link traffic does NOT flow through this resolver — it
+ * uses requireAuditorToken on a separate router and never hits a
+ * facility-Passport session.
  */
 
 import type { NextFunction, Request, Response } from "express";
@@ -87,6 +93,26 @@ export const OPS_RESOURCES = {
   // delete (soft). Auditor read-only — auditor share-link sessions can
   // pull previously generated reports for inspector handoff.
   REPORT: "ops_report",
+  // Phase 3 — Module 1 to Module 6 resources. These existed as un-gated
+  // routes ("facility-auth-only for now") before the role wiring landed.
+  // Admin gets full CRUD; auditor gets read-only on the visible-to-
+  // auditor-share-link subset. Group the keys by module so the matrix
+  // below stays greppable.
+  RESIDENT_ASSESSMENT: "ops_resident_assessment", // Module 1
+  CARE_PLAN: "ops_care_plan",                     // Module 1
+  DAILY_TASK: "ops_daily_task",                   // Module 1
+  MEDICATION: "ops_medication",                   // Module 2
+  MED_PASS: "ops_med_pass",                       // Module 2
+  MED_DESTRUCTION: "ops_med_destruction",         // Module 2
+  LEAD: "ops_lead",                               // Module 4 (CRM)
+  TOUR: "ops_tour",                               // Module 4
+  ADMISSION: "ops_admission",                     // Module 4
+  BILLING: "ops_billing",                         // Module 5
+  STAFF: "ops_staff",                             // Module 6
+  SHIFT: "ops_shift",                             // Module 6
+  // Read-only operational dashboards aggregated across modules. Auditor
+  // share-link can see the same rollups for inspector handoff.
+  DASHBOARD: "ops_dashboard",
 } as const;
 
 const ADMIN_ALL: Permission[] = [
@@ -151,12 +177,76 @@ const ADMIN_ALL: Permission[] = [
     resource: OPS_RESOURCES.INCIDENT,
     actions: ["read", "create", "update", "close"],
   },
-  // Wave 2 — Resident chart completeness (W8). Only `read` is exposed on
-  // the ops scaffold for the chart-completeness aggregator. Resident
-  // CRUD continues to live on the un-gated routes for now.
+  // Wave 2 — Resident chart completeness (W8) + Phase 3 — full resident
+  // CRUD now flows through this resource. Admin can read/create/update/
+  // delete (soft). Auditor stays read-only.
   {
     resource: OPS_RESOURCES.RESIDENT,
-    actions: ["read"],
+    actions: ["read", "create", "update", "delete"],
+  },
+  // Phase 3 — Module 1 (resident chart) sub-resources.
+  {
+    resource: OPS_RESOURCES.RESIDENT_ASSESSMENT,
+    actions: ["read", "create", "update"],
+  },
+  {
+    resource: OPS_RESOURCES.CARE_PLAN,
+    actions: ["read", "create", "update"],
+  },
+  {
+    resource: OPS_RESOURCES.DAILY_TASK,
+    actions: ["read", "create", "update"],
+  },
+  // Phase 3 — Module 2 (eMAR). DELETE on medication maps to "discontinue"
+  // (the soft-state transition exposed by the route).
+  {
+    resource: OPS_RESOURCES.MEDICATION,
+    actions: ["read", "create", "update", "delete"],
+  },
+  {
+    resource: OPS_RESOURCES.MED_PASS,
+    actions: ["read", "create", "update"],
+  },
+  {
+    resource: OPS_RESOURCES.MED_DESTRUCTION,
+    actions: ["read", "create"],
+  },
+  // Phase 3 — Module 4 (CRM). Admission `delete` is intentionally omitted;
+  // the convert flow is a `create` event against a different resource.
+  {
+    resource: OPS_RESOURCES.LEAD,
+    actions: ["read", "create", "update"],
+  },
+  {
+    resource: OPS_RESOURCES.TOUR,
+    actions: ["read", "create", "update"],
+  },
+  {
+    resource: OPS_RESOURCES.ADMISSION,
+    actions: ["read", "create", "update"],
+  },
+  // Phase 3 — Module 5 (Billing). Single resource covers charges,
+  // invoices, payments, AR aging, billing summary — they all guard the
+  // same financial surface.
+  {
+    resource: OPS_RESOURCES.BILLING,
+    actions: ["read", "create", "update", "delete"],
+  },
+  // Phase 3 — Module 6 (Staff + Scheduling).
+  {
+    resource: OPS_RESOURCES.STAFF,
+    actions: ["read", "create", "update", "delete"],
+  },
+  {
+    resource: OPS_RESOURCES.SHIFT,
+    actions: ["read", "create", "update"],
+  },
+  // Phase 3 — Dashboard rollups (facility dashboard, calendar, occupancy,
+  // CRM pipeline, eMAR dashboard, incident trends, med refusals, PRN
+  // report). All read-only.
+  {
+    resource: OPS_RESOURCES.DASHBOARD,
+    actions: ["read", "create"],
   },
   // Wave 2 finale — obligation engine. Admin can read/create/update/delete
   // (soft). `delete` gates the soft-delete path; the state machine itself
@@ -228,6 +318,22 @@ const AUDITOR_READ_ONLY: Permission[] = [
   // reports (download via the auditor router mirror endpoint) for inspector
   // handoff. Read-only — auditors never trigger generation themselves.
   { resource: OPS_RESOURCES.REPORT,              actions: ["read"] },
+  // Phase 3 — Module 1 to Module 6 read-only auditor mirror. Mirrors the
+  // existing Wave 2 W8 stance on RESIDENT — auditor can read every chart
+  // / lead / billing surface the admin can, but can't write.
+  { resource: OPS_RESOURCES.RESIDENT_ASSESSMENT, actions: ["read"] },
+  { resource: OPS_RESOURCES.CARE_PLAN,           actions: ["read"] },
+  { resource: OPS_RESOURCES.DAILY_TASK,          actions: ["read"] },
+  { resource: OPS_RESOURCES.MEDICATION,          actions: ["read"] },
+  { resource: OPS_RESOURCES.MED_PASS,            actions: ["read"] },
+  { resource: OPS_RESOURCES.MED_DESTRUCTION,     actions: ["read"] },
+  { resource: OPS_RESOURCES.LEAD,                actions: ["read"] },
+  { resource: OPS_RESOURCES.TOUR,                actions: ["read"] },
+  { resource: OPS_RESOURCES.ADMISSION,           actions: ["read"] },
+  { resource: OPS_RESOURCES.BILLING,             actions: ["read"] },
+  { resource: OPS_RESOURCES.STAFF,               actions: ["read"] },
+  { resource: OPS_RESOURCES.SHIFT,               actions: ["read"] },
+  { resource: OPS_RESOURCES.DASHBOARD,           actions: ["read"] },
 ];
 
 // Wave 0 matrix. Other roles are scaffolded but unused — Wave 2+ fills
@@ -243,14 +349,59 @@ export const ROLE_PERMISSIONS: Record<OpsRole, Permission[]> = {
 };
 
 /**
- * Resolve the effective Ops role for the request. Wave 0: every
- * authenticated facility session is `"admin"`. Wave 3 will replace this
- * implementation with token-bound lookup. Test code can monkey-patch
- * `resolveRole` via module mocking to assert the auditor / deny paths.
+ * Mapping from the DB column `facility_accounts.role` (a free-form text
+ * column with a default of `"facility_admin"`) to the OpsRole enum used
+ * by `ROLE_PERMISSIONS` above.
+ *
+ * `facility_admin` is the DB default for every existing account — it
+ * intentionally maps to OpsRole `admin` so historical accounts retain
+ * full CRUD without a data migration. New rows that want a narrower role
+ * (auditor view sharing, future facility_users entries, etc.) write the
+ * narrower string and pick up the matching matrix entry.
+ *
+ * Keep keys lowercase; the resolver lowercases & trims the DB value
+ * before lookup.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function resolveRole(_req: Request): OpsRole {
-  return "admin";
+const KNOWN_DB_TO_OPS_ROLE: Record<string, OpsRole> = {
+  facility_admin: "admin",
+  admin: "admin",
+  auditor: "auditor",
+  don: "don",
+  med_tech: "med_tech",
+  schedule_lead: "schedule_lead",
+  office_manager: "office_manager",
+};
+
+/**
+ * Resolve the effective Ops role for the request.
+ *
+ * Reads `req.user.role` from the authenticated facility-Passport session
+ * (Passport's deserializeUser hydrates the full FacilityAccount onto
+ * req.user, including the `role` column). Returns `"admin"` for unknown
+ * values so a stray DB string never accidentally locks a user out — but
+ * emits a `console.warn` so operations can spot drift.
+ *
+ * Test code can monkey-patch `resolveRole` via module mocking to assert
+ * the auditor / deny paths.
+ */
+export function resolveRole(req: Request): OpsRole {
+  const user = req.user as { role?: string | null } | undefined;
+  const rawRole = user?.role;
+  const dbRole =
+    typeof rawRole === "string" && rawRole.trim().length > 0
+      ? rawRole.trim().toLowerCase()
+      : "facility_admin";
+  const opsRole = KNOWN_DB_TO_OPS_ROLE[dbRole];
+  if (!opsRole) {
+    // Surface unexpected DB role strings without locking the user out.
+    // Phase 3 fallback contract; revisit when facility_users lands.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[permissions] unknown facility_accounts.role="${dbRole}" — defaulting to admin`,
+    );
+    return "admin";
+  }
+  return opsRole;
 }
 
 /**

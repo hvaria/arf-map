@@ -576,9 +576,9 @@ const completeComplianceSchema = z.object({
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /facilities/:facilityNumber/residents — facility-scoped list (used by portal pages)
-opsRouter.get("/facilities/:facilityNumber/residents", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/residents", requireOpsPermission(OPS_RESOURCES.RESIDENT, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const { page, limit } = parsePagination(req.query as Record<string, unknown>);
     const status = req.query.status ? String(req.query.status) : undefined;
     const result = await ops.listResidents(facilityNumber, { page, limit, status });
@@ -589,10 +589,10 @@ opsRouter.get("/facilities/:facilityNumber/residents", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/residents/:id — facility-scoped single resident
-opsRouter.get("/facilities/:facilityNumber/residents/:id", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/residents/:id", requireOpsPermission(OPS_RESOURCES.RESIDENT, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const id = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const resident = await ops.getResident(id, facilityNumber);
     if (!resident) return res.status(404).json({ success: false, error: "Not found" });
@@ -603,10 +603,10 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/residents/:id/assessments
-opsRouter.get("/facilities/:facilityNumber/residents/:id/assessments", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/residents/:id/assessments", requireOpsPermission(OPS_RESOURCES.RESIDENT_ASSESSMENT, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const id = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const assessments = await ops.listAssessments(id, facilityNumber);
     res.json({ success: true, data: assessments });
@@ -616,10 +616,10 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/assessments", async (re
 });
 
 // POST /facilities/:facilityNumber/residents/:id/assessments
-opsRouter.post("/facilities/:facilityNumber/residents/:id/assessments", async (req, res) => {
+opsRouter.post("/facilities/:facilityNumber/residents/:id/assessments", requireOpsPermission(OPS_RESOURCES.RESIDENT_ASSESSMENT, "create"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const residentId = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = assessmentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -648,10 +648,10 @@ opsRouter.post("/facilities/:facilityNumber/residents/:id/assessments", async (r
 });
 
 // GET /facilities/:facilityNumber/residents/:id/care-plan
-opsRouter.get("/facilities/:facilityNumber/residents/:id/care-plan", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/residents/:id/care-plan", requireOpsPermission(OPS_RESOURCES.CARE_PLAN, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const id = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const plan = await ops.getActiveCarePlan(id, facilityNumber);
     if (!plan) return res.status(404).json({ success: false, error: "No active care plan" });
@@ -670,10 +670,10 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/care-plan", async (req,
 // never matched because task_date is normalized to start-of-day at
 // insert time; the resident profile "Today's Tasks" tab was
 // silently empty as a result.
-opsRouter.get("/facilities/:facilityNumber/residents/:id/daily-tasks", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/residents/:id/daily-tasks", requireOpsPermission(OPS_RESOURCES.DAILY_TASK, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const residentId = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const refClock = req.query.date ? parseInt(String(req.query.date), 10) : Date.now();
     const startOfDay = (() => {
@@ -694,9 +694,9 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/daily-tasks", async (re
 // Facility-wide list of pending tasks whose task_date is before today.
 // Drives the dashboard "Overdue Tasks" KPI sub-view so the user can act on
 // each row without first picking a resident.
-opsRouter.get("/facilities/:facilityNumber/overdue-tasks", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/overdue-tasks", requireOpsPermission(OPS_RESOURCES.DAILY_TASK, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const tasks = await ops.getOverdueTasksForFacility(facilityNumber);
     res.json({ success: true, data: tasks });
   } catch (e) {
@@ -705,10 +705,10 @@ opsRouter.get("/facilities/:facilityNumber/overdue-tasks", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/residents/:id/medications
-opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", requireOpsPermission(OPS_RESOURCES.MEDICATION, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const residentId = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const status = req.query.status ? String(req.query.status) : undefined;
     const meds = await ops.listMedications(residentId, facilityNumber, status);
@@ -719,10 +719,10 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/medications", async (re
 });
 
 // POST /facilities/:facilityNumber/residents/:id/medications
-opsRouter.post("/facilities/:facilityNumber/residents/:id/medications", async (req, res) => {
+opsRouter.post("/facilities/:facilityNumber/residents/:id/medications", requireOpsPermission(OPS_RESOURCES.MEDICATION, "create"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const residentId = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = MedicationCreateInput.safeParse(req.body);
     if (!parsed.success) {
@@ -741,10 +741,10 @@ opsRouter.post("/facilities/:facilityNumber/residents/:id/medications", async (r
 });
 
 // GET /facilities/:facilityNumber/residents/:id/incidents
-opsRouter.get("/facilities/:facilityNumber/residents/:id/incidents", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/residents/:id/incidents", requireOpsPermission(OPS_RESOURCES.INCIDENT, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
-    const residentId = parseInt(req.params.id, 10);
+    const facilityNumber = String(req.params.facilityNumber);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const { page, limit } = parsePagination(req.query as Record<string, unknown>);
     const result = await ops.listIncidents(facilityNumber, { page, limit, residentId });
@@ -755,7 +755,7 @@ opsRouter.get("/facilities/:facilityNumber/residents/:id/incidents", async (req,
 });
 
 // GET /residents
-opsRouter.get("/residents", async (req, res) => {
+opsRouter.get("/residents", requireOpsPermission(OPS_RESOURCES.RESIDENT, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const { page, limit } = parsePagination(req.query as Record<string, unknown>);
@@ -768,7 +768,7 @@ opsRouter.get("/residents", async (req, res) => {
 });
 
 // POST /residents
-opsRouter.post("/residents", async (req, res) => {
+opsRouter.post("/residents", requireOpsPermission(OPS_RESOURCES.RESIDENT, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const parsed = residentSchema.safeParse(req.body);
@@ -792,10 +792,10 @@ opsRouter.post("/residents", async (req, res) => {
 });
 
 // GET /residents/:id
-opsRouter.get("/residents/:id", async (req, res) => {
+opsRouter.get("/residents/:id", requireOpsPermission(OPS_RESOURCES.RESIDENT, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const resident = await ops.getResident(id, facilityNumber);
     if (!resident) return res.status(404).json({ success: false, error: "Not found" });
@@ -806,10 +806,10 @@ opsRouter.get("/residents/:id", async (req, res) => {
 });
 
 // PUT /residents/:id
-opsRouter.put("/residents/:id", async (req, res) => {
+opsRouter.put("/residents/:id", requireOpsPermission(OPS_RESOURCES.RESIDENT, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = residentSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -824,10 +824,10 @@ opsRouter.put("/residents/:id", async (req, res) => {
 });
 
 // DELETE /residents/:id (soft delete)
-opsRouter.delete("/residents/:id", async (req, res) => {
+opsRouter.delete("/residents/:id", requireOpsPermission(OPS_RESOURCES.RESIDENT, "delete"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const ok = await ops.softDeleteResident(id, facilityNumber, getActor(req));
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
@@ -838,10 +838,10 @@ opsRouter.delete("/residents/:id", async (req, res) => {
 });
 
 // GET /residents/:id/assessments
-opsRouter.get("/residents/:id/assessments", async (req, res) => {
+opsRouter.get("/residents/:id/assessments", requireOpsPermission(OPS_RESOURCES.RESIDENT_ASSESSMENT, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const assessments = await ops.listAssessments(id, facilityNumber);
     res.json({ success: true, data: assessments });
@@ -851,10 +851,10 @@ opsRouter.get("/residents/:id/assessments", async (req, res) => {
 });
 
 // POST /residents/:id/assessments
-opsRouter.post("/residents/:id/assessments", async (req, res) => {
+opsRouter.post("/residents/:id/assessments", requireOpsPermission(OPS_RESOURCES.RESIDENT_ASSESSMENT, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const residentId = parseInt(req.params.id, 10);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
 
     const parsed = assessmentSchema.safeParse(req.body);
@@ -896,9 +896,9 @@ opsRouter.post("/residents/:id/assessments", async (req, res) => {
 });
 
 // PUT /assessments/:id
-opsRouter.put("/assessments/:id", async (req, res) => {
+opsRouter.put("/assessments/:id", requireOpsPermission(OPS_RESOURCES.RESIDENT_ASSESSMENT, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = assessmentSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -913,10 +913,10 @@ opsRouter.put("/assessments/:id", async (req, res) => {
 });
 
 // GET /residents/:id/care-plan
-opsRouter.get("/residents/:id/care-plan", async (req, res) => {
+opsRouter.get("/residents/:id/care-plan", requireOpsPermission(OPS_RESOURCES.CARE_PLAN, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const plan = await ops.getActiveCarePlan(id, facilityNumber);
     if (!plan) return res.status(404).json({ success: false, error: "No active care plan" });
@@ -927,10 +927,10 @@ opsRouter.get("/residents/:id/care-plan", async (req, res) => {
 });
 
 // POST /residents/:id/care-plan
-opsRouter.post("/residents/:id/care-plan", async (req, res) => {
+opsRouter.post("/residents/:id/care-plan", requireOpsPermission(OPS_RESOURCES.CARE_PLAN, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const residentId = parseInt(req.params.id, 10);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = carePlanSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -951,9 +951,9 @@ opsRouter.post("/residents/:id/care-plan", async (req, res) => {
 });
 
 // PUT /care-plans/:id
-opsRouter.put("/care-plans/:id", async (req, res) => {
+opsRouter.put("/care-plans/:id", requireOpsPermission(OPS_RESOURCES.CARE_PLAN, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = carePlanSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -968,9 +968,9 @@ opsRouter.put("/care-plans/:id", async (req, res) => {
 });
 
 // POST /care-plans/:id/sign
-opsRouter.post("/care-plans/:id/sign", async (req, res) => {
+opsRouter.post("/care-plans/:id/sign", requireOpsPermission(OPS_RESOURCES.CARE_PLAN, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = signCarePlanSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -988,10 +988,10 @@ opsRouter.post("/care-plans/:id/sign", async (req, res) => {
 // route above; `?date=` is treated as any clock value within the desired
 // day and normalized to a half-open `[startOfDay, startOfDay + 24h)`
 // window so callers passing `Date.now()` reliably get today's tasks.
-opsRouter.get("/residents/:id/tasks", async (req, res) => {
+opsRouter.get("/residents/:id/tasks", requireOpsPermission(OPS_RESOURCES.DAILY_TASK, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const residentId = parseInt(req.params.id, 10);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
 
     const refClock = req.query.date ? parseInt(String(req.query.date), 10) : Date.now();
@@ -1011,7 +1011,7 @@ opsRouter.get("/residents/:id/tasks", async (req, res) => {
 });
 
 // POST /tasks — direct task creation (no care plan required).
-opsRouter.post("/tasks", async (req, res) => {
+opsRouter.post("/tasks", requireOpsPermission(OPS_RESOURCES.DAILY_TASK, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const parsed = manualTaskSchema.safeParse(req.body);
@@ -1036,9 +1036,9 @@ opsRouter.post("/tasks", async (req, res) => {
 });
 
 // PUT /tasks/:id/complete
-opsRouter.put("/tasks/:id/complete", async (req, res) => {
+opsRouter.put("/tasks/:id/complete", requireOpsPermission(OPS_RESOURCES.DAILY_TASK, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = completeTaskSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1053,9 +1053,9 @@ opsRouter.put("/tasks/:id/complete", async (req, res) => {
 });
 
 // PUT /tasks/:id/refuse
-opsRouter.put("/tasks/:id/refuse", async (req, res) => {
+opsRouter.put("/tasks/:id/refuse", requireOpsPermission(OPS_RESOURCES.DAILY_TASK, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = refuseTaskSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1074,10 +1074,10 @@ opsRouter.put("/tasks/:id/refuse", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /residents/:id/medications
-opsRouter.get("/residents/:id/medications", async (req, res) => {
+opsRouter.get("/residents/:id/medications", requireOpsPermission(OPS_RESOURCES.MEDICATION, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const residentId = parseInt(req.params.id, 10);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const status = req.query.status ? String(req.query.status) : undefined;
     const meds = await ops.listMedications(residentId, facilityNumber, status);
@@ -1088,10 +1088,10 @@ opsRouter.get("/residents/:id/medications", async (req, res) => {
 });
 
 // POST /residents/:id/medications
-opsRouter.post("/residents/:id/medications", async (req, res) => {
+opsRouter.post("/residents/:id/medications", requireOpsPermission(OPS_RESOURCES.MEDICATION, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const residentId = parseInt(req.params.id, 10);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = MedicationCreateInput.safeParse(req.body);
     if (!parsed.success) {
@@ -1116,10 +1116,10 @@ opsRouter.post("/residents/:id/medications", async (req, res) => {
 });
 
 // PUT /medications/:id
-opsRouter.put("/medications/:id", async (req, res) => {
+opsRouter.put("/medications/:id", requireOpsPermission(OPS_RESOURCES.MEDICATION, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = MedicationUpdateInput.safeParse(req.body);
     if (!parsed.success) {
@@ -1153,10 +1153,10 @@ opsRouter.put("/medications/:id", async (req, res) => {
 });
 
 // DELETE /medications/:id (discontinue)
-opsRouter.delete("/medications/:id", async (req, res) => {
+opsRouter.delete("/medications/:id", requireOpsPermission(OPS_RESOURCES.MEDICATION, "delete"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = discontinueMedSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -1188,9 +1188,9 @@ function formatScheduledTime(scheduledDatetime: number): string {
 }
 
 // GET /facilities/:facilityNumber/med-pass/summary?from=YYYY-MM-DD&to=YYYY-MM-DD
-opsRouter.get("/facilities/:facilityNumber/med-pass/summary", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/med-pass/summary", requireOpsPermission(OPS_RESOURCES.MED_PASS, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     if (getFacilityNumber(req) !== facilityNumber) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
@@ -1225,9 +1225,9 @@ opsRouter.get("/facilities/:facilityNumber/med-pass/summary", async (req, res) =
 });
 
 // GET /facilities/:facilityNumber/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD
-opsRouter.get("/facilities/:facilityNumber/calendar", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/calendar", requireOpsPermission(OPS_RESOURCES.DASHBOARD, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     if (getFacilityNumber(req) !== facilityNumber) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
@@ -1250,9 +1250,9 @@ opsRouter.get("/facilities/:facilityNumber/calendar", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/med-pass
-opsRouter.get("/facilities/:facilityNumber/med-pass", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/med-pass", requireOpsPermission(OPS_RESOURCES.MED_PASS, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const date = req.query.date
       ? new Date(String(req.query.date)).setHours(0, 0, 0, 0)
       : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
@@ -1280,10 +1280,10 @@ opsRouter.get("/facilities/:facilityNumber/med-pass", async (req, res) => {
 });
 
 // GET /residents/:id/med-pass
-opsRouter.get("/residents/:id/med-pass", async (req, res) => {
+opsRouter.get("/residents/:id/med-pass", requireOpsPermission(OPS_RESOURCES.MED_PASS, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const residentId = parseInt(req.params.id, 10);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const date = req.query.date ? parseInt(String(req.query.date), 10) : (() => {
       const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.getTime();
@@ -1296,7 +1296,7 @@ opsRouter.get("/residents/:id/med-pass", async (req, res) => {
 });
 
 // POST /med-passes
-opsRouter.post("/med-passes", async (req, res) => {
+opsRouter.post("/med-passes", requireOpsPermission(OPS_RESOURCES.MED_PASS, "create"), async (req, res) => {
   try {
     const parsed = medPassSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1326,9 +1326,9 @@ const chartMedPassSchema = z.object({
   rightToRefuse: z.number().int().optional(),
 });
 
-opsRouter.put("/med-passes/:id", async (req, res) => {
+opsRouter.put("/med-passes/:id", requireOpsPermission(OPS_RESOURCES.MED_PASS, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = chartMedPassSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1343,9 +1343,9 @@ opsRouter.put("/med-passes/:id", async (req, res) => {
 });
 
 // PUT /med-passes/:id/prn-followup
-opsRouter.put("/med-passes/:id/prn-followup", async (req, res) => {
+opsRouter.put("/med-passes/:id/prn-followup", requireOpsPermission(OPS_RESOURCES.MED_PASS, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = prnFollowupSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1360,9 +1360,9 @@ opsRouter.put("/med-passes/:id/prn-followup", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/emar-dashboard
-opsRouter.get("/facilities/:facilityNumber/emar-dashboard", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/emar-dashboard", requireOpsPermission(OPS_RESOURCES.MED_PASS, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const date = req.query.date ? parseInt(String(req.query.date), 10) : (() => {
       const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.getTime();
     })();
@@ -1374,9 +1374,9 @@ opsRouter.get("/facilities/:facilityNumber/emar-dashboard", async (req, res) => 
 });
 
 // GET /facilities/:facilityNumber/med-refusals
-opsRouter.get("/facilities/:facilityNumber/med-refusals", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/med-refusals", requireOpsPermission(OPS_RESOURCES.MED_PASS, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const start = parseInt(String(req.query.start ?? "0"), 10);
     const end = parseInt(String(req.query.end ?? Date.now()), 10);
     const refusals = await ops.getMedRefusals(facilityNumber, start, end);
@@ -1387,9 +1387,9 @@ opsRouter.get("/facilities/:facilityNumber/med-refusals", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/prn-report
-opsRouter.get("/facilities/:facilityNumber/prn-report", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/prn-report", requireOpsPermission(OPS_RESOURCES.MED_PASS, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const start = parseInt(String(req.query.start ?? "0"), 10);
     const end = parseInt(String(req.query.end ?? Date.now()), 10);
     const report = await ops.getPrnReport(facilityNumber, start, end);
@@ -1400,10 +1400,10 @@ opsRouter.get("/facilities/:facilityNumber/prn-report", async (req, res) => {
 });
 
 // POST /medications/:id/request-refill
-opsRouter.post("/medications/:id/request-refill", async (req, res) => {
+opsRouter.post("/medications/:id/request-refill", requireOpsPermission(OPS_RESOURCES.MEDICATION, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const existing = await ops.getMedication(id, facilityNumber);
     if (!existing) return res.status(404).json({ success: false, error: "Not found" });
@@ -1424,7 +1424,7 @@ opsRouter.post("/medications/:id/request-refill", async (req, res) => {
 });
 
 // POST /controlled-sub-counts
-opsRouter.post("/controlled-sub-counts", async (req, res) => {
+opsRouter.post("/controlled-sub-counts", requireOpsPermission(OPS_RESOURCES.CONTROLLED_SUB_COUNT, "resolve"), async (req, res) => {
   try {
     const parsed = controlledSubCountSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1438,7 +1438,7 @@ opsRouter.post("/controlled-sub-counts", async (req, res) => {
 });
 
 // POST /med-destruction
-opsRouter.post("/med-destruction", async (req, res) => {
+opsRouter.post("/med-destruction", requireOpsPermission(OPS_RESOURCES.MED_DESTRUCTION, "create"), async (req, res) => {
   try {
     const parsed = medDestructionSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1456,9 +1456,9 @@ opsRouter.post("/med-destruction", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /facilities/:facilityNumber/incidents
-opsRouter.get("/facilities/:facilityNumber/incidents", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/incidents", requireOpsPermission(OPS_RESOURCES.INCIDENT, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const { page, limit } = parsePagination(req.query as Record<string, unknown>);
     const type = req.query.type ? String(req.query.type) : undefined;
     const residentId = req.query.residentId
@@ -1472,7 +1472,7 @@ opsRouter.get("/facilities/:facilityNumber/incidents", async (req, res) => {
 });
 
 // POST /incidents
-opsRouter.post("/incidents", async (req, res) => {
+opsRouter.post("/incidents", requireOpsPermission(OPS_RESOURCES.INCIDENT, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const parsed = incidentSchema.safeParse(req.body);
@@ -1501,10 +1501,10 @@ opsRouter.post("/incidents", async (req, res) => {
 });
 
 // PUT /incidents/:id
-opsRouter.put("/incidents/:id", async (req, res) => {
+opsRouter.put("/incidents/:id", requireOpsPermission(OPS_RESOURCES.INCIDENT, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = incidentSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -1519,10 +1519,10 @@ opsRouter.put("/incidents/:id", async (req, res) => {
 });
 
 // GET /incidents/:id/lic624
-opsRouter.get("/incidents/:id/lic624", async (req, res) => {
+opsRouter.get("/incidents/:id/lic624", requireOpsPermission(OPS_RESOURCES.INCIDENT, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
 
     const r = await pool.query<Record<string, unknown>>(
@@ -1553,9 +1553,9 @@ opsRouter.get("/incidents/:id/lic624", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/incident-trends
-opsRouter.get("/facilities/:facilityNumber/incident-trends", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/incident-trends", requireOpsPermission(OPS_RESOURCES.INCIDENT, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const days = parseInt(String(req.query.days ?? "30"), 10) || 30;
     const trends = await ops.getIncidentTrends(facilityNumber, days);
     res.json({ success: true, data: trends });
@@ -1569,9 +1569,9 @@ opsRouter.get("/facilities/:facilityNumber/incident-trends", async (req, res) =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /facilities/:facilityNumber/leads
-opsRouter.get("/facilities/:facilityNumber/leads", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/leads", requireOpsPermission(OPS_RESOURCES.LEAD, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const { page, limit } = parsePagination(req.query as Record<string, unknown>);
     const stage = req.query.stage ? String(req.query.stage) : undefined;
     const result = await ops.listLeads(facilityNumber, { page, limit, stage });
@@ -1582,7 +1582,7 @@ opsRouter.get("/facilities/:facilityNumber/leads", async (req, res) => {
 });
 
 // POST /leads
-opsRouter.post("/leads", async (req, res) => {
+opsRouter.post("/leads", requireOpsPermission(OPS_RESOURCES.LEAD, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const parsed = leadSchema.safeParse(req.body);
@@ -1598,10 +1598,10 @@ opsRouter.post("/leads", async (req, res) => {
 });
 
 // PUT /leads/:id
-opsRouter.put("/leads/:id", async (req, res) => {
+opsRouter.put("/leads/:id", requireOpsPermission(OPS_RESOURCES.LEAD, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = leadSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -1616,10 +1616,10 @@ opsRouter.put("/leads/:id", async (req, res) => {
 });
 
 // GET /leads/:id
-opsRouter.get("/leads/:id", async (req, res) => {
+opsRouter.get("/leads/:id", requireOpsPermission(OPS_RESOURCES.LEAD, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const lead = await ops.getLead(id, facilityNumber);
     if (!lead) return res.status(404).json({ success: false, error: "Not found" });
@@ -1634,10 +1634,10 @@ opsRouter.get("/leads/:id", async (req, res) => {
 // pipeline reports stay consistent. Both writes happen on the same DB
 // connection so a frontend that only made a single call still gets
 // atomic semantics — the FE is no longer responsible for sequencing.
-opsRouter.post("/leads/:id/tours", async (req, res) => {
+opsRouter.post("/leads/:id/tours", requireOpsPermission(OPS_RESOURCES.TOUR, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const leadId = parseInt(req.params.id, 10);
+    const leadId = parseInt(String(req.params.id), 10);
     if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = tourSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1659,10 +1659,10 @@ opsRouter.post("/leads/:id/tours", async (req, res) => {
 });
 
 // PUT /tours/:id
-opsRouter.put("/tours/:id", async (req, res) => {
+opsRouter.put("/tours/:id", requireOpsPermission(OPS_RESOURCES.TOUR, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = tourSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -1682,10 +1682,10 @@ opsRouter.put("/tours/:id", async (req, res) => {
 });
 
 // POST /leads/:id/admissions
-opsRouter.post("/leads/:id/admissions", async (req, res) => {
+opsRouter.post("/leads/:id/admissions", requireOpsPermission(OPS_RESOURCES.ADMISSION, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const leadId = parseInt(req.params.id, 10);
+    const leadId = parseInt(String(req.params.id), 10);
     if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = admissionSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -1712,9 +1712,10 @@ opsRouter.post("/leads/:id/admissions", async (req, res) => {
 
 // GET /facilities/:facilityNumber/leads/:leadId/admissions
 // Finds or creates the admission record for a lead, returns { lead, forms, admissionId }
-opsRouter.get("/facilities/:facilityNumber/leads/:leadId/admissions", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/leads/:leadId/admissions", requireOpsPermission(OPS_RESOURCES.ADMISSION, "read"), async (req, res) => {
   try {
-    const { facilityNumber, leadId: leadIdStr } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
+    const leadIdStr = String(req.params.leadId);
     const leadId = parseInt(leadIdStr, 10);
     if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid leadId" });
 
@@ -1784,9 +1785,9 @@ opsRouter.get("/facilities/:facilityNumber/leads/:leadId/admissions", async (req
 
 // PUT /leads/:leadId/lic/:form
 // Update LIC form completion for the admission belonging to this lead
-opsRouter.put("/leads/:leadId/lic/:form", async (req, res) => {
+opsRouter.put("/leads/:leadId/lic/:form", requireOpsPermission(OPS_RESOURCES.ADMISSION, "update"), async (req, res) => {
   try {
-    const leadId = parseInt(req.params.leadId, 10);
+    const leadId = parseInt(String(req.params.leadId), 10);
     if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid leadId" });
 
     const parsed = licFormSchema.safeParse(req.body);
@@ -1802,7 +1803,7 @@ opsRouter.put("/leads/:leadId/lic/:form", async (req, res) => {
     if (!row) return res.status(404).json({ success: false, error: "Admission not found for this lead" });
 
     // Normalize frontend formId to storage column key: lic601 → lic_601, lic602a → lic_602a
-    const rawForm = req.params.form;
+    const rawForm = String(req.params.form);
     const normalizedForm = rawForm.replace(/^lic(\d)/, "lic_$1");
     const ok = await ops.updateAdmissionLicForm(row.id, normalizedForm, parsed.data.completed, getActor(req));
     if (!ok) return res.status(404).json({ success: false, error: "Not found or invalid form" });
@@ -1814,9 +1815,9 @@ opsRouter.put("/leads/:leadId/lic/:form", async (req, res) => {
 
 // POST /leads/:leadId/convert
 // Convert the admission for this lead into a resident record
-opsRouter.post("/leads/:leadId/convert", async (req, res) => {
+opsRouter.post("/leads/:leadId/convert", requireOpsPermission(OPS_RESOURCES.ADMISSION, "update"), async (req, res) => {
   try {
-    const leadId = parseInt(req.params.leadId, 10);
+    const leadId = parseInt(String(req.params.leadId), 10);
     if (isNaN(leadId)) return res.status(400).json({ success: false, error: "Invalid leadId" });
 
     const r = await pool.query<{ id: number }>(
@@ -1835,9 +1836,9 @@ opsRouter.post("/leads/:leadId/convert", async (req, res) => {
 });
 
 // GET /admissions/:id/lic-checklist
-opsRouter.get("/admissions/:id/lic-checklist", async (req, res) => {
+opsRouter.get("/admissions/:id/lic-checklist", requireOpsPermission(OPS_RESOURCES.ADMISSION, "read"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
 
     const r = await pool.query<Record<string, unknown>>(
@@ -1867,11 +1868,11 @@ opsRouter.get("/admissions/:id/lic-checklist", async (req, res) => {
 });
 
 // PUT /admissions/:id/lic/:form
-opsRouter.put("/admissions/:id/lic/:form", async (req, res) => {
+opsRouter.put("/admissions/:id/lic/:form", requireOpsPermission(OPS_RESOURCES.ADMISSION, "update"), async (req, res) => {
   try {
-    const admissionId = parseInt(req.params.id, 10);
+    const admissionId = parseInt(String(req.params.id), 10);
     if (isNaN(admissionId)) return res.status(400).json({ success: false, error: "Invalid id" });
-    const { form } = req.params;
+    const form = String(req.params.form);
     const parsed = licFormSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
@@ -1885,9 +1886,9 @@ opsRouter.put("/admissions/:id/lic/:form", async (req, res) => {
 });
 
 // POST /admissions/:id/convert
-opsRouter.post("/admissions/:id/convert", async (req, res) => {
+opsRouter.post("/admissions/:id/convert", requireOpsPermission(OPS_RESOURCES.ADMISSION, "update"), async (req, res) => {
   try {
-    const admissionId = parseInt(req.params.id, 10);
+    const admissionId = parseInt(String(req.params.id), 10);
     if (isNaN(admissionId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const resident = await ops.convertAdmissionToResident(admissionId);
     if (!resident) return res.status(404).json({ success: false, error: "Admission not found or lead missing" });
@@ -1898,9 +1899,9 @@ opsRouter.post("/admissions/:id/convert", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/occupancy
-opsRouter.get("/facilities/:facilityNumber/occupancy", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/occupancy", requireOpsPermission(OPS_RESOURCES.DASHBOARD, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const occupancy = await ops.getOccupancy(facilityNumber);
     res.json({ success: true, data: occupancy });
   } catch (e) {
@@ -1909,9 +1910,9 @@ opsRouter.get("/facilities/:facilityNumber/occupancy", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/crm-pipeline
-opsRouter.get("/facilities/:facilityNumber/crm-pipeline", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/crm-pipeline", requireOpsPermission(OPS_RESOURCES.LEAD, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
 
     const r = await pool.query<{ stage: string; count: number }>(
       `SELECT stage, COUNT(*)::int as count FROM ops_leads WHERE facility_number = $1 GROUP BY stage`,
@@ -1934,10 +1935,10 @@ opsRouter.get("/facilities/:facilityNumber/crm-pipeline", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /residents/:id/billing
-opsRouter.get("/residents/:id/billing", async (req, res) => {
+opsRouter.get("/residents/:id/billing", requireOpsPermission(OPS_RESOURCES.BILLING, "read"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const residentId = parseInt(req.params.id, 10);
+    const residentId = parseInt(String(req.params.id), 10);
     if (isNaN(residentId)) return res.status(400).json({ success: false, error: "Invalid id" });
     const charges = await ops.listCharges(facilityNumber, residentId);
 
@@ -1954,7 +1955,7 @@ opsRouter.get("/residents/:id/billing", async (req, res) => {
 });
 
 // POST /billing/charges
-opsRouter.post("/billing/charges", async (req, res) => {
+opsRouter.post("/billing/charges", requireOpsPermission(OPS_RESOURCES.BILLING, "create"), async (req, res) => {
   try {
     const parsed = chargeSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1968,10 +1969,10 @@ opsRouter.post("/billing/charges", async (req, res) => {
 });
 
 // PUT /billing/charges/:id
-opsRouter.put("/billing/charges/:id", async (req, res) => {
+opsRouter.put("/billing/charges/:id", requireOpsPermission(OPS_RESOURCES.BILLING, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = chargeSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -2012,10 +2013,10 @@ opsRouter.put("/billing/charges/:id", async (req, res) => {
 });
 
 // DELETE /billing/charges/:id
-opsRouter.delete("/billing/charges/:id", async (req, res) => {
+opsRouter.delete("/billing/charges/:id", requireOpsPermission(OPS_RESOURCES.BILLING, "delete"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const ok = await ops.deleteCharge(id, facilityNumber);
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
@@ -2026,7 +2027,7 @@ opsRouter.delete("/billing/charges/:id", async (req, res) => {
 });
 
 // POST /billing/invoices/generate
-opsRouter.post("/billing/invoices/generate", async (req, res) => {
+opsRouter.post("/billing/invoices/generate", requireOpsPermission(OPS_RESOURCES.BILLING, "create"), async (req, res) => {
   try {
     const parsed = generateInvoiceSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -2045,9 +2046,9 @@ opsRouter.post("/billing/invoices/generate", async (req, res) => {
 });
 
 // GET /billing/invoices/:id
-opsRouter.get("/billing/invoices/:id", async (req, res) => {
+opsRouter.get("/billing/invoices/:id", requireOpsPermission(OPS_RESOURCES.BILLING, "read"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const invoice = await ops.getInvoice(id);
     if (!invoice) return res.status(404).json({ success: false, error: "Not found" });
@@ -2058,9 +2059,9 @@ opsRouter.get("/billing/invoices/:id", async (req, res) => {
 });
 
 // PUT /billing/invoices/:id/send
-opsRouter.put("/billing/invoices/:id/send", async (req, res) => {
+opsRouter.put("/billing/invoices/:id/send", requireOpsPermission(OPS_RESOURCES.BILLING, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const ok = await ops.markInvoiceSent(id);
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
@@ -2071,7 +2072,7 @@ opsRouter.put("/billing/invoices/:id/send", async (req, res) => {
 });
 
 // POST /billing/payments
-opsRouter.post("/billing/payments", async (req, res) => {
+opsRouter.post("/billing/payments", requireOpsPermission(OPS_RESOURCES.BILLING, "create"), async (req, res) => {
   try {
     const parsed = paymentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -2085,9 +2086,9 @@ opsRouter.post("/billing/payments", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/ar-aging
-opsRouter.get("/facilities/:facilityNumber/ar-aging", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/ar-aging", requireOpsPermission(OPS_RESOURCES.BILLING, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const aging = await ops.getArAging(facilityNumber);
     res.json({ success: true, data: aging });
   } catch (e) {
@@ -2096,9 +2097,9 @@ opsRouter.get("/facilities/:facilityNumber/ar-aging", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/billing-summary
-opsRouter.get("/facilities/:facilityNumber/billing-summary", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/billing-summary", requireOpsPermission(OPS_RESOURCES.BILLING, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const start = parseInt(String(req.query.start ?? "0"), 10);
     const end = parseInt(String(req.query.end ?? Date.now()), 10);
     const summary = await ops.getBillingSummary(facilityNumber, start, end);
@@ -2113,9 +2114,9 @@ opsRouter.get("/facilities/:facilityNumber/billing-summary", async (req, res) =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /facilities/:facilityNumber/staff
-opsRouter.get("/facilities/:facilityNumber/staff", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/staff", requireOpsPermission(OPS_RESOURCES.STAFF, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const status = req.query.status ? String(req.query.status) : undefined;
     const staff = await ops.listStaff(facilityNumber, status);
     res.json({ success: true, data: staff });
@@ -2125,7 +2126,7 @@ opsRouter.get("/facilities/:facilityNumber/staff", async (req, res) => {
 });
 
 // POST /staff
-opsRouter.post("/staff", async (req, res) => {
+opsRouter.post("/staff", requireOpsPermission(OPS_RESOURCES.STAFF, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const parsed = staffSchema.safeParse(req.body);
@@ -2148,10 +2149,10 @@ opsRouter.post("/staff", async (req, res) => {
 });
 
 // PUT /staff/:id
-opsRouter.put("/staff/:id", async (req, res) => {
+opsRouter.put("/staff/:id", requireOpsPermission(OPS_RESOURCES.STAFF, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = staffSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -2166,10 +2167,10 @@ opsRouter.put("/staff/:id", async (req, res) => {
 });
 
 // DELETE /staff/:id (deactivate)
-opsRouter.delete("/staff/:id", async (req, res) => {
+opsRouter.delete("/staff/:id", requireOpsPermission(OPS_RESOURCES.STAFF, "delete"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const ok = await ops.deactivateStaff(id, facilityNumber);
     if (!ok) return res.status(404).json({ success: false, error: "Not found" });
@@ -2180,9 +2181,9 @@ opsRouter.delete("/staff/:id", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/schedule
-opsRouter.get("/facilities/:facilityNumber/schedule", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/schedule", requireOpsPermission(OPS_RESOURCES.SHIFT, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const weekStart = parseInt(String(req.query.weekStart ?? "0"), 10);
     const shifts = await ops.listShifts(facilityNumber, weekStart);
     res.json({ success: true, data: shifts });
@@ -2192,7 +2193,7 @@ opsRouter.get("/facilities/:facilityNumber/schedule", async (req, res) => {
 });
 
 // POST /shifts
-opsRouter.post("/shifts", async (req, res) => {
+opsRouter.post("/shifts", requireOpsPermission(OPS_RESOURCES.SHIFT, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const parsed = shiftSchema.safeParse(req.body);
@@ -2211,9 +2212,9 @@ opsRouter.post("/shifts", async (req, res) => {
 });
 
 // PUT /shifts/:id
-opsRouter.put("/shifts/:id", async (req, res) => {
+opsRouter.put("/shifts/:id", requireOpsPermission(OPS_RESOURCES.SHIFT, "update"), async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = shiftSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -2254,9 +2255,9 @@ opsRouter.put("/shifts/:id", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /facilities/:facilityNumber/compliance
-opsRouter.get("/facilities/:facilityNumber/compliance", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/compliance", requireOpsPermission(OPS_RESOURCES.OBLIGATION, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const status = req.query.status ? String(req.query.status) : undefined;
     // Best-effort backfill so any legacy row written by an older client
     // is visible through the obligation table. Wrapped in try/catch so a
@@ -2274,7 +2275,7 @@ opsRouter.get("/facilities/:facilityNumber/compliance", async (req, res) => {
 });
 
 // POST /compliance — writes to ops_obligations
-opsRouter.post("/compliance", async (req, res) => {
+opsRouter.post("/compliance", requireOpsPermission(OPS_RESOURCES.OBLIGATION, "create"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
     const parsed = complianceItemSchema.safeParse(req.body);
@@ -2300,10 +2301,10 @@ opsRouter.post("/compliance", async (req, res) => {
 });
 
 // PUT /compliance/:id — completes the matching obligation
-opsRouter.put("/compliance/:id", async (req, res) => {
+opsRouter.put("/compliance/:id", requireOpsPermission(OPS_RESOURCES.OBLIGATION, "update"), async (req, res) => {
   try {
     const facilityNumber = getFacilityNumber(req);
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
     const parsed = completeComplianceSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -2323,9 +2324,9 @@ opsRouter.put("/compliance/:id", async (req, res) => {
 });
 
 // GET /facilities/:facilityNumber/compliance/overdue
-opsRouter.get("/facilities/:facilityNumber/compliance/overdue", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/compliance/overdue", requireOpsPermission(OPS_RESOURCES.OBLIGATION, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     try {
       await obligations.backfillLegacyComplianceItems(facilityNumber, getActor(req));
     } catch (err) {
@@ -2346,9 +2347,9 @@ opsRouter.get("/facilities/:facilityNumber/compliance/overdue", async (req, res)
 // Returns one normalized event row per scheduled item across all six source
 // modules. Drives the Day/Week time-grid views and stays in sync with any
 // data the user enters elsewhere in the portal.
-opsRouter.get("/facilities/:facilityNumber/calendar/events", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/calendar/events", requireOpsPermission(OPS_RESOURCES.DASHBOARD, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     if (getFacilityNumber(req) !== facilityNumber) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
@@ -2412,9 +2413,9 @@ opsRouter.get("/facilities/:facilityNumber/calendar/events", async (req, res) =>
 });
 
 // GET /facilities/:facilityNumber/dashboard
-opsRouter.get("/facilities/:facilityNumber/dashboard", async (req, res) => {
+opsRouter.get("/facilities/:facilityNumber/dashboard", requireOpsPermission(OPS_RESOURCES.DASHBOARD, "read"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     const dashboard = await ops.getFacilityDashboard(facilityNumber);
     res.json({ success: true, data: dashboard });
   } catch (e) {
@@ -2427,9 +2428,9 @@ opsRouter.get("/facilities/:facilityNumber/dashboard", async (req, res) => {
 // medications + today's med-pass entries (with a deterministic mix of
 // statuses) so the calendar's color states are all visible. No-op if the
 // facility already has any resident on file.
-opsRouter.post("/facilities/:facilityNumber/seed-demo", async (req, res) => {
+opsRouter.post("/facilities/:facilityNumber/seed-demo", requireOpsPermission(OPS_RESOURCES.DASHBOARD, "create"), async (req, res) => {
   try {
-    const { facilityNumber } = req.params;
+    const facilityNumber = String(req.params.facilityNumber);
     if (getFacilityNumber(req) !== facilityNumber) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
