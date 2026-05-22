@@ -194,6 +194,33 @@ The wire format these endpoints emit is unchanged: a wire-compat shim ([server/l
 
 **Stripe webhook idempotency (Phase 2 R2).** Stripe webhook events are deduplicated via `stripe_processed_events(event_id PRIMARY KEY)`. The handler does `INSERT ... ON CONFLICT (event_id) DO NOTHING ... RETURNING event_id` immediately after signature verification and short-circuits with `{ received: true, alreadyProcessed: true }` when RETURNING yields no rows. This makes the webhook safe under Stripe replays: the subscription upsert never re-runs on a duplicate event, eliminating write amplification and removing the failure mode where a downstream side effect could drift between the first and second processing of the same event.
 
+### Schema invariants — Phase 3 audit columns + membership table
+
+Phase 3 lands two changes to the ops/auth schema (`migrations/0005_phase_3_membership_and_audit_columns.sql`):
+
+**`facility_users` membership table (schema seam only).** A new join table connecting `facility_accounts` (one-login-per-facility today) with the preserved-through-Phase-2 `users` table. Auth flow is **not** switched yet — `facility_users` exists so a later phase can introduce multi-staff facilities without a schema rewrite. No rows backfilled. Role enum is enforced via DB `CHECK` against `('facility_admin','admin','auditor','don','med_tech','schedule_lead','office_manager')`; canonical list lives in `shared/schema.ts:facilityUserRoleSchema`. Soft-delete via `deleted_at`; partial UNIQUE `(facility_account_id, user_id) WHERE deleted_at IS NULL` allows reopen after archive. Do NOT migrate the auth layer to read from `facility_users` until a follow-up phase signs off — the table is currently write-only-future.
+
+**Standardized audit columns across `ops_*` tables.** Every mutable `ops_*` table now carries the four columns `created_at`, `updated_at` (BIGINT epoch-ms), `created_by`, `updated_by` (TEXT, default `'system'`). A generic Postgres trigger function `set_updated_at_epoch_ms()` fires `BEFORE UPDATE` on each mutable table and overwrites `updated_at` — storage code **does not need to** (and should not) compute it on UPDATEs. INSERTs still set `created_at` + `updated_at` explicitly. `created_by` / `updated_by` are populated from the existing `actor: AuditActor` parameter (`actor.id`) at INSERT and UPDATE sites respectively; absent actor → `'system'` fallback via the `actorId()` helper in `opsStorage.ts`.
+
+**Append-only tables get `created_by` only.** These tables get `created_at` + `created_by` standardized but **no** `updated_at` / `updated_by` and **no** trigger — the application contract is insert-only (corrections via a new row):
+
+- `ops_audit_trail` — immutable audit log; `created_by` backfilled from `actor_id`.
+- `ops_notification_log` — insert-only send-attempt log.
+- `ops_resident_trust_ledger` — insert-only financial ledger; corrections via reversal entries.
+- `ops_preaudit_pulls` — insert-only audit-pull log; `created_at` backfilled from `generated_at`.
+- `ops_med_destruction` — insert-only destruction log.
+- `ops_controlled_sub_counts` — insert-only at the contract layer; the single legacy `resolveControlledSubDiscrepancy` UPDATE site stays but does NOT touch `updated_*` (those columns are absent here).
+- `ops_resident_trust_statements` — insert-only monthly snapshots; `created_at` backfilled from `generated_at`.
+- `ops_complaint_investigation_notes` — append-only by application contract; `created_at` / `created_by` backfilled from `noted_at` / `noted_by`.
+
+**Drizzle TS defs deliberately omit `.notNull()` on `created_by`.** The DB enforces `NOT NULL DEFAULT 'system'` — the Drizzle column is declared with `.default("system")` (no `.notNull()`) so legacy explicit SELECT projections that don't fetch `created_by` keep type-checking, and the DB default fills the column on insert sites that omit it. Where the original schema already had `created_by TEXT NOT NULL` (e.g. `ops_care_plans`, `ops_drill_logs`, `ops_obligations`, `ops_share_links`, `ops_posting_catalog`, `ops_resident_trust_accounts`, `ops_inspections`, `ops_complaints`, `ops_staff_credentials`), that declaration is preserved verbatim.
+
+**Writing storage code that touches these columns.** Follow the existing pattern in `opsStorage.ts`:
+
+- **INSERT**: pass `createdAt: now, updatedAt: now, createdBy: by, updatedBy: by` where `const by = actorId(actor)`. Where the table is append-only, set `createdBy: by` only.
+- **UPDATE**: pass `updatedAt: now, updatedBy: actorId(actor)`. Do **not** touch `createdBy`. The DB trigger will overwrite `updatedAt` if you forget it, but writing it explicitly keeps the storage code self-documenting.
+- **Never add a new function parameter to thread an actor** — every mutable `opsStorage.ts` function that audits already takes an `actor: AuditActor` (sometimes optional `?`). Reuse it.
+
 ### Tracker Module
 
 Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-schemas/). Adding a tracker is a registry entry — no new routes, no DB migration, no shell changes (assuming an existing render pattern fits).

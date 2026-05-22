@@ -227,6 +227,10 @@ function toNumber(v: string | number | null | undefined): number {
 }
 
 function shapeCatalogRow(r: CatalogJoinRow, now: number): PostingCatalogRow {
+  // Phase 3: updatedBy / createdBy on the verification row map to null in this
+  // legacy join projection — the raw SQL above doesn't fetch them. The DB
+  // DEFAULT 'system' takes care of population on insert; UI flows here only
+  // read the catalog/freshness columns.
   const catalog: OpsPostingCatalog = {
     id: Number(r.id),
     facilityNumber: r.facility_number,
@@ -241,6 +245,7 @@ function shapeCatalogRow(r: CatalogJoinRow, now: number): PostingCatalogRow {
     createdBy: r.created_by,
     createdAt: toNumber(r.created_at),
     updatedAt: toNumber(r.updated_at),
+    updatedBy: null,
   };
 
   let latest: OpsPostingVerification | null = null;
@@ -256,6 +261,9 @@ function shapeCatalogRow(r: CatalogJoinRow, now: number): PostingCatalogRow {
       note: r.v_note,
       evidenceCount: Number(r.v_evidence_count ?? 0),
       createdAt: toNumber(r.v_created_at),
+      updatedAt: null,
+      createdBy: null,
+      updatedBy: null,
     };
   }
 
