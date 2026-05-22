@@ -5,7 +5,15 @@
  *   - facility_overrides.{hours_of_operation_json, languages_spoken_json,
  *     care_types_offered_json, accreditations_json, prefilled_fields}
  *   - job_postings.requirements
- *   - job_seeker_profiles.job_types
+ *
+ * Note: `job_seeker_profiles.job_types` also flipped to JSONB but is
+ * intentionally NOT in this shim — the existing /api/jobseeker/profile
+ * GET/PUT handlers always returned `jobTypes` as a parsed `string[]`
+ * (FE type is `string[]` in client/src/lib/seekerProfileTypes.ts and
+ * SeekerProfileEditor.tsx). Re-stringifying it would break every
+ * consumer. The `serialiseJobSeekerProfileRow` helper stays exported as
+ * a no-op so future JSONB columns on that row can plug into the same
+ * pattern, but `jobTypes` itself is now natively an array on the wire.
  *
  * Pre-conversion, the server returned these to the client as JSON-encoded
  * STRINGS (FE code did its own JSON.parse). Drizzle now hands the route
@@ -39,7 +47,10 @@ const FACILITY_OVERRIDE_JSON_KEYS = [
 
 const JOB_POSTING_JSON_KEYS = ["requirements"] as const;
 
-const JOB_SEEKER_PROFILE_JSON_KEYS = ["jobTypes"] as const;
+// Empty — see header comment. `jobTypes` is intentionally NOT
+// re-stringified; the wire contract for that field is `string[]`, matching
+// how the GET/PUT /api/jobseeker/profile handlers have always returned it.
+const JOB_SEEKER_PROFILE_JSON_KEYS = [] as const;
 
 function stringifyJsonbKeys<T extends Record<string, unknown>>(
   row: T,

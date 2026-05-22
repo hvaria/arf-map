@@ -13,11 +13,12 @@
 // `from "@/components/seeker/SeekerProfileEditor"` resolve to the
 // same identifier.
 //
-// NOTE: this is a CLIENT-PARSED shape — `jobTypes` arrives over the
-// wire as a JSON-encoded TEXT column on `job_seeker_profiles` and
-// is parsed to `string[]` before the type is materialized. The
-// Drizzle-inferred type in `shared/schema.ts:262` has the raw TEXT
-// representation; do not confuse the two.
+// NOTE: `jobTypes` arrives over the wire as `string[]` directly.
+// Phase 2 R2 flipped `job_seeker_profiles.job_types` from TEXT (with
+// server-side JSON.parse) to JSONB; the route handlers in
+// `server/routes.ts` decode the column server-side and emit the array
+// natively. The wire contract has always been `string[]` from this
+// type's perspective.
 
 export interface JobSeekerProfile {
   id: number;

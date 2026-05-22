@@ -817,6 +817,7 @@ export interface DayOpsEvent {
   incidentsTotal: number;
   incidentsOpen:  number;
   leadsFollowups: number;
+  toursScheduled: number;
   billingDue:     number;
   complianceDue:  number;
 }
@@ -830,28 +831,31 @@ export async function getCalendarSummary(
   type TaskRow = { date: string; total: number; completed: number; overdue: number };
   type IncRow  = { date: string; total: number; open: number };
   type LRow    = { date: string; followups: number };
+  type TourRow = { date: string; tours: number };
   type BRow    = { date: string; due: number };
   type CRow    = { date: string; due: number };
 
   const pg = (col: string) => `TO_CHAR(TO_TIMESTAMP(${col}/1000.0),'YYYY-MM-DD')`;
-  const [r1, r2, r3, r4, r5, r6] = await Promise.all([
+  const [r1, r2, r3, r4, rTours, r5, r6] = await Promise.all([
     pool.query<MedRow>(`SELECT ${pg('scheduled_datetime')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='given' THEN 1 ELSE 0 END)::int AS given,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)::int AS pending,SUM(CASE WHEN status='late' THEN 1 ELSE 0 END)::int AS late,SUM(CASE WHEN status='missed' THEN 1 ELSE 0 END)::int AS missed FROM ops_med_passes WHERE facility_number=$1 AND scheduled_datetime>=$2 AND scheduled_datetime<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<TaskRow>(`SELECT ${pg('task_date')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END)::int AS completed,SUM(CASE WHEN status='pending' AND task_date < $4 THEN 1 ELSE 0 END)::int AS overdue FROM ops_daily_tasks WHERE facility_number=$1 AND task_date>=$2 AND task_date<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs, Date.now()]),
     pool.query<IncRow>(`SELECT ${pg('incident_date')} AS date,COUNT(*)::int AS total,SUM(CASE WHEN status='open' THEN 1 ELSE 0 END)::int AS open FROM ops_incidents WHERE facility_number=$1 AND incident_date>=$2 AND incident_date<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<LRow>(`SELECT ${pg('next_follow_up_date')} AS date,COUNT(*)::int AS followups FROM ops_leads WHERE facility_number=$1 AND next_follow_up_date IS NOT NULL AND next_follow_up_date>=$2 AND next_follow_up_date<$3 AND stage NOT IN ('admitted','lost') GROUP BY 1`, [facilityNumber, fromMs, toMs]),
+    pool.query<TourRow>(`SELECT ${pg('scheduled_at')} AS date,COUNT(*)::int AS tours FROM ops_tours WHERE facility_number=$1 AND scheduled_at>=$2 AND scheduled_at<$3 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<BRow>(`SELECT ${pg('due_date')} AS date,COUNT(*)::int AS due FROM ops_invoices WHERE facility_number=$1 AND due_date>=$2 AND due_date<$3 AND status NOT IN ('paid','void') AND balance_due>0 GROUP BY 1`, [facilityNumber, fromMs, toMs]),
     pool.query<CRow>(`SELECT ${pg('due_date')} AS date,COUNT(*)::int AS due FROM ops_compliance_calendar WHERE facility_number=$1 AND due_date>=$2 AND due_date<$3 AND status='pending' GROUP BY 1`, [facilityNumber, fromMs, toMs]),
   ]);
 
   const map = new Map<string, DayOpsEvent>();
   const get = (d: string): DayOpsEvent => {
-    if (!map.has(d)) map.set(d, { date: d, medsTotal:0, medsGiven:0, medsPending:0, medsLate:0, medsMissed:0, tasksTotal:0, tasksCompleted:0, tasksOverdue:0, incidentsTotal:0, incidentsOpen:0, leadsFollowups:0, billingDue:0, complianceDue:0 });
+    if (!map.has(d)) map.set(d, { date: d, medsTotal:0, medsGiven:0, medsPending:0, medsLate:0, medsMissed:0, tasksTotal:0, tasksCompleted:0, tasksOverdue:0, incidentsTotal:0, incidentsOpen:0, leadsFollowups:0, toursScheduled:0, billingDue:0, complianceDue:0 });
     return map.get(d)!;
   };
   for (const r of r1.rows) { const e = get(r.date); e.medsTotal=r.total; e.medsGiven=r.given; e.medsPending=r.pending; e.medsLate=r.late; e.medsMissed=r.missed; }
   for (const r of r2.rows) { const e = get(r.date); e.tasksTotal=r.total; e.tasksCompleted=r.completed; e.tasksOverdue=r.overdue; }
   for (const r of r3.rows) { const e = get(r.date); e.incidentsTotal=r.total; e.incidentsOpen=r.open; }
   for (const r of r4.rows) { get(r.date).leadsFollowups = r.followups; }
+  for (const r of rTours.rows) { get(r.date).toursScheduled = r.tours; }
   for (const r of r5.rows) { get(r.date).billingDue = r.due; }
   for (const r of r6.rows) { get(r.date).complianceDue = r.due; }
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -1432,16 +1436,69 @@ export async function deactivateStaff(id: number, facilityNumber: string): Promi
   return rows.length > 0;
 }
 
-export async function listShifts(facilityNumber: string, weekStart: number): Promise<OpsShift[]> {
+// Shift rows joined with the staff member's name so the weekly grid can
+// render the chip label in one network round-trip. The FE expects
+// `staffName` on each row (StaffContent.tsx `interface Shift`); without
+// the join every chip rendered as an empty bar.
+export async function listShifts(
+  facilityNumber: string,
+  weekStart: number,
+): Promise<Array<OpsShift & { staffName: string }>> {
   const weekEnd = weekStart + 7 * 86400000;
-  const cond = and(eq(opsShifts.facilityNumber, facilityNumber), gte(opsShifts.shiftDate, weekStart), lte(opsShifts.shiftDate, weekEnd));
-  return db.select().from(opsShifts).where(cond).orderBy(opsShifts.shiftDate);
+  const result = await pool.query<{
+    id: number;
+    facility_number: string;
+    staff_id: number;
+    shift_date: number;
+    shift_type: string;
+    start_time: string;
+    end_time: string;
+    is_overtime: number | null;
+    status: string;
+    covered_by_id: number | null;
+    notes: string | null;
+    created_at: number;
+    staff_name: string;
+  }>(
+    `SELECT s.id, s.facility_number, s.staff_id, s.shift_date, s.shift_type,
+            s.start_time, s.end_time, s.is_overtime, s.status, s.covered_by_id,
+            s.notes, s.created_at,
+            COALESCE(NULLIF(TRIM(st.first_name || ' ' || st.last_name), ''), 'Unknown') AS staff_name
+       FROM ops_shifts s
+       LEFT JOIN ops_staff st ON st.id = s.staff_id
+      WHERE s.facility_number = $1
+        AND s.shift_date >= $2
+        AND s.shift_date <= $3
+      ORDER BY s.shift_date ASC`,
+    [facilityNumber, weekStart, weekEnd],
+  );
+  return result.rows.map((r) => ({
+    id: r.id,
+    facilityNumber: r.facility_number,
+    staffId: r.staff_id,
+    shiftDate: r.shift_date,
+    shiftType: r.shift_type,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    isOvertime: r.is_overtime,
+    status: r.status,
+    coveredById: r.covered_by_id,
+    notes: r.notes,
+    createdAt: r.created_at,
+    staffName: r.staff_name,
+  }));
 }
 
 export async function createShift(data: InsertOpsShift): Promise<OpsShift> {
   const now = Date.now();
   const rows = await db.insert(opsShifts).values({ ...data, createdAt: now }).returning();
   return rows[0] as OpsShift;
+}
+
+export async function deleteShift(id: number, facilityNumber: string): Promise<boolean> {
+  const cond = and(eq(opsShifts.id, id), eq(opsShifts.facilityNumber, facilityNumber));
+  const rows = await db.delete(opsShifts).where(cond).returning({ id: opsShifts.id });
+  return rows.length > 0;
 }
 
 export async function updateShift(id: number, data: Partial<InsertOpsShift>): Promise<OpsShift | undefined> {
@@ -2334,16 +2391,31 @@ export async function resolveTemperatureFollowUp(
 // and avoids adding a deleted_at column to ops_drill_logs. List filters
 // also accept an `includeDeleted` opt for audit/admin recovery views.
 
-function rowToDrillLog(row: OpsDrillLog): OpsDrillLog & {
+// Strip the raw JSONB columns from the wire shape and replace with decoded
+// arrays. Phase 2 R2 flipped these from TEXT (stringified JSON) to JSONB
+// (arrays at rest). Leaving the *Json keys on the wire would leak raw arrays
+// under names the FE types as `string | null` — confusing every consumer.
+// The FE only ever needed the decoded `participants` / `residentsInvolved` /
+// `correctiveActions` shape, so this drops the *Json keys entirely.
+function rowToDrillLog(row: OpsDrillLog): Omit<
+  OpsDrillLog,
+  "participantsJson" | "residentsInvolvedJson" | "correctiveActionsJson"
+> & {
   participants: string[];
   residentsInvolved: string[];
   correctiveActions: string[];
 } {
+  const {
+    participantsJson,
+    residentsInvolvedJson,
+    correctiveActionsJson,
+    ...rest
+  } = row;
   return {
-    ...row,
-    participants: parseJsonArray<string>(row.participantsJson),
-    residentsInvolved: parseJsonArray<string>(row.residentsInvolvedJson),
-    correctiveActions: parseJsonArray<string>(row.correctiveActionsJson),
+    ...rest,
+    participants: parseJsonArray<string>(participantsJson),
+    residentsInvolved: parseJsonArray<string>(residentsInvolvedJson),
+    correctiveActions: parseJsonArray<string>(correctiveActionsJson),
   };
 }
 

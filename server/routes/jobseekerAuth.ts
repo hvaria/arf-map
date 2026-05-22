@@ -128,8 +128,17 @@ jobseekerAuthRouter.get("/me", requireJobSeekerAuth, async (req, res, next) => {
   try {
     const profile = await authService.getProfile(req.session.jobSeekerId!);
     if (!profile) {
+      // Stale session — the account row was deleted while the session row
+      // outlived it. Capture the CSRF token BEFORE destroying the session
+      // (destroy invalidates session.csrfToken). Returning a fresh token
+      // lets the FE recover without an extra round-trip — same contract
+      // the requireJobSeekerAuth 401 path uses.
+      const csrfToken = getOrCreateCsrfToken(req);
       req.session.destroy(() => {});
-      return res.status(401).json({ message: "Session is no longer valid." });
+      return res.status(401).json({
+        message: "Session is no longer valid.",
+        csrfToken,
+      });
     }
     // Phase 1 backend hardening — per-session CSRF token. The FE stores this
     // and replays it as X-CSRF-Token on every mutation. The profile object

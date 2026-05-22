@@ -71,16 +71,17 @@ export interface DrillLog {
   scenario: string | null;
   executedAt: number;
   leader: string | null;
-  participantsJson: string | null;
-  residentsInvolvedJson: string | null;
   evacuationSeconds: number | null;
   debriefNotes: string | null;
-  correctiveActionsJson: string | null;
-  status: "executed" | "scheduled";
+  status: "executed" | "scheduled" | "completed" | "cancelled" | "deleted";
   createdBy: string;
   createdAt: number;
   updatedAt: number;
-  // Parsed arrays populated server-side by decodeDrillLog().
+  // Server's decodeDrillLog() decodes the JSONB columns and strips the raw
+  // *Json keys from the wire payload. The FE only ever consumes these
+  // decoded arrays. (Phase 2 R2: columns flipped from TEXT-JSON to JSONB;
+  // the wire shape no longer includes participantsJson / residentsInvolvedJson /
+  // correctiveActionsJson under any key.)
   participants: string[];
   residentsInvolved: string[];
   correctiveActions: string[];
@@ -90,16 +91,6 @@ const DRILL_KINDS = ["fire", "disaster", "active_threat", "other"] as const;
 const SHIFTS = ["AM", "PM", "NOC"] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function parseList(json: string | null | undefined): string[] {
-  if (!json) return [];
-  try {
-    const v = JSON.parse(json);
-    return Array.isArray(v) ? v.map(String) : [];
-  } catch {
-    return [];
-  }
-}
 
 function fmtMmSs(seconds: number | null): string {
   if (seconds === null || Number.isNaN(seconds)) return "—";
@@ -697,11 +688,11 @@ export function DrillsContent({ facilityNumber }: { facilityNumber: string }) {
             {[...last12]
               .sort((a, b) => b.executedAt - a.executedAt)
               .map((d) => {
-                // Server's decodeDrillLog already parses JSON columns into arrays.
-                // Fall back to the raw JSON strings only if a row was returned
-                // by a code path that didn't run the decoder.
-                const participants = d.participants ?? parseList(d.participantsJson);
-                const residents = d.residentsInvolved ?? parseList(d.residentsInvolvedJson);
+                // Server's decodeDrillLog parses JSONB into arrays and strips
+                // the raw *Json keys from the wire payload, so consume the
+                // decoded arrays directly (no fallback needed).
+                const participants = d.participants ?? [];
+                const residents = d.residentsInvolved ?? [];
                 return (
                   <li
                     key={d.id}

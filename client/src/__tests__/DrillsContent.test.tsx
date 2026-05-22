@@ -72,15 +72,14 @@ function drill(overrides: Partial<DrillLog> = {}): DrillLog {
     scenario: "Kitchen fire",
     executedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
     leader: "Maria S.",
-    participantsJson: JSON.stringify(["Anil P.", "Tom L."]),
-    residentsInvolvedJson: null,
     evacuationSeconds: 118,
     debriefNotes: null,
-    correctiveActionsJson: null,
     status: "executed",
     createdBy: "test",
     createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+    // Phase 2 R2: server's decodeDrillLog decodes the JSONB columns into
+    // these arrays and strips the raw *Json keys from the wire.
     participants: ["Anil P.", "Tom L."],
     residentsInvolved: [],
     correctiveActions: [],

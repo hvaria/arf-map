@@ -91,13 +91,6 @@ const facilityResetPasswordSchema = z.object({
   newPassword: z.string().min(8, "Password must be at least 8 characters"),
 });
 
-const detailsSchema = z.object({
-  phone: z.string().optional(),
-  description: z.string().optional(),
-  website: z.string().optional(),
-  email: z.string().optional(),
-});
-
 // Reject obvious placeholder/test strings so seed data and rushed entries
 // can't surface in the public Open Positions feed.
 const PLACEHOLDER_REGEX = /^(test|placeholder|n\/a|na|todo|tbd|sample|asdf|x+|\.+|-+)$/i;
@@ -871,16 +864,11 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ── Facility details ─────────────────────────────────────────────────────────
-
-  app.put("/api/facility/details", requireAuth, async (req, res) => {
-    const parsed = detailsSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: parsed.error.errors[0].message });
-    }
-    const facilityNumber = req.user!.facilityNumber;
-    const override = await storage.upsertFacilityOverride(facilityNumber, parsed.data);
-    res.json(override);
-  });
+  // PUT /api/facility/details was removed — replaced by PUT /api/facility/profile
+  // in server/routes/facilityProfile.ts. The new endpoint covers the same four
+  // scalar fields (phone/description/website/email) plus the full profile
+  // surface, and pipes its response through serialiseFacilityOverrideRow so
+  // the JSONB columns stay wire-shape compatible.
 
   // ── Public job listings ──────────────────────────────────────────────────────
 
