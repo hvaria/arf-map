@@ -1261,8 +1261,12 @@ export async function deleteCharge(id: number, facilityNumber: string): Promise<
 }
 
 export async function generateInvoice(facilityNumber: string, residentId: number, periodStart: number, periodEnd: number): Promise<OpsInvoice> {
-  const chargesResult = await pool.query<{ subtotal: string }>(
-    `SELECT COALESCE(SUM(amount * quantity), 0) as subtotal
+  // amount is BIGINT cents; quantity is DOUBLE PRECISION (fractional units).
+  // ROUND to a single integer cent total so the BIGINT invoice columns
+  // never see a fractional value. Storage stays in cents end-to-end —
+  // dollars conversion happens at the route boundary (server/lib/money.ts).
+  const chargesResult = await pool.query<{ subtotal_cents: string }>(
+    `SELECT COALESCE(ROUND(SUM(amount * quantity))::BIGINT, 0)::TEXT AS subtotal_cents
      FROM ops_billing_charges
      WHERE facility_number = $1 AND resident_id = $2
        AND (
@@ -1272,10 +1276,10 @@ export async function generateInvoice(facilityNumber: string, residentId: number
        )`,
     [facilityNumber, residentId, periodStart, periodEnd]
   );
-  const subtotal = parseFloat(chargesResult.rows[0]?.subtotal ?? "0");
+  const subtotalCents = Number(chargesResult.rows[0]?.subtotal_cents ?? "0");
 
-  const tax = 0;
-  const total = subtotal + tax;
+  const taxCents = 0;
+  const totalCents = subtotalCents + taxCents;
   const now = Date.now();
   const dueDate = now + 30 * 86400000;
 
@@ -1285,11 +1289,11 @@ export async function generateInvoice(facilityNumber: string, residentId: number
     invoiceNumber: `INV-${facilityNumber}-${now}`,
     billingPeriodStart: periodStart,
     billingPeriodEnd: periodEnd,
-    subtotal,
-    tax,
-    total,
+    subtotal:   subtotalCents,
+    tax:        taxCents,
+    total:      totalCents,
     amountPaid: 0,
-    balanceDue: total,
+    balanceDue: totalCents,
     status: "draft" as const,
     dueDate,
     createdAt: now,
@@ -1311,6 +1315,9 @@ export async function markInvoiceSent(id: number): Promise<boolean> {
 }
 
 export async function recordPayment(data: InsertOpsPayment): Promise<OpsPayment> {
+  // All amounts are integer cents (BIGINT). Adding two BIGINT cents stays
+  // an integer; no rounding needed. Storage never converts to/from dollars
+  // — that happens in opsRouter at the request/response boundary.
   const now = Date.now();
   const payRows = await db.insert(opsPayments).values({ ...data, createdAt: now }).returning();
   const payment = payRows[0] as OpsPayment;
@@ -1318,11 +1325,17 @@ export async function recordPayment(data: InsertOpsPayment): Promise<OpsPayment>
   const invRows = await db.select().from(opsInvoices).where(eq(opsInvoices.id, data.invoiceId));
   const invoice = invRows[0] as OpsInvoice | undefined;
   if (invoice) {
-    const newAmountPaid = (invoice.amountPaid ?? 0) + data.amount;
-    const newBalanceDue = Math.max(0, (invoice.total ?? 0) - newAmountPaid);
-    const newStatus = newBalanceDue <= 0 ? "paid" : invoice.status === "draft" ? "sent" : invoice.status;
+    const newAmountPaidCents = (invoice.amountPaid ?? 0) + data.amount;
+    const newBalanceDueCents = Math.max(0, (invoice.total ?? 0) - newAmountPaidCents);
+    const newStatus = newBalanceDueCents <= 0 ? "paid" : invoice.status === "draft" ? "sent" : invoice.status;
     await db.update(opsInvoices)
-      .set({ amountPaid: newAmountPaid, balanceDue: newBalanceDue, status: newStatus, paidAt: newBalanceDue <= 0 ? now : invoice.paidAt, updatedAt: now })
+      .set({
+        amountPaid: newAmountPaidCents,
+        balanceDue: newBalanceDueCents,
+        status:     newStatus,
+        paidAt:     newBalanceDueCents <= 0 ? now : invoice.paidAt,
+        updatedAt:  now,
+      })
       .where(eq(opsInvoices.id, data.invoiceId));
   }
 
@@ -1332,6 +1345,9 @@ export async function recordPayment(data: InsertOpsPayment): Promise<OpsPayment>
 export async function getArAging(facilityNumber: string): Promise<{
   current: number; days_30: number; days_60: number; days_90: number; over_90: number;
 }> {
+  // Returns integer cents. Conversion to dollars happens in opsRouter.
+  // SUMs of BIGINT cents stay integer; pg numeric BIGINT is parsed to
+  // JS number via the global types.setTypeParser(20, ...) in db/index.ts.
   const now = Date.now();
   const d30 = now - 30 * 86400000;
   const d60 = now - 60 * 86400000;
@@ -1341,22 +1357,22 @@ export async function getArAging(facilityNumber: string): Promise<{
     current_amt: string | null; days_30_amt: string | null; days_60_amt: string | null; days_90_amt: string | null; over_90_amt: string | null;
   }>(
     `SELECT
-       SUM(CASE WHEN due_date >= $1 THEN balance_due ELSE 0 END) as current_amt,
-       SUM(CASE WHEN due_date >= $2 AND due_date < $1 THEN balance_due ELSE 0 END) as days_30_amt,
-       SUM(CASE WHEN due_date >= $3 AND due_date < $2 THEN balance_due ELSE 0 END) as days_60_amt,
-       SUM(CASE WHEN due_date >= $4 AND due_date < $3 THEN balance_due ELSE 0 END) as days_90_amt,
-       SUM(CASE WHEN due_date < $4 THEN balance_due ELSE 0 END) as over_90_amt
+       COALESCE(SUM(CASE WHEN due_date >= $1 THEN balance_due ELSE 0 END), 0)::TEXT as current_amt,
+       COALESCE(SUM(CASE WHEN due_date >= $2 AND due_date < $1 THEN balance_due ELSE 0 END), 0)::TEXT as days_30_amt,
+       COALESCE(SUM(CASE WHEN due_date >= $3 AND due_date < $2 THEN balance_due ELSE 0 END), 0)::TEXT as days_60_amt,
+       COALESCE(SUM(CASE WHEN due_date >= $4 AND due_date < $3 THEN balance_due ELSE 0 END), 0)::TEXT as days_90_amt,
+       COALESCE(SUM(CASE WHEN due_date < $4 THEN balance_due ELSE 0 END), 0)::TEXT as over_90_amt
      FROM ops_invoices
      WHERE facility_number = $5 AND status NOT IN ('paid', 'void') AND balance_due > 0`,
     [now, d30, d60, d90, facilityNumber]
   );
   const r = result.rows[0];
   return {
-    current: parseFloat(r?.current_amt ?? "0"),
-    days_30: parseFloat(r?.days_30_amt ?? "0"),
-    days_60: parseFloat(r?.days_60_amt ?? "0"),
-    days_90: parseFloat(r?.days_90_amt ?? "0"),
-    over_90: parseFloat(r?.over_90_amt ?? "0"),
+    current: Number(r?.current_amt ?? "0"),
+    days_30: Number(r?.days_30_amt ?? "0"),
+    days_60: Number(r?.days_60_amt ?? "0"),
+    days_90: Number(r?.days_90_amt ?? "0"),
+    over_90: Number(r?.over_90_amt ?? "0"),
   };
 }
 
@@ -1365,11 +1381,12 @@ export async function getBillingSummary(
   periodStart: number,
   periodEnd: number
 ): Promise<{ total_billed: number; total_paid: number; total_outstanding: number }> {
+  // Returns integer cents. Conversion to dollars happens in opsRouter.
   const result = await pool.query<{ total_billed: string; total_paid: string; total_outstanding: string }>(
     `SELECT
-       COALESCE(SUM(total), 0) as total_billed,
-       COALESCE(SUM(amount_paid), 0) as total_paid,
-       COALESCE(SUM(balance_due), 0) as total_outstanding
+       COALESCE(SUM(total),       0)::TEXT as total_billed,
+       COALESCE(SUM(amount_paid), 0)::TEXT as total_paid,
+       COALESCE(SUM(balance_due), 0)::TEXT as total_outstanding
      FROM ops_invoices
      WHERE facility_number = $1
        AND billing_period_start >= $2
@@ -1378,9 +1395,9 @@ export async function getBillingSummary(
   );
   const r = result.rows[0];
   return {
-    total_billed: parseFloat(r?.total_billed ?? "0"),
-    total_paid: parseFloat(r?.total_paid ?? "0"),
-    total_outstanding: parseFloat(r?.total_outstanding ?? "0"),
+    total_billed:      Number(r?.total_billed ?? "0"),
+    total_paid:        Number(r?.total_paid ?? "0"),
+    total_outstanding: Number(r?.total_outstanding ?? "0"),
   };
 }
 

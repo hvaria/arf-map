@@ -157,6 +157,10 @@ Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-sche
 **PDF reports.**
 `GET /api/ops/trackers/:slug/entries/export.pdf` mirrors the CSV endpoint exactly — same auth, validation, 92-day cap, `Cache-Control: no-store`, soft-delete exclusion. Response sets `X-Tracker-Export-Count` for the client toast. Renderer buffers all rows up-front because resident-grouped state-audit ordering can't stream.
 
+### Schema invariants (Phase 2)
+
+- **Money** is stored as `BIGINT cents` in `ops_invoices.{subtotal,tax,total,amount_paid,balance_due}`, `ops_billing_charges.amount`, `ops_payments.amount`, and `ops_resident_trust_*`. The wire/UI format is **dollars** (number). Conversion happens at the route boundary via `dollarsToCents`/`centsToDollars` from [server/lib/money.ts](server/lib/money.ts). Never store dollars as floats; never expose cents on the wire. `ops_billing_charges.quantity` stays `DOUBLE PRECISION` because it represents fractional units (e.g. 1.5 hours), not money.
+
 ### Two Auth Systems
 
 **Facility auth** — Passport.js `LocalStrategy` + server-side sessions. Stored in `facility_accounts`. The `requireAuth` middleware in `routes.ts` protects facility-specific endpoints.
