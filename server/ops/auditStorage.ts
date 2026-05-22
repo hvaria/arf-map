@@ -143,6 +143,9 @@ export async function listAuditForEntity(
       beforeJson: opsAuditTrail.beforeJson,
       afterJson: opsAuditTrail.afterJson,
       occurredAt: opsAuditTrail.occurredAt,
+      // Phase 3: required by OpsAuditTrailEntry now that the schema standardizes
+      // createdBy across the ops_* schema. Backfilled to actor_id on existing rows.
+      createdBy: opsAuditTrail.createdBy,
     })
     .from(opsAuditTrail)
     .where(

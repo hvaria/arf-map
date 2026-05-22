@@ -1171,6 +1171,267 @@ export const OPS_PG_SCHEMA_SQL = `
         USING (CASE WHEN parameters_json IS NULL OR parameters_json = '' THEN NULL ELSE parameters_json::jsonb END);
     END IF;
   END $$;
+
+  -- ── Phase 3: standardized audit columns + updated_at trigger ──────────────
+  -- Mirrors migrations/0005_phase_3_membership_and_audit_columns.sql. The
+  -- production path runs the migration; this block keeps dev/test DBs in
+  -- sync via the additive ADD COLUMN IF NOT EXISTS pattern. The trigger
+  -- function is replaced unconditionally (CREATE OR REPLACE) and per-table
+  -- triggers are DROP + CREATE so reruns are idempotent.
+  --
+  -- Append-only tables (audit trail, notification log, ledger, preaudit pulls,
+  -- med destruction, controlled-sub counts, trust statements) get
+  -- created_by ONLY — no updated_* columns and no trigger — because the
+  -- application layer never UPDATEs them.
+
+  CREATE OR REPLACE FUNCTION set_updated_at_epoch_ms() RETURNS TRIGGER AS $set_updated_at$
+  BEGIN
+    NEW.updated_at = (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT;
+    RETURN NEW;
+  END;
+  $set_updated_at$ LANGUAGE plpgsql;
+
+  -- Mutable tables — full audit column set + trigger.
+  ALTER TABLE ops_residents                ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_residents                ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_residents_updated_at ON ops_residents;
+  CREATE TRIGGER trg_ops_residents_updated_at BEFORE UPDATE ON ops_residents
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_resident_assessments     ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_resident_assessments     ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_resident_assessments     ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_resident_assessments SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_resident_assessments_updated_at ON ops_resident_assessments;
+  CREATE TRIGGER trg_ops_resident_assessments_updated_at BEFORE UPDATE ON ops_resident_assessments
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_care_plans               ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_care_plans_updated_at ON ops_care_plans;
+  CREATE TRIGGER trg_ops_care_plans_updated_at BEFORE UPDATE ON ops_care_plans
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_daily_tasks              ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_daily_tasks              ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_daily_tasks              ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_daily_tasks SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_daily_tasks_updated_at ON ops_daily_tasks;
+  CREATE TRIGGER trg_ops_daily_tasks_updated_at BEFORE UPDATE ON ops_daily_tasks
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_medications              ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_medications              ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_medications_updated_at ON ops_medications;
+  CREATE TRIGGER trg_ops_medications_updated_at BEFORE UPDATE ON ops_medications
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_med_passes               ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_med_passes               ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_med_passes               ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_med_passes SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_med_passes_updated_at ON ops_med_passes;
+  CREATE TRIGGER trg_ops_med_passes_updated_at BEFORE UPDATE ON ops_med_passes
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_incidents                ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_incidents                ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_incidents_updated_at ON ops_incidents;
+  CREATE TRIGGER trg_ops_incidents_updated_at BEFORE UPDATE ON ops_incidents
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_leads                    ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_leads                    ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_leads_updated_at ON ops_leads;
+  CREATE TRIGGER trg_ops_leads_updated_at BEFORE UPDATE ON ops_leads
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_tours                    ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_tours                    ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_tours                    ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_tours SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_tours_updated_at ON ops_tours;
+  CREATE TRIGGER trg_ops_tours_updated_at BEFORE UPDATE ON ops_tours
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_admissions               ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_admissions               ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_admissions_updated_at ON ops_admissions;
+  CREATE TRIGGER trg_ops_admissions_updated_at BEFORE UPDATE ON ops_admissions
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_billing_charges          ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_billing_charges          ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_billing_charges          ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_billing_charges SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_billing_charges_updated_at ON ops_billing_charges;
+  CREATE TRIGGER trg_ops_billing_charges_updated_at BEFORE UPDATE ON ops_billing_charges
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_invoices                 ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_invoices                 ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_invoices_updated_at ON ops_invoices;
+  CREATE TRIGGER trg_ops_invoices_updated_at BEFORE UPDATE ON ops_invoices
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_payments                 ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_payments                 ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_payments                 ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_payments SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_payments_updated_at ON ops_payments;
+  CREATE TRIGGER trg_ops_payments_updated_at BEFORE UPDATE ON ops_payments
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_staff                    ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_staff                    ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_staff_updated_at ON ops_staff;
+  CREATE TRIGGER trg_ops_staff_updated_at BEFORE UPDATE ON ops_staff
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_shifts                   ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_shifts                   ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_shifts                   ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_shifts SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_shifts_updated_at ON ops_shifts;
+  CREATE TRIGGER trg_ops_shifts_updated_at BEFORE UPDATE ON ops_shifts
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_facility_settings        ADD COLUMN IF NOT EXISTS created_at BIGINT;
+  ALTER TABLE ops_facility_settings        ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_facility_settings        ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_facility_settings SET created_at = updated_at WHERE created_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_facility_settings_updated_at ON ops_facility_settings;
+  CREATE TRIGGER trg_ops_facility_settings_updated_at BEFORE UPDATE ON ops_facility_settings
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_compliance_calendar      ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_compliance_calendar      ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_compliance_calendar      ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_compliance_calendar SET updated_at = created_at WHERE updated_at IS NULL;
+  DROP TRIGGER IF EXISTS trg_ops_compliance_calendar_updated_at ON ops_compliance_calendar;
+  CREATE TRIGGER trg_ops_compliance_calendar_updated_at BEFORE UPDATE ON ops_compliance_calendar
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_evidence_attachments     ADD COLUMN IF NOT EXISTS created_at BIGINT;
+  ALTER TABLE ops_evidence_attachments     ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_evidence_attachments     ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_evidence_attachments     ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_evidence_attachments SET created_at = uploaded_at WHERE created_at IS NULL;
+  UPDATE ops_evidence_attachments SET updated_at = uploaded_at WHERE updated_at IS NULL;
+  UPDATE ops_evidence_attachments SET created_by = uploaded_by WHERE created_by = 'system';
+  DROP TRIGGER IF EXISTS trg_ops_evidence_attachments_updated_at ON ops_evidence_attachments;
+  CREATE TRIGGER trg_ops_evidence_attachments_updated_at BEFORE UPDATE ON ops_evidence_attachments
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_temperature_fixtures     ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_temperature_fixtures     ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_temperature_fixtures_updated_at ON ops_temperature_fixtures;
+  CREATE TRIGGER trg_ops_temperature_fixtures_updated_at BEFORE UPDATE ON ops_temperature_fixtures
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_temperature_logs         ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_temperature_logs         ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_temperature_logs         ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_temperature_logs SET updated_at = created_at WHERE updated_at IS NULL;
+  UPDATE ops_temperature_logs SET created_by = recorded_by WHERE created_by = 'system';
+  DROP TRIGGER IF EXISTS trg_ops_temperature_logs_updated_at ON ops_temperature_logs;
+  CREATE TRIGGER trg_ops_temperature_logs_updated_at BEFORE UPDATE ON ops_temperature_logs
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_drill_logs               ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_drill_logs_updated_at ON ops_drill_logs;
+  CREATE TRIGGER trg_ops_drill_logs_updated_at BEFORE UPDATE ON ops_drill_logs
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_vendors                  ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_vendors                  ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_vendors_updated_at ON ops_vendors;
+  CREATE TRIGGER trg_ops_vendors_updated_at BEFORE UPDATE ON ops_vendors
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_complaints               ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_complaints_updated_at ON ops_complaints;
+  CREATE TRIGGER trg_ops_complaints_updated_at BEFORE UPDATE ON ops_complaints
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_complaint_investigation_notes ADD COLUMN IF NOT EXISTS created_at BIGINT;
+  ALTER TABLE ops_complaint_investigation_notes ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  UPDATE ops_complaint_investigation_notes SET created_at = noted_at WHERE created_at IS NULL;
+  UPDATE ops_complaint_investigation_notes SET created_by = noted_by WHERE created_by = 'system';
+
+  ALTER TABLE ops_inspections              ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_inspections_updated_at ON ops_inspections;
+  CREATE TRIGGER trg_ops_inspections_updated_at BEFORE UPDATE ON ops_inspections
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_inspection_citations     ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_inspection_citations     ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_inspection_citations_updated_at ON ops_inspection_citations;
+  CREATE TRIGGER trg_ops_inspection_citations_updated_at BEFORE UPDATE ON ops_inspection_citations
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_staff_credentials        ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_staff_credentials_updated_at ON ops_staff_credentials;
+  CREATE TRIGGER trg_ops_staff_credentials_updated_at BEFORE UPDATE ON ops_staff_credentials
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_obligations              ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_obligations_updated_at ON ops_obligations;
+  CREATE TRIGGER trg_ops_obligations_updated_at BEFORE UPDATE ON ops_obligations
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_share_links              ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_share_links_updated_at ON ops_share_links;
+  CREATE TRIGGER trg_ops_share_links_updated_at BEFORE UPDATE ON ops_share_links
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_posting_catalog          ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_posting_catalog_updated_at ON ops_posting_catalog;
+  CREATE TRIGGER trg_ops_posting_catalog_updated_at BEFORE UPDATE ON ops_posting_catalog
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_posting_verifications    ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_posting_verifications    ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_posting_verifications    ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_posting_verifications SET updated_at = created_at WHERE updated_at IS NULL;
+  UPDATE ops_posting_verifications SET created_by = verified_by WHERE created_by = 'system';
+  DROP TRIGGER IF EXISTS trg_ops_posting_verifications_updated_at ON ops_posting_verifications;
+  CREATE TRIGGER trg_ops_posting_verifications_updated_at BEFORE UPDATE ON ops_posting_verifications
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_resident_trust_accounts  ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  DROP TRIGGER IF EXISTS trg_ops_resident_trust_accounts_updated_at ON ops_resident_trust_accounts;
+  CREATE TRIGGER trg_ops_resident_trust_accounts_updated_at BEFORE UPDATE ON ops_resident_trust_accounts
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  ALTER TABLE ops_reports                  ADD COLUMN IF NOT EXISTS created_at BIGINT;
+  ALTER TABLE ops_reports                  ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+  ALTER TABLE ops_reports                  ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_reports                  ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  UPDATE ops_reports SET created_at = generated_at WHERE created_at IS NULL;
+  UPDATE ops_reports SET updated_at = generated_at WHERE updated_at IS NULL;
+  UPDATE ops_reports SET created_by = generated_by WHERE created_by = 'system';
+  DROP TRIGGER IF EXISTS trg_ops_reports_updated_at ON ops_reports;
+  CREATE TRIGGER trg_ops_reports_updated_at BEFORE UPDATE ON ops_reports
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  -- Append-only tables — created_by ONLY (no updated_* / no trigger).
+  ALTER TABLE ops_audit_trail              ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  UPDATE ops_audit_trail SET created_by = actor_id WHERE created_by = 'system';
+  ALTER TABLE ops_notification_log         ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  ALTER TABLE ops_resident_trust_ledger    ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  UPDATE ops_resident_trust_ledger SET created_by = recorded_by WHERE created_by = 'system';
+  ALTER TABLE ops_preaudit_pulls           ADD COLUMN IF NOT EXISTS created_at BIGINT;
+  ALTER TABLE ops_preaudit_pulls           ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  UPDATE ops_preaudit_pulls SET created_at = generated_at WHERE created_at IS NULL;
+  UPDATE ops_preaudit_pulls SET created_by = generated_by WHERE created_by = 'system';
+  ALTER TABLE ops_med_destruction          ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  UPDATE ops_med_destruction SET created_by = destroyed_by WHERE created_by = 'system';
+  ALTER TABLE ops_controlled_sub_counts    ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  UPDATE ops_controlled_sub_counts SET created_by = counted_by WHERE created_by = 'system';
+  ALTER TABLE ops_resident_trust_statements ADD COLUMN IF NOT EXISTS created_at BIGINT;
+  ALTER TABLE ops_resident_trust_statements ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'system';
+  UPDATE ops_resident_trust_statements SET created_at = generated_at WHERE created_at IS NULL;
+  UPDATE ops_resident_trust_statements SET created_by = generated_by WHERE created_by = 'system';
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1204,6 +1465,10 @@ export const opsResidents = pgTable("ops_residents", {
   status:                   text("status").notNull().default("active"),
   createdAt:                ts("created_at").notNull(),
   updatedAt:                ts("updated_at").notNull(),
+  // Phase 3: audit attribution. updated_at is now also maintained by a DB
+  // trigger (set_updated_at_epoch_ms) so storage cannot forget to bump it.
+  createdBy:                text("created_by").default("system"),
+  updatedBy:                text("updated_by"),
 });
 
 export const opsResidentAssessments = pgTable("ops_resident_assessments", {
@@ -1241,6 +1506,10 @@ export const opsResidentAssessments = pgTable("ops_resident_assessments", {
   // shape is whatever the form scanner emitted, so we keep `unknown`.
   rawJson:            jsonb("raw_json"),
   createdAt:          ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. updated_at is bumped by DB trigger on UPDATE.
+  updatedAt:          ts("updated_at"),
+  createdBy:          text("created_by").default("system"),
+  updatedBy:          text("updated_by"),
 });
 
 export const opsCarePlans = pgTable("ops_care_plans", {
@@ -1260,6 +1529,8 @@ export const opsCarePlans = pgTable("ops_care_plans", {
   status:                    text("status").notNull().default("draft"),
   createdAt:                 ts("created_at").notNull(),
   updatedAt:                 ts("updated_at").notNull(),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:                 text("updated_by"),
 });
 
 export const opsDailyTasks = pgTable("ops_daily_tasks", {
@@ -1279,6 +1550,10 @@ export const opsDailyTasks = pgTable("ops_daily_tasks", {
   refuseReason:    text("refuse_reason"),
   taskDate:        ts("task_date").notNull(),
   createdAt:       ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. Trigger bumps updated_at on UPDATE.
+  updatedAt:       ts("updated_at"),
+  createdBy:       text("created_by").default("system"),
+  updatedBy:       text("updated_by"),
 });
 
 // ── Module 2: eMAR ────────────────────────────────────────────────────────
@@ -1315,6 +1590,9 @@ export const opsMedications = pgTable("ops_medications", {
   discontinuedAt:        ts("discontinued_at"),
   createdAt:             ts("created_at").notNull(),
   updatedAt:             ts("updated_at").notNull(),
+  // Phase 3: audit attribution.
+  createdBy:             text("created_by").default("system"),
+  updatedBy:             text("updated_by"),
 });
 
 export const opsMedPasses = pgTable("ops_med_passes", {
@@ -1346,8 +1624,15 @@ export const opsMedPasses = pgTable("ops_med_passes", {
   prnEffectivenessNotedAt:   ts("prn_effectiveness_noted_at"),
   prnEffectivenessNotes:     text("prn_effectiveness_notes"),
   createdAt:                 ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. Trigger maintains updated_at on UPDATE.
+  updatedAt:                 ts("updated_at"),
+  createdBy:                 text("created_by").default("system"),
+  updatedBy:                 text("updated_by"),
 });
 
+// Append-only at the application layer (corrections happen via reversal
+// entries / new rows). Phase 3 adds `createdBy` for unified audit attribution
+// across the ops schema; no `updated_*` columns or trigger.
 export const opsControlledSubCounts = pgTable("ops_controlled_sub_counts", {
   id:                serial("id").primaryKey(),
   medicationId:      bigint("medication_id", { mode: "number" }).notNull(),
@@ -1364,8 +1649,10 @@ export const opsControlledSubCounts = pgTable("ops_controlled_sub_counts", {
   discrepancyNotes:  text("discrepancy_notes"),
   resolved:          integer("resolved").default(0),
   createdAt:         ts("created_at").notNull(),
+  createdBy:         text("created_by").default("system"),
 });
 
+// Append-only — destruction is a one-way event; no updates.
 export const opsMedDestruction = pgTable("ops_med_destruction", {
   id:                serial("id").primaryKey(),
   medicationId:      bigint("medication_id", { mode: "number" }).notNull(),
@@ -1378,6 +1665,7 @@ export const opsMedDestruction = pgTable("ops_med_destruction", {
   destructionDate:   ts("destruction_date").notNull(),
   reason:            text("reason").notNull(),
   createdAt:         ts("created_at").notNull(),
+  createdBy:         text("created_by").default("system"),
 });
 
 // ── Module 3: Incidents ───────────────────────────────────────────────────
@@ -1428,6 +1716,10 @@ export const opsIncidents = pgTable("ops_incidents", {
   reopenReason:           text("reopen_reason"),
   createdAt:              ts("created_at").notNull(),
   updatedAt:              ts("updated_at").notNull(),
+  // Phase 3: audit attribution. reportedBy (above) is the content actor —
+  // the staff member named on the incident — distinct from audit attribution.
+  createdBy:              text("created_by").default("system"),
+  updatedBy:              text("updated_by"),
 });
 
 // ── Module 4: CRM / Admissions ────────────────────────────────────────────
@@ -1454,6 +1746,9 @@ export const opsLeads = pgTable("ops_leads", {
   nextFollowUpDate:  ts("next_follow_up_date"),
   createdAt:         ts("created_at").notNull(),
   updatedAt:         ts("updated_at").notNull(),
+  // Phase 3: audit attribution.
+  createdBy:         text("created_by").default("system"),
+  updatedBy:         text("updated_by"),
 });
 
 export const opsTours = pgTable("ops_tours", {
@@ -1467,6 +1762,10 @@ export const opsTours = pgTable("ops_tours", {
   notes:          text("notes"),
   followUpAction: text("follow_up_action"),
   createdAt:      ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. Trigger maintains updated_at on UPDATE.
+  updatedAt:      ts("updated_at"),
+  createdBy:      text("created_by").default("system"),
+  updatedBy:      text("updated_by"),
 });
 
 export const opsAdmissions = pgTable("ops_admissions", {
@@ -1498,6 +1797,9 @@ export const opsAdmissions = pgTable("ops_admissions", {
   notes:                      text("notes"),
   createdAt:                  ts("created_at").notNull(),
   updatedAt:                  ts("updated_at").notNull(),
+  // Phase 3: audit attribution.
+  createdBy:                  text("created_by").default("system"),
+  updatedBy:                  text("updated_by"),
 });
 
 // ── Module 5: Billing ─────────────────────────────────────────────────────
@@ -1524,6 +1826,10 @@ export const opsBillingCharges = pgTable("ops_billing_charges", {
   source:             text("source").notNull().default("manual"),
   clinicalRefId:      bigint("clinical_ref_id", { mode: "number" }),
   createdAt:          ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. Trigger maintains updated_at on UPDATE.
+  updatedAt:          ts("updated_at"),
+  createdBy:          text("created_by").default("system"),
+  updatedBy:          text("updated_by"),
 });
 
 export const opsInvoices = pgTable("ops_invoices", {
@@ -1548,6 +1854,9 @@ export const opsInvoices = pgTable("ops_invoices", {
   notes:              text("notes"),
   createdAt:          ts("created_at").notNull(),
   updatedAt:          ts("updated_at").notNull(),
+  // Phase 3: audit attribution.
+  createdBy:          text("created_by").default("system"),
+  updatedBy:          text("updated_by"),
 });
 
 export const opsPayments = pgTable("ops_payments", {
@@ -1564,6 +1873,11 @@ export const opsPayments = pgTable("ops_payments", {
   notes:           text("notes"),
   recordedBy:      text("recorded_by"),
   createdAt:       ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. No UPDATE site in code today, but standardized
+  // so future edits get attribution. recordedBy (above) is the content actor.
+  updatedAt:       ts("updated_at"),
+  createdBy:       text("created_by").default("system"),
+  updatedBy:       text("updated_by"),
 });
 
 // ── Module 6: Staff / Scheduling ──────────────────────────────────────────
@@ -1583,6 +1897,9 @@ export const opsStaff = pgTable("ops_staff", {
   status:          text("status").notNull().default("active"),
   createdAt:       ts("created_at").notNull(),
   updatedAt:       ts("updated_at").notNull(),
+  // Phase 3: audit attribution.
+  createdBy:       text("created_by").default("system"),
+  updatedBy:       text("updated_by"),
 });
 
 export const opsShifts = pgTable("ops_shifts", {
@@ -1598,6 +1915,10 @@ export const opsShifts = pgTable("ops_shifts", {
   coveredById:    bigint("covered_by_id", { mode: "number" }),
   notes:          text("notes"),
   createdAt:      ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. Trigger maintains updated_at on UPDATE.
+  updatedAt:      ts("updated_at"),
+  createdBy:      text("created_by").default("system"),
+  updatedBy:      text("updated_by"),
 });
 
 export const opsFacilitySettings = pgTable("ops_facility_settings", {
@@ -1606,6 +1927,10 @@ export const opsFacilitySettings = pgTable("ops_facility_settings", {
   settingKey:     text("setting_key").notNull(),
   settingValue:   text("setting_value"),
   updatedAt:      ts("updated_at").notNull(),
+  // Phase 3: audit attribution. createdAt was missing; trigger maintains updated_at.
+  createdAt:      ts("created_at"),
+  createdBy:      text("created_by").default("system"),
+  updatedBy:      text("updated_by"),
 });
 
 export const opsComplianceCalendar = pgTable("ops_compliance_calendar", {
@@ -1619,6 +1944,10 @@ export const opsComplianceCalendar = pgTable("ops_compliance_calendar", {
   status:            text("status").notNull().default("pending"),
   reminderDaysBefore:integer("reminder_days_before").default(30),
   createdAt:         ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. Trigger maintains updated_at on UPDATE.
+  updatedAt:         ts("updated_at"),
+  createdBy:         text("created_by").default("system"),
+  updatedBy:         text("updated_by"),
 });
 
 // ── Wave 0: F2 Evidence attachments ───────────────────────────────────────
@@ -1637,10 +1966,18 @@ export const opsEvidenceAttachments = pgTable("ops_evidence_attachments", {
   uploadedBy:     text("uploaded_by").notNull(),
   uploadedAt:     ts("uploaded_at").notNull(),
   deletedAt:      ts("deleted_at"),
+  // Phase 3: standardize audit columns. createdAt/createdBy backfilled from
+  // uploaded_at/uploaded_by; trigger maintains updated_at on UPDATE (soft delete).
+  createdAt:      ts("created_at"),
+  updatedAt:      ts("updated_at"),
+  createdBy:      text("created_by").default("system"),
+  updatedBy:      text("updated_by"),
 });
 
 // ── Wave 0: F3 Audit trail (immutable, append-only) ───────────────────────
-
+// Insert-only. Phase 3 adds `createdBy` (TEXT NOT NULL DEFAULT 'system';
+// backfilled from actorId) so a single column name is the audit-attribution
+// reference across the whole ops_* schema. No updated_* columns.
 export const opsAuditTrail = pgTable("ops_audit_trail", {
   id:             serial("id").primaryKey(),
   facilityNumber: text("facility_number").notNull(),
@@ -1652,6 +1989,7 @@ export const opsAuditTrail = pgTable("ops_audit_trail", {
   beforeJson:     text("before_json"),
   afterJson:      text("after_json"),
   occurredAt:     ts("occurred_at").notNull(),
+  createdBy:      text("created_by").default("system"),
 });
 
 // ── Wave 1: W7 Temperature fixtures + logs ────────────────────────────────
@@ -1668,6 +2006,9 @@ export const opsTemperatureFixtures = pgTable("ops_temperature_fixtures", {
   status:         text("status").notNull().default("active"),
   createdAt:      ts("created_at").notNull(),
   updatedAt:      ts("updated_at").notNull(),
+  // Phase 3: audit attribution.
+  createdBy:      text("created_by").default("system"),
+  updatedBy:      text("updated_by"),
 });
 
 export const opsTemperatureLogs = pgTable("ops_temperature_logs", {
@@ -1688,6 +2029,12 @@ export const opsTemperatureLogs = pgTable("ops_temperature_logs", {
   followUpResolvedBy:      text("follow_up_resolved_by"),
   followUpResolutionNote:  text("follow_up_resolution_note"),
   createdAt:               ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. recordedBy (above) is the content actor
+  // (kitchen staff who took the reading) and is preserved verbatim. The
+  // trigger maintains updated_at on follow-up resolution UPDATEs.
+  updatedAt:               ts("updated_at"),
+  createdBy:               text("created_by").default("system"),
+  updatedBy:               text("updated_by"),
 });
 
 // ── Wave 1: W5 Drill log ──────────────────────────────────────────────────
@@ -1712,6 +2059,8 @@ export const opsDrillLogs = pgTable("ops_drill_logs", {
   createdBy:             text("created_by").notNull(),
   createdAt:             ts("created_at").notNull(),
   updatedAt:             ts("updated_at").notNull(),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:             text("updated_by"),
 });
 
 // ── Wave 1: W9 Vendors ────────────────────────────────────────────────────
@@ -1730,6 +2079,9 @@ export const opsVendors = pgTable("ops_vendors", {
   status:           text("status").notNull().default("active"),
   createdAt:        ts("created_at").notNull(),
   updatedAt:        ts("updated_at").notNull(),
+  // Phase 3: audit attribution.
+  createdBy:        text("created_by").default("system"),
+  updatedBy:        text("updated_by"),
 });
 
 // ── Wave 1: W10 Complaints ────────────────────────────────────────────────
@@ -1752,8 +2104,13 @@ export const opsComplaints = pgTable("ops_complaints", {
   createdBy:           text("created_by").notNull(),
   createdAt:           ts("created_at").notNull(),
   updatedAt:           ts("updated_at").notNull(),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:           text("updated_by"),
 });
 
+// Append-only (insert per investigation note — corrections add a new row).
+// Phase 3 standardizes createdAt + createdBy (backfilled from notedAt /
+// notedBy). No updated_* columns.
 export const opsComplaintInvestigationNotes = pgTable("ops_complaint_investigation_notes", {
   id:             serial("id").primaryKey(),
   complaintId:    bigint("complaint_id", { mode: "number" }).notNull(),
@@ -1761,6 +2118,8 @@ export const opsComplaintInvestigationNotes = pgTable("ops_complaint_investigati
   notedAt:        ts("noted_at").notNull(),
   notedBy:        text("noted_by").notNull(),
   note:           text("note").notNull(),
+  createdAt:      ts("created_at"),
+  createdBy:      text("created_by").default("system"),
 });
 
 // ── Wave 1: W13 Inspections + citations ───────────────────────────────────
@@ -1782,6 +2141,8 @@ export const opsInspections = pgTable("ops_inspections", {
   createdBy:      text("created_by").notNull(),
   createdAt:      ts("created_at").notNull(),
   updatedAt:      ts("updated_at").notNull(),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:      text("updated_by"),
 });
 
 export const opsInspectionCitations = pgTable("ops_inspection_citations", {
@@ -1797,6 +2158,10 @@ export const opsInspectionCitations = pgTable("ops_inspection_citations", {
   closureNote:    text("closure_note"),
   createdAt:      ts("created_at").notNull(),
   updatedAt:      ts("updated_at").notNull(),
+  // Phase 3: audit attribution. closedBy (above) is the content actor on the
+  // closure event; createdBy/updatedBy track the audit identity separately.
+  createdBy:      text("created_by").default("system"),
+  updatedBy:      text("updated_by"),
 });
 
 // ── Wave 2: W3 Staff credentials ──────────────────────────────────────────
@@ -1824,6 +2189,8 @@ export const opsStaffCredentials = pgTable("ops_staff_credentials", {
   createdAt:      ts("created_at").notNull(),
   updatedAt:      ts("updated_at").notNull(),
   deletedAt:      ts("deleted_at"),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:      text("updated_by"),
 });
 
 // ── Wave 2 finale: Obligation engine ──────────────────────────────────────
@@ -1866,6 +2233,8 @@ export const opsObligations = pgTable("ops_obligations", {
   createdAt:          ts("created_at").notNull(),
   updatedAt:          ts("updated_at").notNull(),
   deletedAt:          ts("deleted_at"),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:          text("updated_by"),
 });
 
 // ── Wave 3 W14: Daily-summary email log (append-only) ─────────────────────
@@ -1893,6 +2262,8 @@ export const opsNotificationLog = pgTable("ops_notification_log", {
   scheduledFor:     ts("scheduled_for").notNull(),
   sentAt:           ts("sent_at"),
   createdAt:        ts("created_at").notNull(),
+  // Phase 3: createdBy audit attribution. Insert-only; no updated_*.
+  createdBy:        text("created_by").default("system"),
 });
 
 // ── Wave 3 Phase 3.2: Auditor share-links + W2 pre-audit pulls ────────────
@@ -1922,6 +2293,8 @@ export const opsShareLinks = pgTable("ops_share_links", {
   createdBy:      text("created_by").notNull(),
   createdAt:      ts("created_at").notNull(),
   updatedAt:      ts("updated_at").notNull(),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:      text("updated_by"),
 });
 
 export const opsPreauditPulls = pgTable("ops_preaudit_pulls", {
@@ -1941,6 +2314,10 @@ export const opsPreauditPulls = pgTable("ops_preaudit_pulls", {
   deliveryMethod:  text("delivery_method").notNull(),
   shareLinkId:     bigint("share_link_id", { mode: "number" }),
   notes:           text("notes"),
+  // Phase 3: standardize createdAt/createdBy (backfilled from generated_at /
+  // generated_by). Insert-only; no updated_*.
+  createdAt:       ts("created_at"),
+  createdBy:       text("created_by").default("system"),
 });
 
 // ── Wave 4 Phase 4.1: Posting verification (W6) ───────────────────────────
@@ -1967,6 +2344,8 @@ export const opsPostingCatalog = pgTable("ops_posting_catalog", {
   createdBy:      text("created_by").notNull(),
   createdAt:      ts("created_at").notNull(),
   updatedAt:      ts("updated_at").notNull(),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:      text("updated_by"),
 });
 
 export const opsPostingVerifications = pgTable("ops_posting_verifications", {
@@ -1980,6 +2359,12 @@ export const opsPostingVerifications = pgTable("ops_posting_verifications", {
   note:           text("note"),
   evidenceCount:  integer("evidence_count").notNull().default(0),
   createdAt:      ts("created_at").notNull(),
+  // Phase 3: audit + updated_at. verifiedBy (above) is the content actor
+  // (who actually performed the walkthrough check). Trigger maintains
+  // updated_at on UPDATE (e.g. evidence backfill bumping evidence_count).
+  updatedAt:      ts("updated_at"),
+  createdBy:      text("created_by").default("system"),
+  updatedBy:      text("updated_by"),
 });
 
 // ── Wave 4 Phase 4.2: Resident trust accounts (W12) ───────────────────────
@@ -2009,6 +2394,8 @@ export const opsResidentTrustAccounts = pgTable("ops_resident_trust_accounts", {
   createdBy:      text("created_by").notNull(),
   createdAt:      ts("created_at").notNull(),
   updatedAt:      ts("updated_at").notNull(),
+  // Phase 3: updated_by audit attribution. createdBy already exists above.
+  updatedBy:      text("updated_by"),
 });
 
 export const opsResidentTrustLedger = pgTable("ops_resident_trust_ledger", {
@@ -2027,6 +2414,9 @@ export const opsResidentTrustLedger = pgTable("ops_resident_trust_ledger", {
   receiptUri:      text("receipt_uri"),
   notes:           text("notes"),
   createdAt:       ts("created_at").notNull(),
+  // Phase 3: createdBy audit attribution. Insert-only — corrections via a
+  // reversal entry, never UPDATE. recordedBy (above) is the content actor.
+  createdBy:       text("created_by").default("system"),
 });
 
 export const opsResidentTrustStatements = pgTable("ops_resident_trust_statements", {
@@ -2043,6 +2433,10 @@ export const opsResidentTrustStatements = pgTable("ops_resident_trust_statements
   entryCount:          integer("entry_count").notNull(),
   generatedBy:         text("generated_by").notNull(),
   generatedAt:         ts("generated_at").notNull(),
+  // Phase 3: standardize createdAt/createdBy (backfilled from generatedAt /
+  // generatedBy). Insert-only — statements are immutable monthly snapshots.
+  createdAt:           ts("created_at"),
+  createdBy:           text("created_by").default("system"),
 });
 
 // ── Wave 5: Reports Hub ───────────────────────────────────────────────────
@@ -2080,6 +2474,13 @@ export const opsReports = pgTable("ops_reports", {
   lastDownloadedAt:  ts("last_downloaded_at"),
   notes:             text("notes"),
   deletedAt:         ts("deleted_at"),
+  // Phase 3: status lifecycle (generating → ready → expired) makes this
+  // mutable despite the audit-grade feel. createdAt/updatedAt backfilled
+  // from generatedAt; trigger maintains updated_at on status transitions.
+  createdAt:         ts("created_at"),
+  updatedAt:         ts("updated_at"),
+  createdBy:         text("created_by").default("system"),
+  updatedBy:         text("updated_by"),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

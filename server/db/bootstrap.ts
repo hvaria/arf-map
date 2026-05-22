@@ -357,6 +357,46 @@ const MAIN_PG_SCHEMA_SQL = `
         ALTER COLUMN requirements SET DEFAULT '[]'::jsonb;
     END IF;
   END $$;
+
+  -- ── Phase 3: facility ↔ user membership (schema seam only) ────────────────
+  -- Forward-looking join between facility_accounts (one row per facility-owner
+  -- login today) and the preserved-from-Phase-2-R1 users table. The auth
+  -- flow is NOT switched to this table in Phase 3 — only the seam is laid
+  -- so a later phase can introduce multi-staff facilities without a schema
+  -- rewrite. No rows are backfilled.
+  --
+  -- The CHECK on role keeps the canonical role list in code (RBAC matrix)
+  -- while still rejecting typos at the DB. The partial UNIQUE on
+  -- (facility_account_id, user_id) WHERE deleted_at IS NULL allows a soft-
+  -- deleted membership to be re-added.
+  CREATE TABLE IF NOT EXISTS facility_users (
+    id                     BIGSERIAL PRIMARY KEY,
+    facility_account_id    INTEGER NOT NULL REFERENCES facility_accounts(id) ON DELETE CASCADE,
+    user_id                INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    role                   TEXT NOT NULL DEFAULT 'facility_admin',
+    created_at             BIGINT NOT NULL,
+    created_by             TEXT NOT NULL DEFAULT 'system',
+    updated_at             BIGINT NOT NULL,
+    updated_by             TEXT,
+    deleted_at             BIGINT,
+    CONSTRAINT chk_facility_users_role CHECK (
+      role IN (
+        'facility_admin',
+        'admin',
+        'auditor',
+        'don',
+        'med_tech',
+        'schedule_lead',
+        'office_manager'
+      )
+    )
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_facility_users_account_user
+    ON facility_users(facility_account_id, user_id) WHERE deleted_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_facility_users_account
+    ON facility_users(facility_account_id) WHERE deleted_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_facility_users_user
+    ON facility_users(user_id) WHERE deleted_at IS NULL;
 `;
 
 // Bootstrap is idempotent, but concurrent vitest forks running ADD

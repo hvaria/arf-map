@@ -153,6 +153,13 @@ interface AuditActor {
   role: string;
 }
 
+// Phase 3 audit-attribution helper. INSERT sites set both created_by and
+// updated_by; UPDATE sites set only updated_by (created_by is preserved).
+// Falls back to 'system' when no actor is passed (cron jobs, ETL, etc.).
+function actorId(actor?: AuditActor | null): string {
+  return actor?.id ?? "system";
+}
+
 async function safeAudit(args: {
   facilityNumber: string;
   actor: AuditActor;
@@ -211,7 +218,8 @@ export async function createResident(
   actor?: AuditActor,
 ): Promise<OpsResident> {
   const now = Date.now();
-  const rows = await db.insert(opsResidents).values({ ...data, createdAt: now, updatedAt: now }).returning();
+  const by = actorId(actor);
+  const rows = await db.insert(opsResidents).values({ ...data, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by }).returning();
   const row = rows[0] as OpsResident;
   if (actor) {
     await safeAudit({
@@ -236,7 +244,7 @@ export async function updateResident(
   if (!before) return undefined;
   const now = Date.now();
   const cond = and(eq(opsResidents.id, id), eq(opsResidents.facilityNumber, facilityNumber));
-  const rows = await db.update(opsResidents).set({ ...data, updatedAt: now }).where(cond).returning();
+  const rows = await db.update(opsResidents).set({ ...data, updatedAt: now, updatedBy: actorId(actor) }).where(cond).returning();
   const after = rows[0] as OpsResident | undefined;
   if (after && actor) {
     await safeAudit({
@@ -261,7 +269,7 @@ export async function softDeleteResident(
   if (!before) return false;
   const now = Date.now();
   const cond = and(eq(opsResidents.id, id), eq(opsResidents.facilityNumber, facilityNumber));
-  const rows = await db.update(opsResidents).set({ status: "discharged", dischargeDate: now, updatedAt: now }).where(cond).returning({ id: opsResidents.id });
+  const rows = await db.update(opsResidents).set({ status: "discharged", dischargeDate: now, updatedAt: now, updatedBy: actorId(actor) }).where(cond).returning({ id: opsResidents.id });
   const ok = rows.length > 0;
   if (ok && actor) {
     await safeAudit({
@@ -286,12 +294,25 @@ export async function listAssessments(residentId: number, facilityNumber: string
 
 export async function createAssessment(data: InsertOpsResidentAssessment): Promise<OpsResidentAssessment> {
   const now = Date.now();
-  const rows = await db.insert(opsResidentAssessments).values({ ...data, createdAt: now }).returning();
+  // Phase 3: assessedBy carries the clinical-actor on insert; the audit-
+  // attribution column createdBy/updatedBy is the same value when no
+  // separate audit actor is threaded. updated_at maintained by trigger on
+  // subsequent UPDATEs.
+  const by = data.assessedBy || "system";
+  const rows = await db.insert(opsResidentAssessments).values({
+    ...data,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: by,
+    updatedBy: by,
+  }).returning();
   return rows[0] as OpsResidentAssessment;
 }
 
 export async function updateAssessment(id: number, data: Partial<InsertOpsResidentAssessment>): Promise<OpsResidentAssessment | undefined> {
-  const rows = await db.update(opsResidentAssessments).set(data).where(eq(opsResidentAssessments.id, id)).returning();
+  // updatedBy defaults to 'system' since this signature doesn't accept an
+  // actor; updated_at is maintained by the DB trigger on UPDATE.
+  const rows = await db.update(opsResidentAssessments).set({ ...data, updatedBy: "system" }).where(eq(opsResidentAssessments.id, id)).returning();
   return rows[0] as OpsResidentAssessment | undefined;
 }
 
@@ -305,21 +326,25 @@ export async function getActiveCarePlan(residentId: number, facilityNumber: stri
 
 export async function createCarePlan(data: InsertOpsCarePlan): Promise<OpsCarePlan> {
   const now = Date.now();
-  const rows = await db.insert(opsCarePlans).values({ ...data, createdAt: now, updatedAt: now }).returning();
+  // createdBy is already a content column on ops_care_plans (NOT NULL — the
+  // clinician owning the plan). Phase 3 adds updatedBy; no separate audit
+  // actor on this signature, so default to the createdBy value or 'system'.
+  const by = data.createdBy || "system";
+  const rows = await db.insert(opsCarePlans).values({ ...data, createdAt: now, updatedAt: now, updatedBy: by }).returning();
   return rows[0] as OpsCarePlan;
 }
 
 export async function updateCarePlan(id: number, data: Partial<InsertOpsCarePlan>): Promise<OpsCarePlan | undefined> {
   const now = Date.now();
-  const rows = await db.update(opsCarePlans).set({ ...data, updatedAt: now }).where(eq(opsCarePlans.id, id)).returning();
+  const rows = await db.update(opsCarePlans).set({ ...data, updatedAt: now, updatedBy: "system" }).where(eq(opsCarePlans.id, id)).returning();
   return rows[0] as OpsCarePlan | undefined;
 }
 
 export async function signCarePlan(id: number, signerType: "resident" | "family", signature: string): Promise<boolean> {
   const now = Date.now();
   const updateData = signerType === "resident"
-    ? { digitalSignatureResident: signature, signatureDate: now, updatedAt: now }
-    : { digitalSignatureFamily: signature, signatureDate: now, updatedAt: now };
+    ? { digitalSignatureResident: signature, signatureDate: now, updatedAt: now, updatedBy: "system" }
+    : { digitalSignatureFamily: signature, signatureDate: now, updatedAt: now, updatedBy: "system" };
 
   const rows = await db.update(opsCarePlans).set(updateData).where(eq(opsCarePlans.id, id)).returning({ id: opsCarePlans.id });
   return rows.length > 0;
@@ -420,12 +445,14 @@ export async function getOverdueTasksForFacility(facilityNumber: string): Promis
 }
 
 export async function completeTask(id: number, notes: string, completedAt: number): Promise<boolean> {
-  const rows = await db.update(opsDailyTasks).set({ status: "completed", completionNotes: notes, completedAt }).where(eq(opsDailyTasks.id, id)).returning({ id: opsDailyTasks.id });
+  // updated_at is maintained by the DB trigger on UPDATE; updatedBy defaults
+  // to 'system' here (no actor on this signature).
+  const rows = await db.update(opsDailyTasks).set({ status: "completed", completionNotes: notes, completedAt, updatedBy: "system" }).where(eq(opsDailyTasks.id, id)).returning({ id: opsDailyTasks.id });
   return rows.length > 0;
 }
 
 export async function refuseTask(id: number, reason: string): Promise<boolean> {
-  const rows = await db.update(opsDailyTasks).set({ status: "refused", refused: 1, refuseReason: reason }).where(eq(opsDailyTasks.id, id)).returning({ id: opsDailyTasks.id });
+  const rows = await db.update(opsDailyTasks).set({ status: "refused", refused: 1, refuseReason: reason, updatedBy: "system" }).where(eq(opsDailyTasks.id, id)).returning({ id: opsDailyTasks.id });
   return rows.length > 0;
 }
 
@@ -443,6 +470,7 @@ export async function createManualDailyTask(input: {
   assignedTo?: string;
 }): Promise<OpsDailyTask> {
   const now = Date.now();
+  // Phase 3: audit columns default to 'system' here (no actor threaded).
   const row: InsertOpsDailyTask = {
     carePlanId: 0,                    // 0 = "manual / no care plan"
     residentId: input.residentId,
@@ -455,6 +483,9 @@ export async function createManualDailyTask(input: {
     status: "pending",
     taskDate: input.taskDate,
     createdAt: now,
+    updatedAt: now,
+    createdBy: "system",
+    updatedBy: "system",
   };
   const [inserted] = await db.insert(opsDailyTasks).values(row).returning();
   return inserted;
@@ -470,6 +501,7 @@ export async function createDailyTasksFromCarePlan(carePlanId: number, residentI
   today.setUTCHours(0, 0, 0, 0);
   const taskDate = today.getTime();
 
+  // Phase 3: audit columns default to 'system' for cron-style autogeneration.
   const taskData: InsertOpsDailyTask = {
     carePlanId,
     residentId,
@@ -481,6 +513,9 @@ export async function createDailyTasksFromCarePlan(carePlanId: number, residentI
     status: "pending",
     taskDate,
     createdAt: now,
+    updatedAt: now,
+    createdBy: "system",
+    updatedBy: "system",
   };
 
   await db.insert(opsDailyTasks).values(taskData);
@@ -513,7 +548,8 @@ export async function createMedication(
   actor?: AuditActor,
 ): Promise<OpsMedication> {
   const now = Date.now();
-  const rows = await db.insert(opsMedications).values({ ...data, createdAt: now, updatedAt: now }).returning();
+  const by = actorId(actor);
+  const rows = await db.insert(opsMedications).values({ ...data, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by }).returning();
   const row = rows[0] as OpsMedication;
   if (actor) {
     await safeAudit({
@@ -538,7 +574,7 @@ export async function updateMedication(
   if (!before) return undefined;
   const now = Date.now();
   const cond = and(eq(opsMedications.id, id), eq(opsMedications.facilityNumber, facilityNumber));
-  const rows = await db.update(opsMedications).set({ ...data, updatedAt: now }).where(cond).returning();
+  const rows = await db.update(opsMedications).set({ ...data, updatedAt: now, updatedBy: actorId(actor) }).where(cond).returning();
   const after = rows[0] as OpsMedication | undefined;
   if (after && actor) {
     await safeAudit({
@@ -565,7 +601,7 @@ export async function discontinueMedication(
   if (!before) return false;
   const now = Date.now();
   const cond = and(eq(opsMedications.id, id), eq(opsMedications.facilityNumber, facilityNumber));
-  const updateData = { status: "discontinued", discontinuedReason: reason, discontinuedBy: by, discontinuedAt: now, updatedAt: now };
+  const updateData = { status: "discontinued", discontinuedReason: reason, discontinuedBy: by, discontinuedAt: now, updatedAt: now, updatedBy: actorId(actor) };
   const discRows = await db.update(opsMedications).set(updateData).where(cond).returning({ id: opsMedications.id });
   const ok = discRows.length > 0;
   if (ok && actor) {
@@ -615,11 +651,16 @@ export async function generateDailyMedPassEntries(facilityNumber: string, date: 
       const dt = new Date(date);
       dt.setHours(h, m, 0, 0);
       const scheduledDatetime = dt.getTime();
+      // Phase 3: includes created_at/updated_at + created_by/updated_by audit
+      // columns. This is a cron-style scheduler — no per-row actor, default
+      // both to 'system'. The DB trigger maintains updated_at on subsequent
+      // UPDATEs (e.g. when a caregiver records administration).
+      const _nowMs = Date.now();
       await pool.query(
-        `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status, created_at)
-         VALUES ($1, $2, $3, $4, 'pending', $5)
+        `INSERT INTO ops_med_passes (medication_id, resident_id, facility_number, scheduled_datetime, status, created_at, updated_at, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, 'pending', $5, $5, 'system', 'system')
          ON CONFLICT (medication_id, scheduled_datetime) DO NOTHING`,
-        [med.medication_id, med.resident_id, facilityNumber, scheduledDatetime, Date.now()]
+        [med.medication_id, med.resident_id, facilityNumber, scheduledDatetime, _nowMs]
       );
     }
   }
@@ -698,7 +739,8 @@ export async function recordMedPass(
   actor?: AuditActor,
 ): Promise<OpsMedPass> {
   const now = Date.now();
-  const rows = await db.insert(opsMedPasses).values({ ...data, createdAt: now }).returning();
+  const by = actorId(actor);
+  const rows = await db.insert(opsMedPasses).values({ ...data, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by }).returning();
   const row = rows[0] as OpsMedPass;
   if (actor) {
     await safeAudit({
@@ -742,7 +784,7 @@ export async function updateMedPassRecord(
     .limit(1);
   const before = beforeRows[0] as OpsMedPass | undefined;
   if (!before) return false;
-  const rows = await db.update(opsMedPasses).set(data).where(eq(opsMedPasses.id, id)).returning({ id: opsMedPasses.id });
+  const rows = await db.update(opsMedPasses).set({ ...data, updatedBy: actorId(actor) }).where(eq(opsMedPasses.id, id)).returning({ id: opsMedPasses.id });
   const ok = rows.length > 0;
   if (ok && actor) {
     await safeAudit({
@@ -759,7 +801,7 @@ export async function updateMedPassRecord(
 }
 
 export async function updatePrnFollowup(id: number, effectivenessNotes: string, notedAt: number): Promise<boolean> {
-  const updateData = { prnEffectivenessNotes: effectivenessNotes, prnEffectivenessNotedAt: notedAt };
+  const updateData = { prnEffectivenessNotes: effectivenessNotes, prnEffectivenessNotedAt: notedAt, updatedBy: "system" };
   const rows = await db.update(opsMedPasses).set(updateData).where(eq(opsMedPasses.id, id)).returning({ id: opsMedPasses.id });
   return rows.length > 0;
 }
@@ -865,13 +907,15 @@ export async function getCalendarSummary(
 
 export async function recordControlledSubCount(data: InsertOpsControlledSubCount): Promise<OpsControlledSubCount> {
   const now = Date.now();
-  const rows = await db.insert(opsControlledSubCounts).values({ ...data, createdAt: now }).returning();
+  // Insert-only table; createdBy backfills from countedBy (the content actor).
+  const rows = await db.insert(opsControlledSubCounts).values({ ...data, createdAt: now, createdBy: data.countedBy || "system" }).returning();
   return rows[0] as OpsControlledSubCount;
 }
 
 export async function recordMedDestruction(data: InsertOpsMedDestruction): Promise<OpsMedDestruction> {
   const now = Date.now();
-  const rows = await db.insert(opsMedDestruction).values({ ...data, createdAt: now }).returning();
+  // Insert-only table; createdBy backfills from destroyedBy.
+  const rows = await db.insert(opsMedDestruction).values({ ...data, createdAt: now, createdBy: data.destroyedBy || "system" }).returning();
   return rows[0] as OpsMedDestruction;
 }
 
@@ -987,9 +1031,13 @@ export async function createIncident(data: InsertOpsIncident): Promise<OpsIncide
     data.injuryInvolved as number | null | undefined,
     data.hospitalizationRequired as number | null | undefined,
   );
+  // Phase 3: reportedBy is the content actor on incidents; backfill the audit
+  // columns from it so the row carries a useful attribution. The trigger
+  // maintains updated_at on subsequent UPDATEs.
+  const by = data.reportedBy || "system";
   const rows = await db
     .insert(opsIncidents)
-    .values({ ...data, eventSeverity, createdAt: now, updatedAt: now })
+    .values({ ...data, eventSeverity, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by })
     .returning();
   return rows[0] as OpsIncident;
 }
@@ -1037,6 +1085,10 @@ export async function updateIncident(id: number, facilityNumber: string, data: P
       ...safeData,
       ...(nextEventSeverity !== undefined ? { eventSeverity: nextEventSeverity } : {}),
       updatedAt: now,
+      // Phase 3: no actor on this signature; default 'system'. The closeIncident /
+      // reopenIncident paths (which DO take an actor) set updatedBy from
+      // actor.id — see those handlers below.
+      updatedBy: "system",
     })
     .where(cond)
     .returning();
@@ -1098,25 +1150,26 @@ export async function getLead(id: number, facilityNumber: string): Promise<OpsLe
 
 export async function createLead(data: InsertOpsLead): Promise<OpsLead> {
   const now = Date.now();
-  const rows = await db.insert(opsLeads).values({ ...data, createdAt: now, updatedAt: now }).returning();
+  // No actor on this signature; default audit columns to 'system'.
+  const rows = await db.insert(opsLeads).values({ ...data, createdAt: now, updatedAt: now, createdBy: "system", updatedBy: "system" }).returning();
   return rows[0] as OpsLead;
 }
 
 export async function updateLead(id: number, facilityNumber: string, data: Partial<InsertOpsLead>): Promise<OpsLead | undefined> {
   const now = Date.now();
   const cond = and(eq(opsLeads.id, id), eq(opsLeads.facilityNumber, facilityNumber));
-  const rows = await db.update(opsLeads).set({ ...data, updatedAt: now }).where(cond).returning();
+  const rows = await db.update(opsLeads).set({ ...data, updatedAt: now, updatedBy: "system" }).where(cond).returning();
   return rows[0] as OpsLead | undefined;
 }
 
 export async function scheduleTour(data: InsertOpsTour): Promise<OpsTour> {
   const now = Date.now();
-  const rows = await db.insert(opsTours).values({ ...data, createdAt: now }).returning();
+  const rows = await db.insert(opsTours).values({ ...data, createdAt: now, updatedAt: now, createdBy: "system", updatedBy: "system" }).returning();
   return rows[0] as OpsTour;
 }
 
 export async function updateTour(id: number, data: Partial<InsertOpsTour>): Promise<OpsTour | undefined> {
-  const rows = await db.update(opsTours).set(data).where(eq(opsTours.id, id)).returning();
+  const rows = await db.update(opsTours).set({ ...data, updatedBy: "system" }).where(eq(opsTours.id, id)).returning();
   return rows[0] as OpsTour | undefined;
 }
 
@@ -1125,7 +1178,8 @@ export async function startAdmission(
   actor?: AuditActor,
 ): Promise<OpsAdmission> {
   const now = Date.now();
-  const rows = await db.insert(opsAdmissions).values({ ...data, createdAt: now, updatedAt: now }).returning();
+  const by = actorId(actor);
+  const rows = await db.insert(opsAdmissions).values({ ...data, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by }).returning();
   const row = rows[0] as OpsAdmission;
   if (actor) {
     await safeAudit({
@@ -1169,8 +1223,8 @@ export async function updateAdmissionLicForm(
 
   const now = Date.now();
   const result = await pool.query(
-    `UPDATE ops_admissions SET ${mapping.completedCol} = $1, ${mapping.dateCol} = $2, updated_at = $3 WHERE id = $4`,
-    [completed ? 1 : 0, completed ? now : null, now, admissionId]
+    `UPDATE ops_admissions SET ${mapping.completedCol} = $1, ${mapping.dateCol} = $2, updated_at = $3, updated_by = $4 WHERE id = $5`,
+    [completed ? 1 : 0, completed ? now : null, now, actorId(actor), admissionId]
   );
   const ok = (result.rowCount ?? 0) > 0;
   if (ok && actor) {
@@ -1216,11 +1270,14 @@ export async function convertAdmissionToResident(admissionId: number): Promise<O
     status: "active" as const,
     createdAt: now,
     updatedAt: now,
+    // Phase 3: convert path is system-driven (no actor threaded through).
+    createdBy: "system",
+    updatedBy: "system",
   };
 
   const resRows = await db.insert(opsResidents).values(residentData).returning();
   const resident = resRows[0] as OpsResident;
-  await db.update(opsAdmissions).set({ residentId: resident.id, updatedAt: now }).where(eq(opsAdmissions.id, admissionId));
+  await db.update(opsAdmissions).set({ residentId: resident.id, updatedAt: now, updatedBy: "system" }).where(eq(opsAdmissions.id, admissionId));
 
   return resident;
 }
@@ -1254,7 +1311,7 @@ export async function listCharges(facilityNumber: string, residentId: number): P
 
 export async function createCharge(data: InsertOpsBillingCharge): Promise<OpsBillingCharge> {
   const now = Date.now();
-  const rows = await db.insert(opsBillingCharges).values({ ...data, createdAt: now }).returning();
+  const rows = await db.insert(opsBillingCharges).values({ ...data, createdAt: now, updatedAt: now, createdBy: "system", updatedBy: "system" }).returning();
   return rows[0] as OpsBillingCharge;
 }
 
@@ -1302,6 +1359,9 @@ export async function generateInvoice(facilityNumber: string, residentId: number
     dueDate,
     createdAt: now,
     updatedAt: now,
+    // Phase 3: generated by the billing engine, not a user action.
+    createdBy: "system",
+    updatedBy: "system",
   };
 
   const rows = await db.insert(opsInvoices).values(invoiceData).returning();
@@ -1314,7 +1374,7 @@ export async function getInvoice(id: number): Promise<OpsInvoice | undefined> {
 
 export async function markInvoiceSent(id: number): Promise<boolean> {
   const now = Date.now();
-  const rows = await db.update(opsInvoices).set({ status: "sent", sentAt: now, updatedAt: now }).where(eq(opsInvoices.id, id)).returning({ id: opsInvoices.id });
+  const rows = await db.update(opsInvoices).set({ status: "sent", sentAt: now, updatedAt: now, updatedBy: "system" }).where(eq(opsInvoices.id, id)).returning({ id: opsInvoices.id });
   return rows.length > 0;
 }
 
@@ -1323,7 +1383,10 @@ export async function recordPayment(data: InsertOpsPayment): Promise<OpsPayment>
   // an integer; no rounding needed. Storage never converts to/from dollars
   // — that happens in opsRouter at the request/response boundary.
   const now = Date.now();
-  const payRows = await db.insert(opsPayments).values({ ...data, createdAt: now }).returning();
+  // Phase 3: recordedBy is the content actor; reuse it as the audit
+  // attribution column. Trigger maintains updated_at on UPDATE.
+  const by = data.recordedBy || "system";
+  const payRows = await db.insert(opsPayments).values({ ...data, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by }).returning();
   const payment = payRows[0] as OpsPayment;
 
   const invRows = await db.select().from(opsInvoices).where(eq(opsInvoices.id, data.invoiceId));
@@ -1339,6 +1402,7 @@ export async function recordPayment(data: InsertOpsPayment): Promise<OpsPayment>
         status:     newStatus,
         paidAt:     newBalanceDueCents <= 0 ? now : invoice.paidAt,
         updatedAt:  now,
+        updatedBy:  by,
       })
       .where(eq(opsInvoices.id, data.invoiceId));
   }
@@ -1418,21 +1482,21 @@ export async function listStaff(facilityNumber: string, status?: string): Promis
 
 export async function createStaff(data: InsertOpsStaffMember): Promise<OpsStaffMember> {
   const now = Date.now();
-  const rows = await db.insert(opsStaff).values({ ...data, createdAt: now, updatedAt: now }).returning();
+  const rows = await db.insert(opsStaff).values({ ...data, createdAt: now, updatedAt: now, createdBy: "system", updatedBy: "system" }).returning();
   return rows[0] as OpsStaffMember;
 }
 
 export async function updateStaff(id: number, facilityNumber: string, data: Partial<InsertOpsStaffMember>): Promise<OpsStaffMember | undefined> {
   const now = Date.now();
   const cond = and(eq(opsStaff.id, id), eq(opsStaff.facilityNumber, facilityNumber));
-  const rows = await db.update(opsStaff).set({ ...data, updatedAt: now }).where(cond).returning();
+  const rows = await db.update(opsStaff).set({ ...data, updatedAt: now, updatedBy: "system" }).where(cond).returning();
   return rows[0] as OpsStaffMember | undefined;
 }
 
 export async function deactivateStaff(id: number, facilityNumber: string): Promise<boolean> {
   const now = Date.now();
   const cond = and(eq(opsStaff.id, id), eq(opsStaff.facilityNumber, facilityNumber));
-  const rows = await db.update(opsStaff).set({ status: "inactive", terminationDate: now, updatedAt: now }).where(cond).returning({ id: opsStaff.id });
+  const rows = await db.update(opsStaff).set({ status: "inactive", terminationDate: now, updatedAt: now, updatedBy: "system" }).where(cond).returning({ id: opsStaff.id });
   return rows.length > 0;
 }
 
@@ -1458,11 +1522,14 @@ export async function listShifts(
     covered_by_id: number | null;
     notes: string | null;
     created_at: number;
+    updated_at: number | null;
+    created_by: string | null;
+    updated_by: string | null;
     staff_name: string;
   }>(
     `SELECT s.id, s.facility_number, s.staff_id, s.shift_date, s.shift_type,
             s.start_time, s.end_time, s.is_overtime, s.status, s.covered_by_id,
-            s.notes, s.created_at,
+            s.notes, s.created_at, s.updated_at, s.created_by, s.updated_by,
             COALESCE(NULLIF(TRIM(st.first_name || ' ' || st.last_name), ''), 'Unknown') AS staff_name
        FROM ops_shifts s
        LEFT JOIN ops_staff st ON st.id = s.staff_id
@@ -1485,13 +1552,18 @@ export async function listShifts(
     coveredById: r.covered_by_id,
     notes: r.notes,
     createdAt: r.created_at,
+    // Phase 3 audit columns surfaced for downstream consumers; the underlying
+    // row never reads/writes them, the DB DEFAULT 'system' fills them on insert.
+    updatedAt: r.updated_at,
+    createdBy: r.created_by,
+    updatedBy: r.updated_by,
     staffName: r.staff_name,
   }));
 }
 
 export async function createShift(data: InsertOpsShift): Promise<OpsShift> {
   const now = Date.now();
-  const rows = await db.insert(opsShifts).values({ ...data, createdAt: now }).returning();
+  const rows = await db.insert(opsShifts).values({ ...data, createdAt: now, updatedAt: now, createdBy: "system", updatedBy: "system" }).returning();
   return rows[0] as OpsShift;
 }
 
@@ -1502,7 +1574,7 @@ export async function deleteShift(id: number, facilityNumber: string): Promise<b
 }
 
 export async function updateShift(id: number, data: Partial<InsertOpsShift>): Promise<OpsShift | undefined> {
-  const rows = await db.update(opsShifts).set(data).where(eq(opsShifts.id, id)).returning();
+  const rows = await db.update(opsShifts).set({ ...data, updatedBy: "system" }).where(eq(opsShifts.id, id)).returning();
   return rows[0] as OpsShift | undefined;
 }
 
@@ -1515,13 +1587,13 @@ export async function listComplianceItems(facilityNumber: string, status?: strin
 
 export async function createComplianceItem(data: InsertOpsComplianceItem): Promise<OpsComplianceItem> {
   const now = Date.now();
-  const rows = await db.insert(opsComplianceCalendar).values({ ...data, createdAt: now }).returning();
+  const rows = await db.insert(opsComplianceCalendar).values({ ...data, createdAt: now, updatedAt: now, createdBy: "system", updatedBy: "system" }).returning();
   return rows[0] as OpsComplianceItem;
 }
 
 export async function completeComplianceItem(id: number, facilityNumber: string, completedDate: number): Promise<boolean> {
   const cond = and(eq(opsComplianceCalendar.id, id), eq(opsComplianceCalendar.facilityNumber, facilityNumber));
-  const rows = await db.update(opsComplianceCalendar).set({ status: "completed", completedDate }).where(cond).returning({ id: opsComplianceCalendar.id });
+  const rows = await db.update(opsComplianceCalendar).set({ status: "completed", completedDate, updatedBy: "system" }).where(cond).returning({ id: opsComplianceCalendar.id });
   return rows.length > 0;
 }
 
@@ -2127,9 +2199,10 @@ export async function createTemperatureFixture(
   actor: AuditActor,
 ): Promise<OpsTemperatureFixture> {
   const now = Date.now();
+  const by = actorId(actor);
   const rows = await db
     .insert(opsTemperatureFixtures)
-    .values({ ...data, createdAt: now, updatedAt: now })
+    .values({ ...data, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by })
     .returning();
   const row = rows[0] as OpsTemperatureFixture;
   await safeAudit({
@@ -2154,7 +2227,7 @@ export async function updateTemperatureFixture(
   const now = Date.now();
   const rows = await db
     .update(opsTemperatureFixtures)
-    .set({ ...data, updatedAt: now })
+    .set({ ...data, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsTemperatureFixtures.id, id),
@@ -2187,7 +2260,7 @@ export async function softInactivateTemperatureFixture(
   const now = Date.now();
   const rows = await db
     .update(opsTemperatureFixtures)
-    .set({ status: "inactive", updatedAt: now })
+    .set({ status: "inactive", updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsTemperatureFixtures.id, id),
@@ -2310,6 +2383,7 @@ export async function createTemperatureLog(
     fixture.requiredMax ?? null,
   );
   const now = Date.now();
+  const by = actorId(actor);
   const rows = await db
     .insert(opsTemperatureLogs)
     .values({
@@ -2326,6 +2400,9 @@ export async function createTemperatureLog(
       note: input.note ?? null,
       followUpDueAt: oor ? now + TEMP_FOLLOW_UP_MS : null,
       createdAt: now,
+      updatedAt: now,
+      createdBy: by,
+      updatedBy: by,
     })
     .returning();
   const row = rows[0] as OpsTemperatureLog;
@@ -2361,6 +2438,7 @@ export async function resolveTemperatureFollowUp(
       followUpResolvedAt: now,
       followUpResolvedBy: actor.id,
       followUpResolutionNote: note,
+      updatedBy: actorId(actor),
     })
     .where(
       and(
@@ -2517,6 +2595,9 @@ export async function createDrillLog(
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
+      // Phase 3: createdBy is already a content column (the staff member who
+      // ran the drill); updatedBy tracks the audit actor on subsequent edits.
+      updatedBy: actorId(actor),
     })
     .returning();
   const row = rows[0] as OpsDrillLog;
@@ -2565,7 +2646,7 @@ export async function updateDrillLog(
     }
   }
   const now = Date.now();
-  const updateSet: Record<string, unknown> = { updatedAt: now };
+  const updateSet: Record<string, unknown> = { updatedAt: now, updatedBy: actorId(actor) };
   if (data.drillKind !== undefined) updateSet.drillKind = data.drillKind;
   if (data.scenario !== undefined) updateSet.scenario = data.scenario;
   if (data.shift !== undefined) updateSet.shift = data.shift;
@@ -2614,7 +2695,7 @@ export async function softDeleteDrillLog(
   const now = Date.now();
   const rows = await db
     .update(opsDrillLogs)
-    .set({ status: "deleted", updatedAt: now })
+    .set({ status: "deleted", updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsDrillLogs.id, id),
@@ -2710,9 +2791,10 @@ export async function createVendor(
   actor: AuditActor,
 ): Promise<OpsVendor> {
   const now = Date.now();
+  const by = actorId(actor);
   const rows = await db
     .insert(opsVendors)
-    .values({ ...data, createdAt: now, updatedAt: now })
+    .values({ ...data, createdAt: now, updatedAt: now, createdBy: by, updatedBy: by })
     .returning();
   const row = rows[0] as OpsVendor;
   await safeAudit({
@@ -2743,7 +2825,7 @@ export async function updateVendor(
   const now = Date.now();
   const rows = await db
     .update(opsVendors)
-    .set({ ...data, updatedAt: now })
+    .set({ ...data, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(eq(opsVendors.id, id), eq(opsVendors.facilityNumber, facilityNumber)),
     )
@@ -2774,7 +2856,7 @@ export async function archiveVendor(
   const now = Date.now();
   const rows = await db
     .update(opsVendors)
-    .set({ status: "archived", updatedAt: now })
+    .set({ status: "archived", updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(eq(opsVendors.id, id), eq(opsVendors.facilityNumber, facilityNumber)),
     )
@@ -2901,6 +2983,9 @@ export async function createComplaint(
     throw new Error(`Invalid complaint status: ${data.status}`);
   }
   const now = Date.now();
+  // Phase 3: createdBy is already a content column on ops_complaints (NOT NULL).
+  // The audit-attribution updatedBy mirrors actor; createdBy keeps whatever the
+  // caller supplied (the staff member receiving the complaint).
   const rows = await db
     .insert(opsComplaints)
     .values({
@@ -2910,6 +2995,7 @@ export async function createComplaint(
       status: data.status ?? "open",
       createdAt: now,
       updatedAt: now,
+      updatedBy: actorId(actor),
     })
     .returning();
   const row = rows[0] as OpsComplaint;
@@ -2948,7 +3034,7 @@ export async function updateComplaint(
   const now = Date.now();
   const rows = await db
     .update(opsComplaints)
-    .set({ ...data, updatedAt: now })
+    .set({ ...data, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsComplaints.id, id),
@@ -2998,6 +3084,10 @@ export async function addInvestigationNote(
       notedAt: now,
       notedBy: actor.id,
       note,
+      // Phase 3: standardized audit columns. createdAt mirrors notedAt;
+      // createdBy mirrors notedBy. Append-only — no updated_*.
+      createdAt: now,
+      createdBy: actor.id,
     })
     .returning();
   const row = rows[0] as OpsComplaintInvestigationNote;
@@ -3015,7 +3105,7 @@ export async function addInvestigationNote(
   try {
     await db
       .update(opsComplaints)
-      .set({ updatedAt: now })
+      .set({ updatedAt: now, updatedBy: actor.id })
       .where(eq(opsComplaints.id, complaintId));
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -3054,6 +3144,7 @@ export async function resolveComplaint(
       resolutionNote,
       resolvedAt: now,
       updatedAt: now,
+      updatedBy: actorId(actor),
     })
     .where(
       and(
@@ -3100,7 +3191,7 @@ export async function closeComplaint(
   const now = Date.now();
   const rows = await db
     .update(opsComplaints)
-    .set({ status: "closed", closedAt: now, updatedAt: now })
+    .set({ status: "closed", closedAt: now, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsComplaints.id, id),
@@ -3195,9 +3286,11 @@ export async function createInspection(
   actor: AuditActor,
 ): Promise<OpsInspection> {
   const now = Date.now();
+  // createdBy on ops_inspections is already NOT NULL — caller supplies it.
+  // updatedBy is the new audit-attribution column.
   const rows = await db
     .insert(opsInspections)
-    .values({ ...data, createdAt: now, updatedAt: now })
+    .values({ ...data, createdAt: now, updatedAt: now, updatedBy: actorId(actor) })
     .returning();
   const row = rows[0] as OpsInspection;
   await safeAudit({
@@ -3238,7 +3331,7 @@ export async function updateInspection(
   const now = Date.now();
   const rows = await db
     .update(opsInspections)
-    .set({ ...data, updatedAt: now })
+    .set({ ...data, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsInspections.id, id),
@@ -3303,7 +3396,7 @@ export async function closeInspection(
   const now = Date.now();
   const rows = await db
     .update(opsInspections)
-    .set({ status: "closed", closedAt: now, updatedAt: now })
+    .set({ status: "closed", closedAt: now, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsInspections.id, id),
@@ -3354,6 +3447,7 @@ export async function addCitation(
     throw new Error("Cannot add citation to a closed inspection");
   }
   const now = Date.now();
+  const by = actorId(actor);
   const rows = await db
     .insert(opsInspectionCitations)
     .values({
@@ -3365,6 +3459,8 @@ export async function addCitation(
       status: "open",
       createdAt: now,
       updatedAt: now,
+      createdBy: by,
+      updatedBy: by,
     })
     .returning();
   const row = rows[0] as OpsInspectionCitation;
@@ -3407,6 +3503,7 @@ export async function closeCitation(
       closedBy: actor.id,
       closureNote,
       updatedAt: now,
+      updatedBy: actorId(actor),
     })
     .where(
       and(
@@ -3586,6 +3683,10 @@ export async function resolveControlledSubDiscrepancy(
   const trailer = `\n[resolved by ${actor.id} on ${nowIso} witnessed by ${args.witnessedBy}]: ${args.note}`;
   const newNotes = (before.discrepancyNotes ?? "") + trailer;
 
+  // ops_controlled_sub_counts is treated as insert-only at the application
+  // contract layer (Phase 3 — corrections via a new row in a future refactor).
+  // This single legacy UPDATE site stays, and intentionally does NOT touch
+  // updated_at / updated_by (those columns aren't on this table — no trigger).
   const rows = await db
     .update(opsControlledSubCounts)
     .set({ resolved: 1, discrepancyNotes: newNotes })
@@ -3757,6 +3858,8 @@ export async function createStaffCredential(
   assertCredentialType(data.credentialType);
   if (data.status !== undefined) assertCredentialStatus(data.status);
   const now = Date.now();
+  // createdBy on ops_staff_credentials is already NOT NULL (caller supplies).
+  // updatedBy is the new audit-attribution column.
   const rows = await db
     .insert(opsStaffCredentials)
     .values({
@@ -3764,6 +3867,7 @@ export async function createStaffCredential(
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
+      updatedBy: actorId(actor),
     })
     .returning();
   const row = rows[0] as OpsStaffCredential;
@@ -3791,7 +3895,7 @@ export async function updateStaffCredential(
   const now = Date.now();
   const rows = await db
     .update(opsStaffCredentials)
-    .set({ ...data, updatedAt: now })
+    .set({ ...data, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsStaffCredentials.id, id),
@@ -3825,7 +3929,7 @@ export async function softDeleteStaffCredential(
   const now = Date.now();
   const rows = await db
     .update(opsStaffCredentials)
-    .set({ deletedAt: now, updatedAt: now })
+    .set({ deletedAt: now, updatedAt: now, updatedBy: actorId(actor) })
     .where(
       and(
         eq(opsStaffCredentials.id, id),
@@ -4148,7 +4252,7 @@ async function backfillIncidentSeverityForRow(
   try {
     await db
       .update(opsIncidents)
-      .set({ eventSeverity: sev })
+      .set({ eventSeverity: sev, updatedBy: "system" })
       .where(
         and(
           eq(opsIncidents.id, row.id),
@@ -4348,6 +4452,7 @@ export async function closeIncident(
       closedAt: now,
       closedBy: by,
       updatedAt: now,
+      updatedBy: actorId(actor),
     })
     .where(
       and(
@@ -4415,6 +4520,7 @@ export async function reopenIncident(
       reopenReason: reason.trim(),
       // Preserve prior closed_at / closed_by — do NOT null them.
       updatedAt: now,
+      updatedBy: actorId(actor),
     })
     .where(
       and(

@@ -47,6 +47,45 @@ export const jobSeekerProfiles = pgTable("job_seeker_profiles", {
   updatedAt: ts("updated_at").notNull(),
 });
 
+// ── Phase 3: facility ↔ user membership (schema seam only) ────────────────────
+// Join table connecting `facility_accounts` (the existing single-login-per-
+// facility table) with `users` (the legacy table preserved through Phase 2 R1).
+// Phase 3 lands the seam so a later phase can introduce multi-staff facilities
+// without a schema rewrite — the auth flow is unchanged and no rows are
+// backfilled. `role` mirrors the RBAC role set (kept enum-by-CHECK at the DB —
+// see migrations/0005_*.sql — so the canonical list can live in code and still
+// be enforced by the DB). Soft-delete via `deletedAt`; partial UNIQUE
+// `(facilityAccountId, userId) WHERE deleted_at IS NULL` lives in the
+// migration so a deleted membership can be re-added.
+export const facilityUsers = pgTable("facility_users", {
+  id:                  bigint("id", { mode: "number" }).primaryKey(),
+  facilityAccountId:   integer("facility_account_id").notNull(),
+  userId:              integer("user_id").notNull(),
+  role:                text("role").notNull().default("facility_admin"),
+  createdAt:           ts("created_at").notNull(),
+  // DB has NOT NULL DEFAULT 'system' — see migrations/0005_*.sql. The Drizzle
+  // def deliberately omits .notNull() so insert sites that omit the column
+  // let the DB default fill it in, and select-side row types stay flexible.
+  createdBy:           text("created_by").default("system"),
+  updatedAt:           ts("updated_at").notNull(),
+  updatedBy:           text("updated_by"),
+  deletedAt:           ts("deleted_at"),
+});
+
+export type FacilityUserRow = typeof facilityUsers.$inferSelect;
+export type NewFacilityUserRow = typeof facilityUsers.$inferInsert;
+
+export const facilityUserRoleSchema = z.enum([
+  "facility_admin",
+  "admin",
+  "auditor",
+  "don",
+  "med_tech",
+  "schedule_lead",
+  "office_manager",
+]);
+export type FacilityUserRole = z.infer<typeof facilityUserRoleSchema>;
+
 export const facilityAccounts = pgTable("facility_accounts", {
   id: serial("id").primaryKey(),
   facilityNumber: text("facility_number").notNull().unique(),
