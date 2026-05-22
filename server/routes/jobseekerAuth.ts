@@ -7,6 +7,7 @@ import { getOrCreateCsrfToken } from "../middleware/csrfToken";
 import { sendPasswordResetEmail } from "../email";
 import { pool } from "../db/index";
 import { authRateLimiter } from "../middleware/rateLimiter";
+import { getPendingAcceptances } from "../lib/legal";
 
 // ── Dependency wiring ────────────────────────────────────────────────────────
 // To replace SQLite with Postgres or an external IdP, swap the repository or
@@ -138,12 +139,29 @@ jobseekerAuthRouter.get("/me", requireJobSeekerAuth, async (req, res, next) => {
       return res.status(401).json({
         message: "Session is no longer valid.",
         csrfToken,
+        // Phase 4 — uniform shape with facility /me 401: empty array when
+        // there's no account context to look up against.
+        pendingAcceptances: [],
       });
     }
-    // Phase 1 backend hardening — per-session CSRF token. The FE stores this
-    // and replays it as X-CSRF-Token on every mutation. The profile object
-    // shape is preserved; csrfToken is an additive sibling field.
-    return res.json({ ...profile, csrfToken: getOrCreateCsrfToken(req) });
+    // Phase 4 — surface stale legal acceptances so the FE blocking modal
+    // can prompt the user. Failure to look this up is non-fatal (logged + []).
+    let pendingAcceptances: Awaited<ReturnType<typeof getPendingAcceptances>> = [];
+    try {
+      pendingAcceptances = await getPendingAcceptances({
+        accountKind: "job_seeker",
+        accountId: req.session.jobSeekerId!,
+      });
+    } catch (err) {
+      console.error("[jobseeker/me] pendingAcceptances lookup failed", err);
+    }
+    // Phase 1 — csrfToken. Phase 4 — pendingAcceptances. Both additive
+    // sibling fields on the profile body.
+    return res.json({
+      ...profile,
+      csrfToken: getOrCreateCsrfToken(req),
+      pendingAcceptances,
+    });
   } catch (err) {
     next(err);
   }

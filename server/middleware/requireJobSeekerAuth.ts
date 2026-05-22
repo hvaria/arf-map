@@ -37,6 +37,10 @@ export function requireJobSeekerAuth(
     res.status(401).json({
       message: "Authentication required.",
       csrfToken: getOrCreateCsrfToken(req),
+      // Phase 4 — uniform shape with /me 401: empty array when there's no
+      // account context. Lets the FE blocking-modal logic treat every 401
+      // response identically.
+      pendingAcceptances: [],
     });
     return;
   }
