@@ -59,34 +59,41 @@ import type { OpsReport } from "./opsSchema";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const PREAUDIT_JSON_MAX_BYTES = 16 * 1024;
-const TRUNCATION_MARKER = "...(truncated)";
 export const SECTION_ROW_CAP = 5000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (JSON cap + audit)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function serializeAndCap(value: unknown): string | null {
+// Phase 2 R2: sections_json / totals_json are JSONB columns now. The previous
+// implementation byte-truncated the serialised string with a "...(truncated)"
+// marker, which produced INVALID JSON — fine in a TEXT column but fatal for
+// JSONB on subsequent reads or migration casts.
+//
+// Replacement contract: returns a JS value (object/array/scalar) suitable for
+// passing to a Drizzle jsonb insert. When the input would exceed
+// PREAUDIT_JSON_MAX_BYTES once stringified, we substitute a sentinel object
+// so inspectors still see WHY the snapshot is missing without breaking
+// JSONB shape invariants. Callers MUST NOT JSON.stringify the result before
+// handing it to Drizzle — passing a string would store it as a JSON string
+// scalar rather than the intended object.
+function serializeAndCap(value: unknown): unknown | null {
   if (value === undefined || value === null) return null;
   let json: string;
   try {
     json = JSON.stringify(value);
   } catch {
-    return "(unserializable)";
+    return { _truncated: true, _reason: "unserializable" };
   }
   const enc = new TextEncoder();
-  const bytes = enc.encode(json);
-  if (bytes.byteLength <= PREAUDIT_JSON_MAX_BYTES) return json;
-  const budget = PREAUDIT_JSON_MAX_BYTES - TRUNCATION_MARKER.length;
-  let lo = 0;
-  let hi = json.length;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >>> 1;
-    const len = enc.encode(json.slice(0, mid)).byteLength;
-    if (len <= budget) lo = mid;
-    else hi = mid - 1;
-  }
-  return json.slice(0, lo) + TRUNCATION_MARKER;
+  const bytes = enc.encode(json).byteLength;
+  if (bytes <= PREAUDIT_JSON_MAX_BYTES) return value;
+  return {
+    _truncated: true,
+    _originalSizeBytes: bytes,
+    _maxBytes: PREAUDIT_JSON_MAX_BYTES,
+    _preview: json.slice(0, 512),
+  };
 }
 
 async function safeAudit(args: {

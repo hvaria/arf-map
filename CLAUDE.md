@@ -173,6 +173,27 @@ The Phase 2 R1 structural lockdown (`migrations/0001_phase_2_structural_lockdown
 
 **Orphan rows + migration failures.** See [docs/runbooks/phase-2-migration-orphan-cleanup.md](docs/runbooks/phase-2-migration-orphan-cleanup.md) for what to do when an FK or CHECK addition fails on existing prod data.
 
+**JSONB instead of TEXT-as-JSON (Phase 2 R2).** `migrations/0002_phase_2_jsonb_and_idempotency.sql` flipped a batch of columns from `TEXT` (holding a stringified JSON payload) to `JSONB`:
+
+- `facility_overrides.{hours_of_operation_json, languages_spoken_json, care_types_offered_json, accreditations_json, prefilled_fields}`
+- `job_seeker_profiles.job_types`
+- `job_postings.requirements` (NOT NULL, default `'[]'::jsonb`)
+- `ops_drill_logs.{participants_json, residents_involved_json, corrective_actions_json}`
+- `ops_inspections.findings_json`
+- `ops_preaudit_pulls.{sections_json, totals_json}`
+- `ops_reports.parameters_json`
+- `ops_notification_log.triage_snapshot`
+- `ops_resident_assessments.raw_json`
+- `ops_note_audit_log.payload_diff`
+
+Storage now reads/writes JS values directly — do NOT JSON.stringify on insert and do NOT JSON.parse on read. Drizzle's `jsonb()` column type handles both. Helpers that previously stringified (`jsonArrayToText`, `serializeAndCap`, `serializeParams`) are rewritten to return JS values; the byte-cap path now substitutes a sentinel object (`{_truncated:true, _originalSizeBytes, _maxBytes, _preview}`) instead of a mid-string `"...(truncated)"` marker that would have broken JSONB validity.
+
+The wire format these endpoints emit is unchanged: a wire-compat shim ([server/lib/jsonbWireCompat.ts](server/lib/jsonbWireCompat.ts)) re-stringifies the affected fields on outbound so FE consumers that `JSON.parse(field)` keep working. A follow-up round can flip the FE to expect parsed objects and drop the shim.
+
+**`ops_audit_trail.{before_json, after_json}` are intentionally NOT converted** — the `serializeAndCap` in auditStorage can emit a truncation marker; conversion would need helper rework and risks legacy-row cast failure. Out of scope for this round.
+
+**Stripe webhook idempotency (Phase 2 R2).** Stripe webhook events are deduplicated via `stripe_processed_events(event_id PRIMARY KEY)`. The handler does `INSERT ... ON CONFLICT (event_id) DO NOTHING ... RETURNING event_id` immediately after signature verification and short-circuits with `{ received: true, alreadyProcessed: true }` when RETURNING yields no rows. This makes the webhook safe under Stripe replays: the subscription upsert never re-runs on a duplicate event, eliminating write amplification and removing the failure mode where a downstream side effect could drift between the first and second processing of the same event.
+
 ### Tracker Module
 
 Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-schemas/). Adding a tracker is a registry entry — no new routes, no DB migration, no shell changes (assuming an existing render pattern fits).

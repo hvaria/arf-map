@@ -1,4 +1,4 @@
-import { pgTable, text, integer, serial, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, bigint, jsonb } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,7 +142,9 @@ export const NOTES_PG_SCHEMA_SQL = `
     note_id                     BIGINT NOT NULL,
     actor_facility_account_id   BIGINT,
     action                      TEXT NOT NULL,
-    payload_diff                TEXT,
+    -- Phase 2 R2: JSONB rather than TEXT. notesStorage writes the diff via
+    -- db.insert() with a JS object now (no JSON.stringify).
+    payload_diff                JSONB,
     ip_address                  TEXT,
     user_agent                  TEXT,
     occurred_at                 BIGINT NOT NULL
@@ -151,6 +153,21 @@ export const NOTES_PG_SCHEMA_SQL = `
     ON ops_note_audit_log(note_id, occurred_at DESC);
   CREATE INDEX IF NOT EXISTS idx_ops_note_audit_actor
     ON ops_note_audit_log(actor_facility_account_id, occurred_at DESC);
+
+  -- Phase 2 R2: idempotent TEXT → JSONB flip for pre-existing dev/test DBs
+  -- that materialised payload_diff as TEXT. No-op on every subsequent boot.
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_note_audit_log'
+         AND column_name = 'payload_diff'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE ops_note_audit_log
+        ALTER COLUMN payload_diff TYPE JSONB
+        USING (CASE WHEN payload_diff IS NULL OR payload_diff = '' THEN NULL ELSE payload_diff::jsonb END);
+    END IF;
+  END $$;
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,7 +271,9 @@ export const opsNoteAuditLog = pgTable("ops_note_audit_log", {
   noteId:                   fk("note_id").notNull(),
   actorFacilityAccountId:   fk("actor_facility_account_id"),
   action:                   text("action").notNull(),
-  payloadDiff:              text("payload_diff"),
+  // Phase 2 R2: text() → jsonb(). notesStorage writes the diff via
+  // db.insert() with a JS object now (no JSON.stringify in payloadDiff path).
+  payloadDiff:              jsonb("payload_diff"),
   ipAddress:                text("ip_address"),
   userAgent:                text("user_agent"),
   occurredAt:               ts("occurred_at").notNull(),

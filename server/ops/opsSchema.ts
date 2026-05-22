@@ -1,4 +1,4 @@
-import { pgTable, text, integer, serial, bigint, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, bigint, doublePrecision, jsonb } from "drizzle-orm/pg-core";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PostgreSQL DDL — created at startup via bootstrapOpsSchema() in opsStorage.ts
@@ -64,7 +64,7 @@ export const OPS_PG_SCHEMA_SQL = `
     self_administer_meds  INTEGER DEFAULT 0,
     next_due_date         BIGINT,
     lic_form_number       TEXT,
-    raw_json              TEXT,
+    raw_json              JSONB,
     created_at            BIGINT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_ops_ra_resident   ON ops_resident_assessments(resident_id);
@@ -549,11 +549,11 @@ export const OPS_PG_SCHEMA_SQL = `
     shift                   TEXT,
     executed_at             BIGINT NOT NULL,
     leader                  TEXT,
-    participants_json       TEXT,
-    residents_involved_json TEXT,
+    participants_json       JSONB,
+    residents_involved_json JSONB,
     evacuation_seconds      INTEGER,
     debrief_notes           TEXT,
-    corrective_actions_json TEXT,
+    corrective_actions_json JSONB,
     status                  TEXT NOT NULL DEFAULT 'executed',
     created_by              TEXT NOT NULL,
     created_at              BIGINT NOT NULL,
@@ -621,7 +621,7 @@ export const OPS_PG_SCHEMA_SQL = `
     inspector_name  TEXT,
     purpose         TEXT NOT NULL,
     visit_at        BIGINT NOT NULL,
-    findings_json   TEXT,
+    findings_json   JSONB,
     status          TEXT NOT NULL DEFAULT 'open',
     closed_at       BIGINT,
     created_by      TEXT NOT NULL,
@@ -748,7 +748,7 @@ export const OPS_PG_SCHEMA_SQL = `
     delivery_status     TEXT NOT NULL DEFAULT 'queued',
     delivery_error      TEXT,
     resend_message_id   TEXT,
-    triage_snapshot     TEXT,
+    triage_snapshot     JSONB,
     scheduled_for       BIGINT NOT NULL,
     sent_at             BIGINT,
     created_at          BIGINT NOT NULL
@@ -801,8 +801,8 @@ export const OPS_PG_SCHEMA_SQL = `
     audience_label    TEXT,
     window_start_at   BIGINT NOT NULL,
     window_end_at     BIGINT NOT NULL,
-    sections_json     TEXT,
-    totals_json       TEXT,
+    sections_json     JSONB,
+    totals_json       JSONB,
     generated_by      TEXT NOT NULL,
     generated_at      BIGINT NOT NULL,
     delivery_method   TEXT NOT NULL,
@@ -972,7 +972,7 @@ export const OPS_PG_SCHEMA_SQL = `
     report_kind         TEXT NOT NULL,
     title               TEXT NOT NULL,
     description         TEXT,
-    parameters_json     TEXT,
+    parameters_json     JSONB,
     storage_uri         TEXT,
     mime_type           TEXT,
     filename            TEXT,
@@ -1069,6 +1069,101 @@ export const OPS_PG_SCHEMA_SQL = `
     END IF;
   END
   $$;
+
+  -- ── Phase 2 R2: TEXT → JSONB coercion (idempotent) ─────────────────────────
+  -- The CREATE TABLE statements above declare these columns as JSONB so a
+  -- fresh DB lands in the right shape. For dev/test DBs that materialised
+  -- the same tables before the conversion (or for production after the
+  -- 0002_phase_2_jsonb_and_idempotency.sql migration), the DO blocks below
+  -- coerce in place. Gated on the current column's data_type so the flip
+  -- is a no-op on every subsequent boot.
+  --
+  -- Per-column DO blocks so a partial flip (e.g. an aborted earlier boot)
+  -- can still progress on the remaining columns rather than skipping the
+  -- whole batch.
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_resident_assessments'
+         AND column_name = 'raw_json'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE ops_resident_assessments
+        ALTER COLUMN raw_json TYPE JSONB
+        USING (CASE WHEN raw_json IS NULL OR raw_json = '' THEN NULL ELSE raw_json::jsonb END);
+    END IF;
+  END $$;
+
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_drill_logs'
+         AND column_name = 'participants_json'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE ops_drill_logs
+        ALTER COLUMN participants_json TYPE JSONB
+          USING (CASE WHEN participants_json IS NULL OR participants_json = '' THEN NULL ELSE participants_json::jsonb END),
+        ALTER COLUMN residents_involved_json TYPE JSONB
+          USING (CASE WHEN residents_involved_json IS NULL OR residents_involved_json = '' THEN NULL ELSE residents_involved_json::jsonb END),
+        ALTER COLUMN corrective_actions_json TYPE JSONB
+          USING (CASE WHEN corrective_actions_json IS NULL OR corrective_actions_json = '' THEN NULL ELSE corrective_actions_json::jsonb END);
+    END IF;
+  END $$;
+
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_inspections'
+         AND column_name = 'findings_json'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE ops_inspections
+        ALTER COLUMN findings_json TYPE JSONB
+        USING (CASE WHEN findings_json IS NULL OR findings_json = '' THEN NULL ELSE findings_json::jsonb END);
+    END IF;
+  END $$;
+
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_notification_log'
+         AND column_name = 'triage_snapshot'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE ops_notification_log
+        ALTER COLUMN triage_snapshot TYPE JSONB
+        USING (CASE WHEN triage_snapshot IS NULL OR triage_snapshot = '' THEN NULL ELSE triage_snapshot::jsonb END);
+    END IF;
+  END $$;
+
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_preaudit_pulls'
+         AND column_name = 'sections_json'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE ops_preaudit_pulls
+        ALTER COLUMN sections_json TYPE JSONB
+          USING (CASE WHEN sections_json IS NULL OR sections_json = '' THEN NULL ELSE sections_json::jsonb END),
+        ALTER COLUMN totals_json TYPE JSONB
+          USING (CASE WHEN totals_json IS NULL OR totals_json = '' THEN NULL ELSE totals_json::jsonb END);
+    END IF;
+  END $$;
+
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'ops_reports'
+         AND column_name = 'parameters_json'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE ops_reports
+        ALTER COLUMN parameters_json TYPE JSONB
+        USING (CASE WHEN parameters_json IS NULL OR parameters_json = '' THEN NULL ELSE parameters_json::jsonb END);
+    END IF;
+  END $$;
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1135,7 +1230,9 @@ export const opsResidentAssessments = pgTable("ops_resident_assessments", {
   selfAdministerMeds: integer("self_administer_meds").default(0),
   nextDueDate:        ts("next_due_date"),
   licFormNumber:      text("lic_form_number"),
-  rawJson:            text("raw_json"),
+  // Phase 2 R2: text() → jsonb(). Original LIC form passthrough payload;
+  // shape is whatever the form scanner emitted, so we keep `unknown`.
+  rawJson:            jsonb("raw_json"),
   createdAt:          ts("created_at").notNull(),
 });
 
@@ -1591,11 +1688,14 @@ export const opsDrillLogs = pgTable("ops_drill_logs", {
   shift:                 text("shift"),
   executedAt:            ts("executed_at").notNull(),
   leader:                text("leader"),
-  participantsJson:      text("participants_json"),
-  residentsInvolvedJson: text("residents_involved_json"),
+  // Phase 2 R2: text() → jsonb(). All three carry a JSON array of strings.
+  // App code reads/writes JS arrays directly; the route layer keeps wire
+  // format stable by mapping rows through decodeDrillLog before responding.
+  participantsJson:      jsonb("participants_json").$type<string[]>(),
+  residentsInvolvedJson: jsonb("residents_involved_json").$type<string[]>(),
   evacuationSeconds:     integer("evacuation_seconds"),
   debriefNotes:          text("debrief_notes"),
-  correctiveActionsJson: text("corrective_actions_json"),
+  correctiveActionsJson: jsonb("corrective_actions_json").$type<string[]>(),
   status:                text("status").notNull().default("executed"),
   createdBy:             text("created_by").notNull(),
   createdAt:             ts("created_at").notNull(),
@@ -1660,7 +1760,11 @@ export const opsInspections = pgTable("ops_inspections", {
   inspectorName:  text("inspector_name"),
   purpose:        text("purpose").notNull(),
   visitAt:        ts("visit_at").notNull(),
-  findingsJson:   text("findings_json"),
+  // Phase 2 R2: text() → jsonb(). The wire format is still a JSON string
+  // (the route schema validates as z.string() up to 16 KB) but on the way
+  // in to storage the router parses it; on the way back out the router
+  // re-stringifies. Storage holds the parsed value.
+  findingsJson:   jsonb("findings_json"),
   status:         text("status").notNull().default("open"),
   closedAt:       ts("closed_at"),
   createdBy:      text("created_by").notNull(),
@@ -1770,7 +1874,10 @@ export const opsNotificationLog = pgTable("ops_notification_log", {
   deliveryStatus:   text("delivery_status").notNull().default("queued"),
   deliveryError:    text("delivery_error"),
   resendMessageId:  text("resend_message_id"),
-  triageSnapshot:   text("triage_snapshot"),
+  // Phase 2 R2: text() → jsonb(). recordNotification's serializeAndCap()
+  // is rewritten to emit a sentinel object (rather than appending
+  // "...(truncated)" mid-string) so the value is always valid JSON.
+  triageSnapshot:   jsonb("triage_snapshot"),
   scheduledFor:     ts("scheduled_for").notNull(),
   sentAt:           ts("sent_at"),
   createdAt:        ts("created_at").notNull(),
@@ -1812,8 +1919,11 @@ export const opsPreauditPulls = pgTable("ops_preaudit_pulls", {
   audienceLabel:   text("audience_label"),
   windowStartAt:   ts("window_start_at").notNull(),
   windowEndAt:     ts("window_end_at").notNull(),
-  sectionsJson:    text("sections_json"),
-  totalsJson:      text("totals_json"),
+  // Phase 2 R2: text() → jsonb(). Same truncation-sentinel rewrite as
+  // ops_notification_log.triage_snapshot — recordPreauditPull's
+  // serializeAndCap() now emits a sentinel object on byte-cap overflow.
+  sectionsJson:    jsonb("sections_json"),
+  totalsJson:      jsonb("totals_json"),
   generatedBy:     text("generated_by").notNull(),
   generatedAt:     ts("generated_at").notNull(),
   deliveryMethod:  text("delivery_method").notNull(),
@@ -1937,7 +2047,10 @@ export const opsReports = pgTable("ops_reports", {
   reportKind:        text("report_kind").notNull(),
   title:             text("title").notNull(),
   description:       text("description"),
-  parametersJson:    text("parameters_json"),
+  // Phase 2 R2: text() → jsonb(). createReportStub previously called
+  // JSON.stringify before insert; now the parameters object is passed
+  // through as-is.
+  parametersJson:    jsonb("parameters_json"),
   storageUri:        text("storage_uri"),
   mimeType:          text("mime_type"),
   filename:          text("filename"),

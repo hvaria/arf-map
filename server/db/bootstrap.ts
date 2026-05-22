@@ -34,7 +34,8 @@ const MAIN_PG_SCHEMA_SQL = `
     zip_code             TEXT,
     profile_picture_url  TEXT,
     years_experience     INTEGER,
-    job_types            TEXT,
+    -- Phase 2 R2: was TEXT carrying a JSON-stringified array.
+    job_types            JSONB,
     bio                  TEXT,
     updated_at           BIGINT NOT NULL
   );
@@ -80,9 +81,11 @@ const MAIN_PG_SCHEMA_SQL = `
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_city TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_state TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS mailing_zip TEXT;
-  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS hours_of_operation_json TEXT;
-  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS languages_spoken_json TEXT;
-  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS care_types_offered_json TEXT;
+  -- Phase 2 R2: declared as JSONB on first creation. Pre-existing dev/test
+  -- DBs that already added these as TEXT get the idempotent flip below.
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS hours_of_operation_json JSONB;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS languages_spoken_json JSONB;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS care_types_offered_json JSONB;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS administrator_name TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS administrator_phone TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS administrator_email TEXT;
@@ -90,14 +93,14 @@ const MAIN_PG_SCHEMA_SQL = `
   -- tax_id_last4: LAST 4 digits of EIN only. Full EIN is NEVER stored here.
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS tax_id_last4 TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS year_established INTEGER;
-  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS accreditations_json TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS accreditations_json JSONB;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS facebook_url TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS instagram_url TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS linkedin_url TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS report_header_text TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS report_footer_text TEXT;
   ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS prefilled_from_ccld_at BIGINT;
-  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS prefilled_fields TEXT;
+  ALTER TABLE facility_overrides ADD COLUMN IF NOT EXISTS prefilled_fields JSONB;
 
   CREATE TABLE IF NOT EXISTS job_postings (
     id              SERIAL PRIMARY KEY,
@@ -106,7 +109,10 @@ const MAIN_PG_SCHEMA_SQL = `
     type            TEXT NOT NULL,
     salary          TEXT NOT NULL,
     description     TEXT NOT NULL,
-    requirements    TEXT NOT NULL,
+    -- Phase 2 R2: was TEXT carrying a JSON-stringified array of requirement
+    -- strings. NOT NULL with DB-level default '[]'::jsonb so empty arrays
+    -- don't need explicit storage-layer handling.
+    requirements    JSONB NOT NULL DEFAULT '[]'::jsonb,
     posted_at       BIGINT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_job_postings_facility ON job_postings(facility_number);
@@ -283,6 +289,74 @@ const MAIN_PG_SCHEMA_SQL = `
     ADD COLUMN IF NOT EXISTS subscription_status TEXT;
   ALTER TABLE facility_accounts
     ADD COLUMN IF NOT EXISTS subscription_current_period_end BIGINT;
+
+  -- ── Phase 2 R2: Stripe webhook idempotency registry ──────────────────────
+  -- The handler does INSERT ... ON CONFLICT DO NOTHING ... RETURNING against
+  -- this table immediately after signature verification. Empty RETURNING =
+  -- Stripe replay → short-circuit 200 without re-mutating subscription rows.
+  -- The supporting index on processed_at is observability/purge fodder only;
+  -- the hot path is the PK lookup.
+  CREATE TABLE IF NOT EXISTS stripe_processed_events (
+    event_id     TEXT PRIMARY KEY,
+    event_type   TEXT NOT NULL,
+    processed_at BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_stripe_events_processed_at
+    ON stripe_processed_events(processed_at);
+
+  -- ── Phase 2 R2: idempotent TEXT → JSONB flip for pre-existing dev/test
+  --    deployments where columns were materialised as TEXT before the
+  --    JSONB conversion landed. The ALTER below is gated on the current
+  --    data_type so it's a no-op on every subsequent boot. Production runs
+  --    the explicit migration (0002_phase_2_jsonb_and_idempotency.sql).
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'facility_overrides'
+         AND column_name = 'hours_of_operation_json'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE facility_overrides
+        ALTER COLUMN hours_of_operation_json TYPE JSONB
+          USING (CASE WHEN hours_of_operation_json IS NULL OR hours_of_operation_json = '' THEN NULL ELSE hours_of_operation_json::jsonb END),
+        ALTER COLUMN languages_spoken_json TYPE JSONB
+          USING (CASE WHEN languages_spoken_json IS NULL OR languages_spoken_json = '' THEN NULL ELSE languages_spoken_json::jsonb END),
+        ALTER COLUMN care_types_offered_json TYPE JSONB
+          USING (CASE WHEN care_types_offered_json IS NULL OR care_types_offered_json = '' THEN NULL ELSE care_types_offered_json::jsonb END),
+        ALTER COLUMN accreditations_json TYPE JSONB
+          USING (CASE WHEN accreditations_json IS NULL OR accreditations_json = '' THEN NULL ELSE accreditations_json::jsonb END),
+        ALTER COLUMN prefilled_fields TYPE JSONB
+          USING (CASE WHEN prefilled_fields IS NULL OR prefilled_fields = '' THEN NULL ELSE prefilled_fields::jsonb END);
+    END IF;
+  END $$;
+
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'job_seeker_profiles'
+         AND column_name = 'job_types'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE job_seeker_profiles
+        ALTER COLUMN job_types TYPE JSONB
+        USING (CASE WHEN job_types IS NULL OR job_types = '' THEN NULL ELSE job_types::jsonb END);
+    END IF;
+  END $$;
+
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'job_postings'
+         AND column_name = 'requirements'
+         AND data_type = 'text'
+    ) THEN
+      ALTER TABLE job_postings
+        ALTER COLUMN requirements DROP DEFAULT,
+        ALTER COLUMN requirements TYPE JSONB
+          USING (CASE WHEN requirements IS NULL OR requirements = '' THEN '[]'::jsonb ELSE requirements::jsonb END),
+        ALTER COLUMN requirements SET DEFAULT '[]'::jsonb;
+    END IF;
+  END $$;
 `;
 
 // Bootstrap is idempotent, but concurrent vitest forks running ADD

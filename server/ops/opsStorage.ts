@@ -1988,22 +1988,28 @@ export async function seedFacilityDemoData(facilityNumber: string): Promise<Demo
 // retrofit on Residents/eMAR/Admissions can share the same wrapper as the
 // Wave 1+ modules below.
 
-// JSON column helpers — write side stringifies, read side parses with a
-// try/catch fallback to [] so a malformed legacy row never crashes a list
-// response.
-function jsonArrayToText(v: unknown): string | null {
+// JSON column helpers — Phase 2 R2: the underlying columns are JSONB now,
+// so the write side passes the array straight through to Drizzle (which
+// JSON-encodes for JSONB) and the read side just normalises to an array.
+// `parseJsonArray` retains the legacy text-row fallback path so a row
+// written before the conversion completes does not throw.
+function jsonArrayPassthrough<T = unknown>(v: unknown): T[] | null {
   if (v === undefined || v === null) return null;
-  return JSON.stringify(Array.isArray(v) ? v : []);
+  return Array.isArray(v) ? (v as T[]) : [];
 }
 
-function parseJsonArray<T = unknown>(text: string | null | undefined): T[] {
-  if (!text) return [];
-  try {
-    const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
+function parseJsonArray<T = unknown>(value: unknown): T[] {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value === "string" && value.length > 0) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
   }
+  return [];
 }
 
 // ── W7 Temperature fixtures ──────────────────────────────────────────────────
@@ -2413,11 +2419,11 @@ export async function createDrillLog(
       shift: input.shift ?? null,
       executedAt: input.executedAt,
       leader: input.leader ?? null,
-      participantsJson: jsonArrayToText(input.participants),
-      residentsInvolvedJson: jsonArrayToText(input.residentsInvolved),
+      participantsJson: jsonArrayPassthrough(input.participants),
+      residentsInvolvedJson: jsonArrayPassthrough(input.residentsInvolved),
       evacuationSeconds: input.evacuationSeconds ?? null,
       debriefNotes: input.debriefNotes ?? null,
-      correctiveActionsJson: jsonArrayToText(input.correctiveActions),
+      correctiveActionsJson: jsonArrayPassthrough(input.correctiveActions),
       status: input.status ?? "executed",
       createdBy: input.createdBy,
       createdAt: now,
@@ -2476,11 +2482,11 @@ export async function updateDrillLog(
   if (data.shift !== undefined) updateSet.shift = data.shift;
   if (data.executedAt !== undefined) updateSet.executedAt = data.executedAt;
   if (data.leader !== undefined) updateSet.leader = data.leader;
-  if (data.participants !== undefined) updateSet.participantsJson = jsonArrayToText(data.participants);
-  if (data.residentsInvolved !== undefined) updateSet.residentsInvolvedJson = jsonArrayToText(data.residentsInvolved);
+  if (data.participants !== undefined) updateSet.participantsJson = jsonArrayPassthrough(data.participants);
+  if (data.residentsInvolved !== undefined) updateSet.residentsInvolvedJson = jsonArrayPassthrough(data.residentsInvolved);
   if (data.evacuationSeconds !== undefined) updateSet.evacuationSeconds = data.evacuationSeconds;
   if (data.debriefNotes !== undefined) updateSet.debriefNotes = data.debriefNotes;
-  if (data.correctiveActions !== undefined) updateSet.correctiveActionsJson = jsonArrayToText(data.correctiveActions);
+  if (data.correctiveActions !== undefined) updateSet.correctiveActionsJson = jsonArrayPassthrough(data.correctiveActions);
   if (data.status !== undefined) updateSet.status = data.status;
 
   const rows = await db

@@ -90,7 +90,23 @@ interestsRouter.get("/facility/applicants", requireFacilityAuth, async (req, res
     res.json(
       applicants.map((a) => ({
         ...a,
-        jobTypes: a.jobTypes ? JSON.parse(a.jobTypes) : [],
+        // Phase 2 R2: jobTypes is JSONB. Drizzle returns the parsed array
+        // directly; we fall back to safe-parse for legacy text rows that
+        // may slip through during the post-migration warm-up.
+        jobTypes: Array.isArray(a.jobTypes)
+          ? a.jobTypes
+          : typeof a.jobTypes === "string" && a.jobTypes.length > 0
+            ? (() => {
+                try {
+                  const parsed: unknown = JSON.parse(a.jobTypes);
+                  return Array.isArray(parsed)
+                    ? parsed.filter((v): v is string => typeof v === "string")
+                    : [];
+                } catch {
+                  return [];
+                }
+              })()
+            : [],
       }))
     );
   } catch (err) {

@@ -1,4 +1,4 @@
-import { pgTable, text, integer, serial, bigint, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, bigint, doublePrecision, jsonb } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 // ============ DRIZZLE TABLES (PostgreSQL) ============
@@ -38,7 +38,11 @@ export const jobSeekerProfiles = pgTable("job_seeker_profiles", {
   zipCode: text("zip_code"),
   profilePictureUrl: text("profile_picture_url"),
   yearsExperience: integer("years_experience"),
-  jobTypes: text("job_types"),
+  // Phase 2 R2: was text() carrying a JSON-stringified array of role tags.
+  // Now jsonb so the DB validates shape on write and future GIN indexes can
+  // target keys. App layer reads/writes JS arrays directly; the route layer
+  // re-stringifies on outbound for FE wire-format stability.
+  jobTypes: jsonb("job_types").$type<string[]>(),
   bio: text("bio"),
   updatedAt: ts("updated_at").notNull(),
 });
@@ -94,6 +98,30 @@ export const facilitySubscriptions = pgTable("facility_subscriptions", {
   updatedAt: ts("updated_at").notNull(),
 });
 
+// ── Stripe webhook idempotency (Phase 2 R2) ──────────────────────────────────
+// Append-only registry of every Stripe event id the webhook handler has
+// successfully accepted. The handler does:
+//
+//   INSERT INTO stripe_processed_events (event_id, event_type, processed_at)
+//        VALUES ($eventId, $eventType, $now)
+//        ON CONFLICT (event_id) DO NOTHING
+//        RETURNING event_id;
+//
+// immediately after signature verification. If RETURNING yields no rows,
+// Stripe replayed an event we already processed — short-circuit with 200
+// so Stripe stops retrying without re-mutating subscription state.
+//
+// event_id is the PRIMARY KEY (so the conflict target is a unique B-tree
+// lookup). processed_at is BIGINT epoch-ms matching the rest of the schema's
+// time convention; the supporting idx_stripe_events_processed_at index lives
+// in the migration only — it's an observability/purge aid, not part of the
+// hot path the handler exercises.
+export const stripeProcessedEvents = pgTable("stripe_processed_events", {
+  eventId: text("event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  processedAt: ts("processed_at").notNull(),
+});
+
 // Customer-facility public-listing + report-letterhead overrides. One row per
 // facility_number. All columns below the original four (phone/description/
 // website/email) are nullable additive — backwards compatible with existing
@@ -128,14 +156,18 @@ export const facilityOverrides = pgTable("facility_overrides", {
   mailingState: text("mailing_state"),
   mailingZip: text("mailing_zip"),
 
-  // ── Operations: hours / languages / care types (JSON-as-TEXT) ────────────
+  // ── Operations: hours / languages / care types (JSONB as of Phase 2 R2) ──
   // hoursOfOperationJson  → { mon: {open:'08:00', close:'17:00'}, ... }
   // languagesSpokenJson   → ['en','es','tl']
   // careTypesOfferedJson  → ['skilled_nursing','memory_care', ...]
-  // Parse defensively on read.
-  hoursOfOperationJson: text("hours_of_operation_json"),
-  languagesSpokenJson: text("languages_spoken_json"),
-  careTypesOfferedJson: text("care_types_offered_json"),
+  // Phase 2 R2 flipped these from text() to jsonb() — the DB now validates
+  // shape on write and Drizzle returns parsed JS values directly. The
+  // route layer re-stringifies on outbound for FE wire-format stability;
+  // the column names retain the `_json` suffix purely for backward
+  // compatibility with existing application code referencing them.
+  hoursOfOperationJson: jsonb("hours_of_operation_json"),
+  languagesSpokenJson: jsonb("languages_spoken_json").$type<string[]>(),
+  careTypesOfferedJson: jsonb("care_types_offered_json").$type<string[]>(),
 
   // ── Administrator (distinct from licensee — different regulatory role) ───
   administratorName: text("administrator_name"),
@@ -147,7 +179,9 @@ export const facilityOverrides = pgTable("facility_overrides", {
   // taxIdLast4: store LAST 4 of the EIN only. Never store the full EIN here.
   taxIdLast4: text("tax_id_last4"),
   yearEstablished: integer("year_established"),
-  accreditationsJson: text("accreditations_json"),
+  // Phase 2 R2: text() → jsonb(). Stores a JSON array of accreditation
+  // names (e.g. ["CARF","Joint Commission"]).
+  accreditationsJson: jsonb("accreditations_json").$type<string[]>(),
 
   // ── Social ───────────────────────────────────────────────────────────────
   facebookUrl: text("facebook_url"),
@@ -162,9 +196,10 @@ export const facilityOverrides = pgTable("facility_overrides", {
 
   // ── Prefill audit ────────────────────────────────────────────────────────
   // Records when blanks were auto-filled from CCLD data on signup, and which
-  // columns were populated (JSON array of column names).
+  // columns were populated. Phase 2 R2: text() → jsonb() (array of column
+  // names like ["administratorName","phone"]).
   prefilledFromCcldAt: ts("prefilled_from_ccld_at"),
-  prefilledFields: text("prefilled_fields"),
+  prefilledFields: jsonb("prefilled_fields").$type<string[]>(),
 
   updatedAt: ts("updated_at").notNull(),
 });
@@ -176,7 +211,11 @@ export const jobPostingsTable = pgTable("job_postings", {
   type: text("type").notNull(),
   salary: text("salary").notNull(),
   description: text("description").notNull(),
-  requirements: text("requirements").notNull(),
+  // Phase 2 R2: text() → jsonb(). Holds the requirements array
+  // (e.g. ["RCFE License","CPR","TB clearance"]). NOT NULL with
+  // DB-level default of '[]'::jsonb so empty arrays don't need
+  // explicit handling at the storage layer.
+  requirements: jsonb("requirements").$type<string[]>().notNull().default([]),
   postedAt: ts("posted_at").notNull(),
 });
 
@@ -401,6 +440,10 @@ export type WorkExperienceInput = z.infer<typeof workExperienceInputSchema>;
 // ── Operations paywall subscription types (Phase 0) ──────────────────────────
 export type FacilitySubscription = typeof facilitySubscriptions.$inferSelect;
 export type NewFacilitySubscription = typeof facilitySubscriptions.$inferInsert;
+
+// ── Stripe webhook idempotency types (Phase 2 R2) ────────────────────────────
+export type StripeProcessedEvent = typeof stripeProcessedEvents.$inferSelect;
+export type NewStripeProcessedEvent = typeof stripeProcessedEvents.$inferInsert;
 // Stripe subscription status values. `null` (column nullable) means "no
 // subscription record yet" — the gate treats that the same as a missing row.
 export const subscriptionStatusSchema = z.enum([
