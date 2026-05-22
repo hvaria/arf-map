@@ -38,6 +38,7 @@ import { pool } from "../../db/index";
 import { bootstrapMainSchema } from "../../db/bootstrap";
 import { opsRouter } from "../../ops/opsRouter";
 import type { FacilityAccount } from "@shared/schema";
+import { LEGAL_DOCS, LEGAL_DOC_SLUGS } from "@shared/legal";
 
 export type TestFacility = {
   id: number;
@@ -227,6 +228,20 @@ export async function seedFacility(input: {
     [input.facilityNumber, input.username, hashed, input.email, now, subStatus],
   );
   const id = Number(result.rows[0].id);
+
+  // Phase 4 — seed legal acceptance rows so the requirePendingLegalAcceptances
+  // gate on opsRouter doesn't 409 every state-changing test request.
+  // Production accounts get these rows written by /api/facility/register.
+  for (const slug of LEGAL_DOC_SLUGS) {
+    await pool.query(
+      `INSERT INTO legal_acceptances
+         (account_kind, account_id, document, version, accepted_at, accepted_ip, accepted_user_agent)
+       VALUES ('facility', $1, $2, $3, $4, '127.0.0.1', 'vitest')
+       ON CONFLICT (account_kind, account_id, document, version) DO NOTHING`,
+      [id, slug, LEGAL_DOCS[slug].version, now],
+    );
+  }
+
   return {
     id,
     facilityNumber: input.facilityNumber,

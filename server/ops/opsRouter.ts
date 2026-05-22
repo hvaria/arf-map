@@ -17,6 +17,7 @@ import { notesRouter } from "./notesRouter";
 import { reportsRouter } from "./reportsRouter";
 import { trackerRouter } from "../trackers/routes";
 import { requireActiveSubscription } from "../middleware/requireActiveSubscription";
+import { requirePendingLegalAcceptances } from "../lib/legal";
 import {
   requireOpsPermission,
   resolveRole,
@@ -142,6 +143,13 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
 
 // Apply to all ops routes
 opsRouter.use(requireFacilityAuth);
+
+// Phase 4 — legal acceptance gate. MUST run after requireFacilityAuth so
+// req.user is populated, and MUST run BEFORE requireActiveSubscription so a
+// user with stale legal acceptances sees the re-prompt before the paywall.
+// Only state-changing requests are blocked (GETs pass through so the FE
+// can render the blocking modal). 409 LEGAL_REACCEPT_REQUIRED.
+opsRouter.use(requirePendingLegalAcceptances("facility"));
 
 // Operations paywall gate (Phase 0). MUST run after requireFacilityAuth so
 // req.user is populated. Returns 402 SUBSCRIPTION_REQUIRED unless the

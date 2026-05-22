@@ -476,6 +476,61 @@ export const workExperienceInputSchema = z
   });
 export type WorkExperienceInput = z.infer<typeof workExperienceInputSchema>;
 
+// ── Phase 4: Legal acceptance log (clickwrap audit trail) ────────────────────
+// Two-tenant log — both facility and job_seeker accounts share the same Terms /
+// Privacy / AUP versions, so we keep one table partitioned by `account_kind`
+// rather than two near-duplicate tables. Append-only at the application layer
+// (no update / delete sites). See `server/lib/legal.ts` for the helpers.
+//
+// The canonical `LEGAL_DOCS` constant (and the version strings) lives in
+// `shared/legal.ts` so the FE clickwrap form and BE acceptance writer share
+// one source of truth. Bumping `LEGAL_DOCS[doc].version` is the trigger that
+// re-prompts existing users at next request.
+export const legalAcceptances = pgTable("legal_acceptances", {
+  id: serial("id").primaryKey(),
+  accountKind: text("account_kind").notNull(), // 'facility' | 'job_seeker' (CHECK in SQL)
+  accountId: integer("account_id").notNull(),
+  document: text("document").notNull(), // 'terms' | 'privacy' | 'aup' (CHECK in SQL)
+  version: text("version").notNull(),
+  acceptedAt: ts("accepted_at").notNull(),
+  acceptedIp: text("accepted_ip"),
+  acceptedUserAgent: text("accepted_user_agent"),
+});
+export type LegalAcceptance = typeof legalAcceptances.$inferSelect;
+export type InsertLegalAcceptance = typeof legalAcceptances.$inferInsert;
+
+// ── Phase 4: Account data requests (CCPA + email change) ─────────────────────
+// Queue / log for data-subject requests. Status is mutable
+// (pending → fulfilled | cancelled) so the table carries `updated_at` and the
+// Phase-3 `set_updated_at_epoch_ms` trigger. `payloadJson` is JSONB at the
+// SQL layer — drizzle exposes it as `text` here for typing simplicity; the
+// helpers in `server/routes/account.ts` JSON.parse / stringify on the boundary.
+//
+// `kind` partitions three flows:
+//   'export'       — CCPA right-to-know. Fulfilled manually by operations.
+//   'delete'       — CCPA right-to-delete. Fulfilled manually.
+//   'email_change' — User-initiated email change with dual-email OTP. The
+//                    new email + OTP hash + expiry live in `payloadJson` so
+//                    we never touch the live account row until the user
+//                    confirms via OTP.
+export const accountDataRequests = pgTable("account_data_requests", {
+  id: serial("id").primaryKey(),
+  accountKind: text("account_kind").notNull(), // 'facility' | 'job_seeker'
+  accountId: integer("account_id").notNull(),
+  kind: text("kind").notNull(), // 'export' | 'delete' | 'email_change'
+  status: text("status").notNull().default("pending"), // 'pending' | 'fulfilled' | 'cancelled'
+  requestedAt: ts("requested_at").notNull(),
+  requestedIp: text("requested_ip"),
+  fulfilledAt: ts("fulfilled_at"),
+  fulfilledBy: text("fulfilled_by"),
+  notes: text("notes"),
+  payloadJson: text("payload_json"),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+});
+export type AccountDataRequest = typeof accountDataRequests.$inferSelect;
+export type InsertAccountDataRequest = typeof accountDataRequests.$inferInsert;
+
 // ── Operations paywall subscription types (Phase 0) ──────────────────────────
 export type FacilitySubscription = typeof facilitySubscriptions.$inferSelect;
 export type NewFacilitySubscription = typeof facilitySubscriptions.$inferInsert;

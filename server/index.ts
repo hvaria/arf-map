@@ -30,6 +30,7 @@ import { startDailySummaryScheduler } from "./ops/dailySummaryScheduler";
 import { startObligationExpireScheduler } from "./ops/obligationExpireScheduler";
 import { type SessionUser, toSessionUser } from "./types/session-user";
 import { csrfTokenMiddleware } from "./middleware/csrfToken";
+import { requirePendingLegalAcceptancesAuto } from "./lib/legal";
 
 /** Maximum consecutive failed logins before a facility account is locked. */
 const MAX_FACILITY_FAILED_ATTEMPTS = 10;
@@ -179,6 +180,18 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // once per login from /api/facility/me or /api/jobseeker/me and replays it via
 // the X-CSRF-Token header on every mutation. See server/middleware/csrfToken.ts.
 app.use(csrfTokenMiddleware());
+
+// ── Phase 4: Legal acceptance gate ────────────────────────────────────────────
+// Auto-detecting variant. Sniffs req.user (facility) vs req.session.jobSeekerId
+// (job seeker) and returns 409 LEGAL_REACCEPT_REQUIRED on state-changing
+// requests if the user's recorded acceptances are out of date vs the current
+// LEGAL_DOCS versions. GETs pass through so the FE blocking modal can load
+// the legal markdown + /me payloads it needs to render. Anonymous requests
+// pass through (the upstream auth guards surface canonical 401s). Mounted
+// scoped to /api/* so the Stripe webhook (mounted above the JSON parser) and
+// static assets are unaffected. Runs AFTER CSRF so a missing X-Requested-With
+// surfaces as 403 (the canonical CSRF error) before we touch the DB.
+app.use("/api", requirePendingLegalAcceptancesAuto());
 
 // ── F-01: Facility account lockout — Passport LocalStrategy ───────────────────
 passport.use(

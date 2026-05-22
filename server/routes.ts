@@ -16,8 +16,12 @@ import { credentialsRouter } from "./routes/credentials";
 import { workExperienceRouter } from "./routes/workExperience";
 import { billingRouter } from "./routes/billing";
 import { facilityProfileRouter } from "./routes/facilityProfile";
+import { accountRouter } from "./routes/account";
+import { legalRouter, legalApiRouter } from "./routes/legal";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 import { getOrCreateCsrfToken } from "./middleware/csrfToken";
+import { recordAcceptance, getPendingAcceptances } from "./lib/legal";
+import { LEGAL_DOCS, LEGAL_DOC_SLUGS } from "@shared/legal";
 import {
   getCachedFacilities,
   invalidateFacilitiesCache,
@@ -74,11 +78,24 @@ function safeParseJsonArray(raw: string): string[] {
   }
 }
 
+// Phase 4 — clickwrap. The three booleans MUST be `true` for the request to
+// pass validation. Sending false / missing fails with VALIDATION_ERROR at the
+// safeParse boundary, which is exactly what we want — there is no "soft"
+// path that lets a facility account exist without acceptance rows.
 const registerSchema = z.object({
   facilityNumber: z.string().min(1, "Facility number is required"),
   username: z.string().min(3, "Username must be at least 3 characters").max(50),
   email: z.string().email("A valid email address is required"),
   password: z.string().min(8, "Password must be at least 8 characters"),
+  acceptedTerms: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Terms of Service" }),
+  }),
+  acceptedPrivacy: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Privacy Policy" }),
+  }),
+  acceptedAup: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Acceptable Use Policy" }),
+  }),
 });
 
 const facilityForgotPasswordSchema = z.object({
@@ -110,9 +127,19 @@ const jobPostingInputSchema = z.object({
   requirements: z.array(z.string()),
 });
 
+// Phase 4 — clickwrap mirror of the facility register contract.
 const jobSeekerRegisterSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
+  acceptedTerms: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Terms of Service" }),
+  }),
+  acceptedPrivacy: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Privacy Policy" }),
+  }),
+  acceptedAup: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Acceptable Use Policy" }),
+  }),
 });
 
 const jobSeekerProfileSchema = z.object({
@@ -140,6 +167,13 @@ export async function registerRoutes(server: Server, app: Express) {
   app.use("/api", workExperienceRouter);
   app.use("/api/billing", billingRouter);
   app.use("/api", facilityProfileRouter);
+  // Phase 4 — CCPA / email-change endpoints. Mounted at /api/account/*.
+  app.use("/api/account", accountRouter);
+  // Phase 4 — legal markdown serving. Two surfaces:
+  //   /legal/<slug>      — raw markdown (browser-navigable, search-indexable)
+  //   /api/legal/<slug>  — JSON-wrapped (FE blocking modal renders inline)
+  app.use("/legal", legalRouter);
+  app.use("/api/legal", legalApiRouter);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -573,7 +607,7 @@ export async function registerRoutes(server: Server, app: Express) {
     const otp = generateOTP();
     const expiry = Date.now() + 15 * 60 * 1000;
 
-    await storage.createFacilityAccount({
+    const created = await storage.createFacilityAccount({
       facilityNumber,
       username,
       email,
@@ -583,6 +617,23 @@ export async function registerRoutes(server: Server, app: Express) {
       verificationExpiry: expiry,
       createdAt: Date.now(),
     });
+
+    // Phase 4 — record clickwrap acceptance for all three docs at their
+    // current versions. Idempotent via the table's UNIQUE constraint, so a
+    // retry of register on an existing account is safe.
+    for (const slug of LEGAL_DOC_SLUGS) {
+      try {
+        await recordAcceptance({
+          req,
+          accountKind: "facility",
+          accountId: created.id,
+          document: slug,
+          version: LEGAL_DOCS[slug].version,
+        });
+      } catch (err) {
+        console.error(`[register] recordAcceptance ${slug} failed`, err);
+      }
+    }
 
     await sendVerificationEmail(email, otp);
     res.status(201).json({ emailSent: true, needsVerification: true });
@@ -807,7 +858,21 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.status(401).json({
         message: "Not authenticated",
         csrfToken: getOrCreateCsrfToken(req),
+        // Phase 4 — uniform shape: empty pendingAcceptances on 401 (no
+        // account context to look up against).
+        pendingAcceptances: [],
       });
+    }
+    // Phase 4 — surface stale legal acceptances so the FE blocking modal
+    // can prompt. Failure to look up is non-fatal (logged + empty).
+    let pendingAcceptances: Awaited<ReturnType<typeof getPendingAcceptances>> = [];
+    try {
+      pendingAcceptances = await getPendingAcceptances({
+        accountKind: "facility",
+        accountId: req.user.id,
+      });
+    } catch (err) {
+      console.error("[facility/me] pendingAcceptances lookup failed", err);
     }
     // CCLD prefill summary — surfaces the timestamp + the columns that the
     // signup-time prefill wrote so the dashboard can show a one-time toast
@@ -849,6 +914,9 @@ export async function registerRoutes(server: Server, app: Express) {
       // first read; the FE stores this and replays it as X-CSRF-Token on
       // every mutation. See server/middleware/csrfToken.ts.
       csrfToken: getOrCreateCsrfToken(req),
+      // Phase 4 — surface stale legal acceptances so the FE blocking modal
+      // can prompt the user.
+      pendingAcceptances,
       subscription: {
         status: req.user.subscriptionStatus ?? null,
         currentPeriodEnd: req.user.subscriptionCurrentPeriodEnd ?? null,
@@ -1066,6 +1134,22 @@ export async function registerRoutes(server: Server, app: Express) {
       verificationExpiry: expiry,
       createdAt: Date.now(),
     });
+
+    // Phase 4 — record clickwrap acceptance for all three docs at their
+    // current versions. Idempotent via the table's UNIQUE constraint.
+    for (const slug of LEGAL_DOC_SLUGS) {
+      try {
+        await recordAcceptance({
+          req,
+          accountKind: "job_seeker",
+          accountId: account.id,
+          document: slug,
+          version: LEGAL_DOCS[slug].version,
+        });
+      } catch (err) {
+        console.error(`[register] recordAcceptance ${slug} failed`, err);
+      }
+    }
 
     await sendVerificationEmail(email, otp);
 

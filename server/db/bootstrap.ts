@@ -397,6 +397,59 @@ const MAIN_PG_SCHEMA_SQL = `
     ON facility_users(facility_account_id) WHERE deleted_at IS NULL;
   CREATE INDEX IF NOT EXISTS idx_facility_users_user
     ON facility_users(user_id) WHERE deleted_at IS NULL;
+
+  -- ── Phase 4: Legal acceptances + account data requests ───────────────────
+  -- See migrations/0006_phase_4_legal_and_account_requests.sql for the
+  -- canonical definition. Mirrored here so tests + fresh dev DBs bootstrap
+  -- without a separate migration runner.
+  CREATE TABLE IF NOT EXISTS legal_acceptances (
+    id                     BIGSERIAL PRIMARY KEY,
+    account_kind           TEXT NOT NULL CHECK (account_kind IN ('facility', 'job_seeker')),
+    account_id             INTEGER NOT NULL,
+    document               TEXT NOT NULL CHECK (document IN ('terms', 'privacy', 'aup')),
+    version                TEXT NOT NULL,
+    accepted_at            BIGINT NOT NULL,
+    accepted_ip            TEXT,
+    accepted_user_agent    TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_acceptances_account_doc_version
+    ON legal_acceptances(account_kind, account_id, document, version);
+  CREATE INDEX IF NOT EXISTS idx_legal_acceptances_account
+    ON legal_acceptances(account_kind, account_id);
+
+  CREATE TABLE IF NOT EXISTS account_data_requests (
+    id              BIGSERIAL PRIMARY KEY,
+    account_kind    TEXT NOT NULL CHECK (account_kind IN ('facility', 'job_seeker')),
+    account_id      INTEGER NOT NULL,
+    kind            TEXT NOT NULL CHECK (kind IN ('export', 'delete', 'email_change')),
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'fulfilled', 'cancelled')),
+    requested_at    BIGINT NOT NULL,
+    requested_ip    TEXT,
+    fulfilled_at    BIGINT,
+    fulfilled_by    TEXT,
+    notes           TEXT,
+    payload_json    JSONB,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_account_data_requests_account
+    ON account_data_requests(account_kind, account_id, requested_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_account_data_requests_pending
+    ON account_data_requests(kind, status) WHERE status = 'pending';
+
+  -- The set_updated_at_epoch_ms() function is created in Phase 3 / opsSchema
+  -- bootstrap. Replicate defensively so fresh DBs that bootstrap main before
+  -- opsRouter loads still have it available for the trigger below.
+  CREATE OR REPLACE FUNCTION set_updated_at_epoch_ms() RETURNS TRIGGER AS $func$
+  BEGIN
+    NEW.updated_at = (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT;
+    RETURN NEW;
+  END;
+  $func$ LANGUAGE plpgsql;
+
+  DROP TRIGGER IF EXISTS trg_account_data_requests_updated_at ON account_data_requests;
+  CREATE TRIGGER trg_account_data_requests_updated_at BEFORE UPDATE ON account_data_requests
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
 `;
 
 // Bootstrap is idempotent, but concurrent vitest forks running ADD
