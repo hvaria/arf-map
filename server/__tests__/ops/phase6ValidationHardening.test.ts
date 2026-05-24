@@ -128,18 +128,14 @@ describe("Phase 6 — body-supplied facilityNumber is ignored", () => {
         amount: 250.0,
       });
     // The `.strict()` on chargeSchema means the unexpected `facilityNumber`
-    // surfaces as 400 rather than being silently dropped. EITHER outcome
-    // closes the foot-gun:
-    //   (a) 400 — strict rejection prevents the request entirely.
-    //   (b) 201 — server stripped the wire value and used the session.
-    // We assert (a) here. If a future refactor relaxes strict mode, the
-    // assertion below still catches a tenancy leak.
+    // surfaces as 400 rather than being silently dropped. Locking the
+    // CURRENT contract: if someone relaxes strict mode in the future, this
+    // test fails loudly and forces them to think about it. The conditional
+    // below is defensive depth — if strict mode IS later relaxed, at least
+    // the persisted row must still carry the session's facility.
+    expect(res.status).toBe(400);
     if (res.status === 201) {
-      // Strict mode was relaxed — verify the persisted row carries the
-      // session's facility, not the body's.
       expect(res.body.data.facilityNumber).toBe(FACILITY_A);
-    } else {
-      expect(res.status).toBe(400);
     }
   });
 

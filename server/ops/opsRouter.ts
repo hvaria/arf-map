@@ -448,8 +448,9 @@ const controlledSubCountSchema = z.object({
   closingCount: z.number().int().min(0).max(10_000),
   administeredCount: z.number().int().min(0).max(10_000).nullable().optional(),
   wastedCount: z.number().int().min(0).max(10_000).nullable().optional(),
-  // discrepancy can legitimately be negative (closing > opening + received)
-  // so we keep it signed but still bound the magnitude.
+  // discrepancy = actual - expected. Negative means the physical count is
+  // SHORT of what the ledger predicts (typical ledger-loss scenario);
+  // positive means surplus. Keep signed; bound magnitude.
   discrepancy: z.number().int().min(-10_000).max(10_000).nullable().optional(),
   discrepancyNotes: z.string().nullable().optional(),
   resolved: z.number().int().min(0).max(1).nullable().optional(),
@@ -457,6 +458,7 @@ const controlledSubCountSchema = z.object({
 
 // Phase 6 — facilityNumber removed from body; session-sourced. Quantity
 // bounded (10k unit sanity cap, integer since meds are tablets/vials).
+// min(1) — destroying 0 units is a no-op; reject as a likely UI bug.
 const medDestructionSchema = z.object({
   medicationId: z.number().int(),
   quantity: z.number().int().min(1).max(10_000),
@@ -620,6 +622,12 @@ const shiftSchema = z.object({
   status: z.string().optional(),
   coveredById: z.number().int().nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Phase 5 §6 emergency-override hatch. The FE supplies a reason when the
+  // user overrides a credential block. v0 server accepts the field but does
+  // not persist it (ops_shifts has no override_reason column yet) — Wave 4
+  // will land the dedicated audit trail. Accepting it here avoids the
+  // strict-mode rejection that was making Override fail end-to-end.
+  overrideReason: z.string().nullable().optional(),
 }).strict();
 
 // Group A contract fix: facilityNumber pulled from session (not body),
@@ -2359,8 +2367,12 @@ opsRouter.post("/shifts", requireOpsPermission(OPS_RESOURCES.SHIFT, "create"), a
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
+    // overrideReason is accepted at the boundary for the credential-override
+    // hatch but is not yet a column on ops_shifts (Wave 4 audit trail will
+    // land that). Strip before insert so the Drizzle row stays valid.
+    const { overrideReason: _overrideReason, ...insertable } = parsed.data;
     const shift = await ops.createShift({
-      ...parsed.data,
+      ...insertable,
       facilityNumber,
       createdAt: Date.now(),
     });
@@ -2379,9 +2391,28 @@ opsRouter.put("/shifts/:id", requireOpsPermission(OPS_RESOURCES.SHIFT, "update")
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const shift = await ops.updateShift(id, parsed.data);
+    // overrideReason is accepted at the boundary (see POST /shifts) but not
+    // persisted yet; strip before passing to storage.
+    const { overrideReason: _overrideReason, ...updatable } = parsed.data;
+    const shift = await ops.updateShift(id, updatable);
     if (!shift) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true, data: shift });
+  } catch (e) {
+    return handleRouteError(req, e, res);
+  }
+});
+
+// DELETE /shifts/:id — hard delete. Use the "Cancelled" status if you want
+// to keep the row for audit; this endpoint is for shifts that should never
+// have existed (mistyped, duplicate, etc.).
+opsRouter.delete("/shifts/:id", async (req, res) => {
+  try {
+    const facilityNumber = getFacilityNumber(req);
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid id" });
+    const ok = await ops.deleteShift(id, facilityNumber);
+    if (!ok) return res.status(404).json({ success: false, error: "Not found" });
+    res.json({ success: true });
   } catch (e) {
     return handleRouteError(req, e, res);
   }
