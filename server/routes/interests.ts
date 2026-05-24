@@ -5,6 +5,7 @@ import type { Request, Response, NextFunction } from "express";
 import { storage, getInterestsByFacilityAsync, getInterestsBySeekerAsync } from "../storage";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
 import { interestStatusSchema } from "@shared/schema";
+import type { ApplicantInterest } from "@shared/schema";
 
 export const interestsRouter = Router();
 
@@ -15,11 +16,20 @@ function requireFacilityAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// Phase 7 — strip the internal integer PK from any applicant_interests wire
+// payload. Responses expose `externalId` only; the integer `id` is purely
+// internal-FK glue and never crosses the wire.
+function interestToWire(i: ApplicantInterest) {
+  const { id: _internalId, jobId: _internalJobId, ...rest } = i;
+  return rest;
+}
+
 const submitSchema = z.object({
   facilityNumber: z.string().min(1, "Facility number is required"),
-  // When jobId is provided, the interest is scoped to one specific posting.
-  // Omit it to express facility-level interest (legacy behavior).
-  jobId: z.number().int().positive().optional(),
+  // Phase 7 — the FE no longer has the integer jobId; submissions identify
+  // the specific posting by its `externalId` (the nanoid). Omit for
+  // facility-level interest (legacy behavior).
+  jobExternalId: z.string().min(4).max(32).optional(),
   roleInterest: z.string().optional(),
   message: z.string().max(500).optional(),
 });
@@ -27,6 +37,8 @@ const submitSchema = z.object({
 const statusUpdateSchema = z.object({
   status: interestStatusSchema,
 });
+
+const EXTERNAL_ID_REGEX = /^[A-Za-z0-9_-]{4,32}$/;
 
 // ── Job Seeker endpoints ──────────────────────────────────────────────────────
 
@@ -37,22 +49,24 @@ interestsRouter.post("/jobseeker/interests", requireJobSeekerAuth, async (req, r
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
-    const { facilityNumber, jobId, roleInterest, message } = parsed.data;
-    // When a jobId is supplied, double-check it actually belongs to the
-    // claimed facility — otherwise a client could create an interest row
-    // whose (jobId, facilityNumber) don't match.
-    if (jobId != null) {
-      const job = await storage.getJobPostingById(jobId);
+    const { facilityNumber, jobExternalId, roleInterest, message } = parsed.data;
+    // Resolve the public job external id to the internal integer PK for the
+    // (facility, job) match check + FK relationship. Anonymous integer ids
+    // are never accepted on the wire from this endpoint.
+    let jobId: number | undefined;
+    if (jobExternalId != null) {
+      const job = await storage.getJobPostingByExternalId(jobExternalId);
       if (!job || job.facilityNumber !== facilityNumber) {
         return res.status(400).json({ message: "Job does not belong to this facility" });
       }
+      jobId = job.id;
     }
     const interest = await storage.upsertApplicantInterest(
       req.session.jobSeekerId!,
       facilityNumber,
       { jobId, roleInterest, message }
     );
-    res.status(200).json(interest);
+    res.status(200).json(interestToWire(interest));
   } catch (err) {
     next(err);
   }
@@ -68,12 +82,20 @@ interestsRouter.get("/jobseeker/interests", requireJobSeekerAuth, async (req, re
   }
 });
 
-/** DELETE /api/jobseeker/interests/:id — withdraw interest */
-interestsRouter.delete("/jobseeker/interests/:id", requireJobSeekerAuth, async (req, res, next) => {
+/**
+ * DELETE /api/jobseeker/interests/:externalId — withdraw interest
+ * Phase 7: URL param is the nanoid `external_id`, not the integer PK.
+ */
+interestsRouter.delete("/jobseeker/interests/:externalId", requireJobSeekerAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-    const deleted = await storage.deleteApplicantInterest(id, req.session.jobSeekerId!);
+    const externalId = String(req.params.externalId ?? "");
+    if (!EXTERNAL_ID_REGEX.test(externalId)) {
+      return res.status(400).json({ message: "Invalid id" });
+    }
+    const deleted = await storage.deleteApplicantInterestByExternalId(
+      externalId,
+      req.session.jobSeekerId!,
+    );
     if (!deleted) return res.status(404).json({ message: "Interest not found" });
     res.json({ ok: true });
   } catch (err) {
@@ -114,24 +136,29 @@ interestsRouter.get("/facility/applicants", requireFacilityAuth, async (req, res
   }
 });
 
-/** PATCH /api/facility/applicants/:id — update status (viewed / shortlisted) */
-interestsRouter.patch("/facility/applicants/:id", requireFacilityAuth, async (req, res, next) => {
+/**
+ * PATCH /api/facility/applicants/:externalId — update status (viewed / shortlisted)
+ * Phase 7: URL param is the nanoid `external_id`, not the integer PK.
+ */
+interestsRouter.patch("/facility/applicants/:externalId", requireFacilityAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const externalId = String(req.params.externalId ?? "");
+    if (!EXTERNAL_ID_REGEX.test(externalId)) {
+      return res.status(400).json({ message: "Invalid id" });
+    }
 
     const parsed = statusUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: parsed.error.errors[0].message });
     }
 
-    const updated = await storage.updateApplicantInterestStatus(
-      id,
+    const updated = await storage.updateApplicantInterestStatusByExternalId(
+      externalId,
       req.user!.facilityNumber,
-      parsed.data.status
+      parsed.data.status,
     );
     if (!updated) return res.status(404).json({ message: "Applicant not found" });
-    res.json(updated);
+    res.json(interestToWire(updated));
   } catch (err) {
     next(err);
   }

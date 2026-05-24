@@ -24,8 +24,18 @@ import {
   type WorkExperienceInput,
 } from "@shared/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
+import { nanoid } from "nanoid";
 import { db, pool } from "./db/index";
 import { CCLD_PREFILL_MAP } from "@shared/facility-profile";
+
+// Phase 7 — URL-exposed tables (`job_postings`, `applicant_interests`) carry
+// a nanoid(12) `external_id` so URLs do not leak sequential business volume.
+// 12 chars = ~71 bits of entropy → collision-resistant for the cardinalities
+// here. Internal FKs continue to use the integer PK; only URLs flip.
+const EXTERNAL_ID_LEN = 12;
+function generateExternalId(): string {
+  return nanoid(EXTERNAL_ID_LEN);
+}
 
 export type { FacilityDbRow } from "@shared/etl-types";
 
@@ -58,17 +68,20 @@ export interface IStorage {
 
   getAllJobPostings(): Promise<DbJobPosting[]>;
   getJobPostingById(id: number): Promise<DbJobPosting | undefined>;
+  // Phase 7 — URL routes look up by external_id. Internal callers that
+  // already hold the integer PK keep using getJobPostingById.
+  getJobPostingByExternalId(externalId: string): Promise<DbJobPosting | undefined>;
   getJobPostings(facilityNumber: string): Promise<DbJobPosting[]>;
   createJobPosting(
     facilityNumber: string,
     data: Pick<DbJobPosting, "title" | "type" | "salary" | "description" | "requirements">
   ): Promise<DbJobPosting>;
-  updateJobPosting(
-    id: number,
+  updateJobPostingByExternalId(
+    externalId: string,
     facilityNumber: string,
     data: Partial<Pick<DbJobPosting, "title" | "type" | "salary" | "description" | "requirements">>
   ): Promise<DbJobPosting | undefined>;
-  deleteJobPosting(id: number, facilityNumber: string): Promise<boolean>;
+  deleteJobPostingByExternalId(externalId: string, facilityNumber: string): Promise<boolean>;
 
   getJobSeekerAccount(id: number): Promise<JobSeekerAccount | undefined>;
   getJobSeekerAccountByEmail(email: string): Promise<JobSeekerAccount | undefined>;
@@ -93,8 +106,13 @@ export interface IStorage {
     facilityNumber: string,
     data: { jobId?: number | null; roleInterest?: string; message?: string }
   ): Promise<ApplicantInterest>;
-  deleteApplicantInterest(id: number, jobSeekerId: number): Promise<boolean>;
-  updateApplicantInterestStatus(id: number, facilityNumber: string, status: string): Promise<ApplicantInterest | undefined>;
+  // Phase 7 — URL routes look up by external_id.
+  deleteApplicantInterestByExternalId(externalId: string, jobSeekerId: number): Promise<boolean>;
+  updateApplicantInterestStatusByExternalId(
+    externalId: string,
+    facilityNumber: string,
+    status: string,
+  ): Promise<ApplicantInterest | undefined>;
 
   listJobSeekerCredentials(accountId: number): Promise<JobSeekerCredential[]>;
   createJobSeekerCredential(accountId: number, input: CredentialInput): Promise<JobSeekerCredential>;
@@ -290,6 +308,18 @@ export class DatabaseStorage implements IStorage {
     return rows[0];
   }
 
+  // Phase 7 — URL-exposed lookups go through here. Internal code that already
+  // holds the integer PK (e.g. validating a jobId on an interest insert) keeps
+  // using getJobPostingById.
+  async getJobPostingByExternalId(externalId: string): Promise<DbJobPosting | undefined> {
+    const rows = await db
+      .select()
+      .from(jobPostingsTable)
+      .where(eq(jobPostingsTable.externalId, externalId))
+      .limit(1);
+    return rows[0];
+  }
+
   async getJobPostings(facilityNumber: string): Promise<DbJobPosting[]> {
     return db.select().from(jobPostingsTable).where(eq(jobPostingsTable.facilityNumber, facilityNumber));
   }
@@ -300,36 +330,49 @@ export class DatabaseStorage implements IStorage {
   ): Promise<DbJobPosting> {
     const rows = await db
       .insert(jobPostingsTable)
-      .values({ ...data, facilityNumber, postedAt: Date.now() })
+      .values({
+        ...data,
+        externalId: generateExternalId(),
+        facilityNumber,
+        postedAt: Date.now(),
+      })
       .returning();
     return rows[0] as DbJobPosting;
   }
 
-  async updateJobPosting(
-    id: number,
+  async updateJobPostingByExternalId(
+    externalId: string,
     facilityNumber: string,
     data: Partial<Pick<DbJobPosting, "title" | "type" | "salary" | "description" | "requirements">>
   ): Promise<DbJobPosting | undefined> {
     const existingRows = await db
       .select()
       .from(jobPostingsTable)
-      .where(and(eq(jobPostingsTable.id, id), eq(jobPostingsTable.facilityNumber, facilityNumber)));
+      .where(and(
+        eq(jobPostingsTable.externalId, externalId),
+        eq(jobPostingsTable.facilityNumber, facilityNumber),
+      ));
     if (!existingRows[0]) return undefined;
     const rows = await db
       .update(jobPostingsTable)
       .set(data)
-      .where(eq(jobPostingsTable.id, id))
+      .where(eq(jobPostingsTable.id, existingRows[0].id))
       .returning();
     return rows[0] as DbJobPosting | undefined;
   }
 
-  async deleteJobPosting(id: number, facilityNumber: string): Promise<boolean> {
+  async deleteJobPostingByExternalId(externalId: string, facilityNumber: string): Promise<boolean> {
     const existingRows = await db
       .select()
       .from(jobPostingsTable)
-      .where(and(eq(jobPostingsTable.id, id), eq(jobPostingsTable.facilityNumber, facilityNumber)));
+      .where(and(
+        eq(jobPostingsTable.externalId, externalId),
+        eq(jobPostingsTable.facilityNumber, facilityNumber),
+      ));
     if (!existingRows[0]) return false;
-    await db.delete(jobPostingsTable).where(eq(jobPostingsTable.id, id));
+    // Hard-delete: job postings are marketing data, no audit-grade retention
+    // required (per Phase 7 soft-delete policy in CLAUDE.md).
+    await db.delete(jobPostingsTable).where(eq(jobPostingsTable.id, existingRows[0].id));
     return true;
   }
 
@@ -426,6 +469,7 @@ export class DatabaseStorage implements IStorage {
     const rows = await db
       .insert(applicantInterests)
       .values({
+        externalId: generateExternalId(),
         jobSeekerId,
         facilityNumber,
         jobId,
@@ -438,30 +482,41 @@ export class DatabaseStorage implements IStorage {
     return rows[0] as ApplicantInterest;
   }
 
-  async deleteApplicantInterest(id: number, jobSeekerId: number): Promise<boolean> {
+  async deleteApplicantInterestByExternalId(
+    externalId: string,
+    jobSeekerId: number,
+  ): Promise<boolean> {
     const existingRows = await db
       .select()
       .from(applicantInterests)
-      .where(and(eq(applicantInterests.id, id), eq(applicantInterests.jobSeekerId, jobSeekerId)));
+      .where(and(
+        eq(applicantInterests.externalId, externalId),
+        eq(applicantInterests.jobSeekerId, jobSeekerId),
+      ));
     if (!existingRows[0]) return false;
-    await db.delete(applicantInterests).where(eq(applicantInterests.id, id));
+    // Hard-delete: applicant interests are marketing/contact data (per Phase 7
+    // soft-delete policy in CLAUDE.md).
+    await db.delete(applicantInterests).where(eq(applicantInterests.id, existingRows[0].id));
     return true;
   }
 
-  async updateApplicantInterestStatus(
-    id: number,
+  async updateApplicantInterestStatusByExternalId(
+    externalId: string,
     facilityNumber: string,
-    status: string
+    status: string,
   ): Promise<ApplicantInterest | undefined> {
     const existingRows = await db
       .select()
       .from(applicantInterests)
-      .where(and(eq(applicantInterests.id, id), eq(applicantInterests.facilityNumber, facilityNumber)));
+      .where(and(
+        eq(applicantInterests.externalId, externalId),
+        eq(applicantInterests.facilityNumber, facilityNumber),
+      ));
     if (!existingRows[0]) return undefined;
     const rows = await db
       .update(applicantInterests)
       .set({ status, updatedAt: Date.now() })
-      .where(eq(applicantInterests.id, id))
+      .where(eq(applicantInterests.id, existingRows[0].id))
       .returning();
     return rows[0] as ApplicantInterest | undefined;
   }
@@ -629,11 +684,16 @@ export const storage = new DatabaseStorage();
 
 // ── Applicant Interest JOIN queries ───────────────────────────────────────────
 
+// Phase 7 — these response shapes expose `externalId` (string) rather than
+// the internal integer `id`. `jobId` (integer) is dropped from the wire in
+// favor of `jobExternalId` (the URL-safe public id of the linked job posting)
+// so the FE can construct `/api/jobs/:externalId` deep links without ever
+// seeing the integer PK.
 export interface ApplicantInterestWithProfile {
-  id: number;
+  externalId: string;
   jobSeekerId: number;
   facilityNumber: string;
-  jobId: number | null;
+  jobExternalId: string | null;
   jobTitle: string | null;
   roleInterest: string | null;
   message: string | null;
@@ -656,10 +716,10 @@ export interface ApplicantInterestWithProfile {
 }
 
 export interface ApplicantInterestWithFacility {
-  id: number;
+  externalId: string;
   facilityNumber: string;
   facilityName: string | null;
-  jobId: number | null;
+  jobExternalId: string | null;
   jobTitle: string | null;
   roleInterest: string | null;
   message: string | null;
@@ -670,8 +730,9 @@ export interface ApplicantInterestWithFacility {
 export async function getInterestsByFacilityAsync(facilityNumber: string): Promise<ApplicantInterestWithProfile[]> {
   const result = await pool.query<ApplicantInterestWithProfile>(
     `SELECT
-      ai.id, ai.job_seeker_id as "jobSeekerId", ai.facility_number as "facilityNumber",
-      ai.job_id as "jobId",
+      ai.external_id as "externalId",
+      ai.job_seeker_id as "jobSeekerId", ai.facility_number as "facilityNumber",
+      jp.external_id as "jobExternalId",
       jp.title as "jobTitle",
       ai.role_interest as "roleInterest", ai.message, ai.status,
       ai.created_at as "createdAt", ai.updated_at as "updatedAt",
@@ -693,9 +754,10 @@ export async function getInterestsByFacilityAsync(facilityNumber: string): Promi
 export async function getInterestsBySeekerAsync(jobSeekerId: number): Promise<ApplicantInterestWithFacility[]> {
   const result = await pool.query<ApplicantInterestWithFacility>(
     `SELECT
-      ai.id, ai.facility_number as "facilityNumber",
+      ai.external_id as "externalId",
+      ai.facility_number as "facilityNumber",
       f.name as "facilityName",
-      ai.job_id as "jobId",
+      jp.external_id as "jobExternalId",
       jp.title as "jobTitle",
       ai.role_interest as "roleInterest", ai.message, ai.status,
       ai.created_at as "createdAt"

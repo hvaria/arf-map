@@ -10,10 +10,13 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { JobDetailModal } from "@/components/JobDetailModal";
 
 export interface SeekerInterest {
-  id: number;
+  // Phase 7: API exposes the URL-safe `externalId` (nanoid) instead of the
+  // internal integer PK. `jobExternalId` likewise replaces `jobId` so the
+  // FE constructs `/api/jobs/:externalId` deep links from this field.
+  externalId: string;
   facilityNumber: string;
   facilityName: string | null;
-  jobId: number | null;
+  jobExternalId: string | null;
   jobTitle: string | null;
   roleInterest: string | null;
   message: string | null;
@@ -34,7 +37,8 @@ export function MyInterestsTab() {
   // Open the job detail in place — clicking "View job" on the dashboard
   // should not redirect to /#/map and then back. The modal lives here so
   // it overlays whichever page MyInterestsTab is rendered on.
-  const [modalJobId, setModalJobId] = useState<number | null>(null);
+  // Phase 7: state holds the URL-safe externalId (nanoid string).
+  const [modalJobExternalId, setModalJobExternalId] = useState<string | null>(null);
 
   const { data: interests, isLoading, isError } = useQuery<SeekerInterest[]>({
     queryKey: ["/api/jobseeker/interests"],
@@ -43,7 +47,10 @@ export function MyInterestsTab() {
   });
 
   const withdrawMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/jobseeker/interests/${id}`),
+    // Phase 7: URL param is the interest's `externalId` (nanoid), not the
+    // internal integer PK.
+    mutationFn: (externalId: string) =>
+      apiRequest("DELETE", `/api/jobseeker/interests/${externalId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/jobseeker/interests"] });
       toast({ title: "Application withdrawn" });
@@ -89,21 +96,21 @@ export function MyInterestsTab() {
   return (
     <div className="space-y-3">
       {interests.map((interest) => {
-        // Per-job interests (jobId set) lead with the job title and link to
-        // the public job detail page so the seeker can return to the
-        // posting they applied to. Facility-level interests (jobId null,
-        // legacy + the FacilityPanel "I'm interested in this place" CTA)
-        // keep the facility-name-first treatment.
-        const isPerJob = interest.jobId != null;
+        // Per-job interests (jobExternalId set) lead with the job title and
+        // link to the public job detail page so the seeker can return to the
+        // posting they applied to. Facility-level interests (jobExternalId
+        // null, legacy + the FacilityPanel "I'm interested in this place"
+        // CTA) keep the facility-name-first treatment.
+        const isPerJob = interest.jobExternalId != null;
         const primary = isPerJob
-          ? interest.jobTitle ?? `Job #${interest.jobId}`
+          ? interest.jobTitle ?? `Job ${interest.jobExternalId}`
           : interest.facilityName ?? `Facility #${interest.facilityNumber}`;
         const secondary = isPerJob
           ? interest.facilityName ?? `Facility #${interest.facilityNumber}`
           : `License #${interest.facilityNumber}`;
         const Icon = isPerJob ? Briefcase : Building2;
         return (
-          <div key={interest.id} className="rounded-xl p-4" style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}>
+          <div key={interest.externalId} className="rounded-xl p-4" style={{ background: "#F0F4FF", border: "1px solid #E0E7FF" }}>
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "#EEF2FF" }}>
@@ -138,7 +145,7 @@ export function MyInterestsTab() {
               {isPerJob ? (
                 <button
                   type="button"
-                  onClick={() => interest.jobId != null && setModalJobId(interest.jobId)}
+                  onClick={() => interest.jobExternalId != null && setModalJobExternalId(interest.jobExternalId)}
                   className="inline-flex items-center gap-1 text-xs font-medium hover:underline bg-transparent border-0 p-0 cursor-pointer"
                   style={{ color: "#4F46E5" }}
                 >
@@ -157,7 +164,7 @@ export function MyInterestsTab() {
                 variant="ghost"
                 size="sm"
                 className="h-7 text-xs text-muted-foreground hover:text-destructive"
-                onClick={() => withdrawMutation.mutate(interest.id)}
+                onClick={() => withdrawMutation.mutate(interest.externalId)}
                 disabled={withdrawMutation.isPending}
               >
                 <Trash2 className="h-3 w-3 mr-1" />
@@ -171,10 +178,10 @@ export function MyInterestsTab() {
       {/* Job detail modal — overlays the current page (dashboard /
           profile) instead of redirecting to /#/map first. */}
       <JobDetailModal
-        jobId={modalJobId}
-        open={modalJobId != null}
+        jobExternalId={modalJobExternalId}
+        open={modalJobExternalId != null}
         onOpenChange={(open) => {
-          if (!open) setModalJobId(null);
+          if (!open) setModalJobExternalId(null);
         }}
       />
     </div>

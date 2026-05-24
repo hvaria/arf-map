@@ -363,7 +363,60 @@ Every `/api/ops/*` route is action-gated. The middleware chain on `opsRouter` is
 5. Auditor share-link traffic uses a separate router with `requireAuditorToken` — auditor permission matrix is irrelevant there.
 
 **Auditor share-link traffic** does NOT flow through `resolveRole`. It uses `requireAuditorToken` on a parallel router and has its own scope/audience enforcement.
->>>>>>> worktree-agent-a937a10f0081a7853
+
+### URL-exposed identifiers (Phase 7)
+
+Two tables now carry a non-null UNIQUE `external_id TEXT` column populated with `nanoid(12)` so URLs never expose the sequential `BIGSERIAL` PK (closes enumeration / business-volume leak):
+
+| Table | Routes that flip to `:externalId` |
+|---|---|
+| `job_postings` | `GET /api/jobs/:externalId`, `PUT/DELETE /api/facility/jobs/:externalId` (the `POST /api/facility/jobs` response also exposes `externalId`, not `id`) |
+| `applicant_interests` | `DELETE /api/jobseeker/interests/:externalId`, `PATCH /api/facility/applicants/:externalId` |
+
+**Rules.** Generate the value via `nanoid(12)` inside `server/storage.ts` on every insert (see `generateExternalId()` helper). Internal foreign-key relationships keep referencing the integer PK — only URLs and response shapes flip. Wire payloads for these two tables strip the integer `id` server-side; the FE constructs all subsequent URLs from `externalId`. The `POST /api/jobseeker/interests` body now takes `jobExternalId` (string) instead of `jobId` (integer); the server resolves it to the internal PK before insert.
+
+**Deferred external_id rollout (intentionally NOT converted this round).** These tables are URL-addressed but stay on integer IDs because (a) they're behind facility auth + RBAC + composite-FK tenant isolation, so enumeration risk is much lower, and (b) the URL surface is large (50+ paths for residents alone). Plan a focused phase per table:
+
+- `ops_residents` — every resident-scoped operations URL (`/api/ops/residents/:id`, `/api/ops/residents/:id/medications`, `…/billing`, `…/care-plans`, `…/incidents`, etc.).
+- `ops_incidents`, `ops_medications`, `ops_med_passes`, `ops_invoices`, `ops_billing_charges`, `ops_complaints`, `ops_inspections`, `ops_drill_logs`, `ops_obligations`, `ops_staff`, `ops_staff_credentials`, `ops_resident_trust_accounts`, `ops_resident_trust_ledger`, `ops_resident_trust_statements`, `ops_temperature_fixtures`, `ops_temperature_logs`, `ops_evidence_attachments`, `ops_reports`, `ops_posting_catalog`, `ops_posting_verifications`, `ops_vendors`, `tracker_entries` — same calculus.
+- `ops_share_links.token` — already a random opaque string. Do **NOT** add `external_id`; the token IS the external surface.
+
+**Migration / backfill.** `migrations/0008_phase_7_external_ids.sql` (+ idx 8 journal entry) + bootstrap mirror in `server/db/bootstrap.ts` adds the column, backfills legacy rows with a Postgres-side hash (`substr(md5(random()||id||clock_timestamp()),1,12)`), promotes the column to NOT NULL, then creates the UNIQUE index. New rows always use real `nanoid(12)` from app code.
+
+### Soft-delete policy (Phase 7)
+
+Three deletion patterns coexist in the codebase. The rule codifies which to use where so review cycles don't have to relitigate it per PR.
+
+**Rule.**
+
+- **Clinical / financial / audit-grade data — NEVER hard-delete.** Use `deleted_at BIGINT` + `deleted_by TEXT` (or an existing status-flip like `status='discharged'` if the table already uses one). Provides forensic recoverability + audit-trail integrity required for licensing, AB-1629 / Title 22 retention, and CCPA/HIPAA-adjacent obligations. Tables in this class: every `ops_*` table (incl. notes, trackers, evidence, obligations, reports, residents, medications, incidents, billing, staff, complaints, inspections), `tracker_*`, `legal_acceptances`, `account_data_requests`, `ops_audit_trail` (append-only).
+- **Marketing / contact / public-facing operational data — hard-delete is OK.** Tables in this class: `job_postings`, `applicant_interests`, `job_seeker_work_experience`, `job_seeker_credentials`, and `facility_overrides` content fields (logo path, social URLs, etc.). Hard-delete here keeps the dataset tidy and matches user expectations (when a job seeker removes a credential, they expect it gone, not soft-archived).
+- **Transient / cleanup data — hard-delete is fine.** Expired session rows (`DELETE FROM session WHERE …`), unverified OTPs, in-process redirector handoff keys, expired share-link tokens. Listed here so a reviewer doesn't flag them.
+- **When in doubt** — prefer `deleted_at`. It's reversible. Hard-delete only when the row genuinely has no audit value.
+
+**Patterns currently in use for "soft-delete" tables.**
+
+| Pattern | Tables |
+|---|---|
+| `deleted_at BIGINT` (+ partial index) | `ops_notes`, `tracker_entries`, `ops_staff_credentials`, `ops_obligations`, `ops_evidence_attachments`, `ops_reports` |
+| `status='deleted'` enum flip | `ops_drill_logs` (see `server/ops/opsStorage.ts` notes) |
+| `status='discharged'` clinical state | `ops_residents` (lifecycle state, not really "delete") |
+| `status='discontinued'` clinical state | `ops_medications` |
+| `status='archived'` operational state | `ops_vendors`, `ops_posting_catalog` |
+
+**Hard-delete-OK tables today.**
+
+- `job_postings` — `db.delete(jobPostingsTable)` in `server/storage.ts:deleteJobPostingByExternalId`. Marketing data; deletion intent is "take the listing down."
+- `applicant_interests` — `db.delete(applicantInterests)` in `server/storage.ts:deleteApplicantInterestByExternalId`. Contact-intent data; seeker "withdraws" = row should be gone.
+- `job_seeker_credentials` — `db.delete(jobSeekerCredentials)` in `server/storage.ts`. User-managed profile data.
+- `job_seeker_work_experience` — same.
+- Session rows — DDL `DELETE FROM session WHERE …` in `server/routes.ts` (logout) and `server/routes/jobseekerAuth.ts` (logout). Transient by definition.
+
+**Audit findings (Phase 7).**
+
+- **`server/ops/opsStorage.ts:deleteCharge` (line ~1257)** hard-deletes from `ops_billing_charges`, a financial table. Per the rule, this should soft-delete (likely via a new `deleted_at` column or by flagging as void/reversed). Flagged for a focused follow-up phase — not refactored here per the Phase 7 scope ("audit + codify the rule, don't batch-fix outliers"). The accounting impact is small because `ops_invoices` row totals are computed from charges and the FE can re-issue corrections, but the audit trail is incomplete. **Recommended fix:** add `deleted_at BIGINT` + `deleted_by TEXT` to `ops_billing_charges`, change `deleteCharge` to UPDATE-stamp those columns, and add a filter in `listCharges` to hide soft-deleted rows by default.
+
+No other productive hard-deletes were found in `server/storage.ts`, `server/ops/opsStorage.ts`, `server/ops/notesStorage.ts`, `server/trackers/trackerStorage.ts`, or any `server/repositories/postgres/*.ts` file.
 
 ### Environment Variables
 

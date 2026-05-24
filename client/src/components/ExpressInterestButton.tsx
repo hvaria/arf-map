@@ -52,9 +52,12 @@ interface JobSeekerAuth {
 }
 
 interface SeekerInterest {
-  id: number;
+  // Phase 7: the wire shape exposes `externalId` (nanoid string) instead of
+  // the internal integer PK. `jobExternalId` likewise replaces `jobId` so the
+  // FE never sees the integer FK on the wire.
+  externalId: string;
   facilityNumber: string;
-  jobId: number | null;
+  jobExternalId: string | null;
   status: string;
 }
 
@@ -78,11 +81,14 @@ interface Props {
   facilityName: string;
   /**
    * When provided, this button represents per-job interest. The "already
-   * applied" indicator and the upsert are scoped to (seeker, jobId) so a
-   * facility with multiple openings has independent state per posting.
+   * applied" indicator and the upsert are scoped to (seeker, jobExternalId)
+   * so a facility with multiple openings has independent state per posting.
    * Omit for facility-level interest (legacy behavior on `<FacilityPanel>`).
+   *
+   * Phase 7: this is the job's URL-safe `external_id` (nanoid), not the
+   * internal integer PK. The integer PK is no longer exposed on the wire.
    */
-  jobId?: number;
+  jobExternalId?: string;
   /**
    * When per-job, the job's title — drives the dialog title, the body
    * copy, and the success toast so the modal reads like an apply flow
@@ -94,7 +100,7 @@ interface Props {
   ctaLabel?: string;
 }
 
-export function ExpressInterestButton({ facilityNumber, facilityName, jobId, jobTitle, ctaLabel }: Props) {
+export function ExpressInterestButton({ facilityNumber, facilityName, jobExternalId, jobTitle, ctaLabel }: Props) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -127,27 +133,30 @@ export function ExpressInterestButton({ facilityNumber, facilityName, jobId, job
   });
 
   // Scope the "already applied" check to the right grain. Per-job grain
-  // (jobId provided) finds an exact (seeker, jobId) row. Facility grain
-  // (jobId omitted) finds a (seeker, facilityNumber, jobId IS NULL) row.
-  // A facility-level interest does NOT light up "Interest Sent" on a job
-  // detail page, and applying to one job at a facility does NOT light up
-  // "Interest Sent" on the facility panel — these are independent intents.
-  const existing = jobId != null
-    ? interests.find((i) => i.jobId === jobId)
-    : interests.find((i) => i.facilityNumber === facilityNumber && i.jobId == null);
+  // (jobExternalId provided) finds an exact (seeker, jobExternalId) row.
+  // Facility grain (jobExternalId omitted) finds a (seeker, facilityNumber,
+  // jobExternalId IS NULL) row. A facility-level interest does NOT light up
+  // "Interest Sent" on a job detail page, and applying to one job at a
+  // facility does NOT light up "Interest Sent" on the facility panel — these
+  // are independent intents.
+  const existing = jobExternalId != null
+    ? interests.find((i) => i.jobExternalId === jobExternalId)
+    : interests.find((i) => i.facilityNumber === facilityNumber && i.jobExternalId == null);
 
   // Per-job applications submit the job title as roleInterest so the
   // facility-side inbox shows the specific posting the seeker applied
   // to. Facility-level interest keeps using the dropdown's "what role
   // are you looking for" value.
-  const isPerJob = jobId != null;
+  const isPerJob = jobExternalId != null;
   const effectiveRole = isPerJob ? (jobTitle ?? role) : role;
 
   const submitMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", "/api/jobseeker/interests", {
         facilityNumber,
-        jobId,
+        // Phase 7 — wire field name matches the backend schema. Backend
+        // resolves this to the internal integer FK on insert.
+        jobExternalId,
         roleInterest: effectiveRole,
         message: message.trim() || undefined,
       }),

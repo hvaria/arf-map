@@ -80,7 +80,10 @@ interface SessionUser {
 }
 
 interface DbJobPosting {
-  id: number;
+  // Phase 7: API exposes the URL-safe `externalId` (nanoid). The internal
+  // integer PK is never returned, so URLs constructed from this row use
+  // externalId.
+  externalId: string;
   facilityNumber: string;
   title: string;
   type: string;
@@ -736,7 +739,7 @@ function JobFormDialog({
         .filter(Boolean);
       const body = { title: data.title, type: data.type, salary: data.salary, description: data.description, requirements };
       if (existingJob) {
-        return apiRequest("PUT", `/api/facility/jobs/${existingJob.id}`, body);
+        return apiRequest("PUT", `/api/facility/jobs/${existingJob.externalId}`, body);
       }
       return apiRequest("POST", "/api/facility/jobs", body);
     },
@@ -846,7 +849,7 @@ function JobCard({ job, facilityNumber }: { job: DbJobPosting; facilityNumber: s
   const [editOpen, setEditOpen] = useState(false);
 
   const deleteMutation = useMutation({
-    mutationFn: () => apiRequest("DELETE", `/api/facility/jobs/${job.id}`),
+    mutationFn: () => apiRequest("DELETE", `/api/facility/jobs/${job.externalId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/facility/jobs"] });
       qc.invalidateQueries({ queryKey: [`/api/facilities/${facilityNumber}/public`] });
@@ -952,7 +955,7 @@ function JobsManager({ facilityNumber }: { facilityNumber: string }) {
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => (
-            <JobCard key={job.id} job={job} facilityNumber={facilityNumber} />
+            <JobCard key={job.externalId} job={job} facilityNumber={facilityNumber} />
           ))}
         </div>
       )}

@@ -7,7 +7,9 @@ import type { FacilityPin } from "@shared/schema";
 import { useFacilityPins } from "@/hooks/useFacilityPins";
 
 interface PublicJob {
-  id: number;
+  // Phase 7: API exposes `externalId` (URL-safe nanoid); the internal
+  // integer PK is no longer on the wire.
+  externalId: string;
   facilityNumber: string;
   title: string;
   type: string;
@@ -121,7 +123,7 @@ export function BottomTabs({ filteredFacilities, onSelectFacility }: BottomTabsP
                 const facility = facilityByNumber.get(job.facilityNumber);
                 return (
                   <button
-                    key={job.id}
+                    key={job.externalId}
                     className="w-full text-left rounded-xl border bg-card hover:bg-accent transition-colors p-3"
                     onClick={() => facility && onSelectFacility(facility)}
                   >
