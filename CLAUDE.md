@@ -264,6 +264,26 @@ Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-sche
 
 - **Money** is stored as `BIGINT cents` in `ops_invoices.{subtotal,tax,total,amount_paid,balance_due}`, `ops_billing_charges.amount`, `ops_payments.amount`, and `ops_resident_trust_*`. The wire/UI format is **dollars** (number). Conversion happens at the route boundary via `dollarsToCents`/`centsToDollars` from [server/lib/money.ts](server/lib/money.ts). Never store dollars as floats; never expose cents on the wire. `ops_billing_charges.quantity` stays `DOUBLE PRECISION` because it represents fractional units (e.g. 1.5 hours), not money.
 
+### Phase 6 — validation hardening
+
+Three input-side invariants are now enforced at the route boundary on `server/ops/opsRouter.ts`. New routes that accept facility-scoped POST/PUT bodies MUST follow these rules — they exist to prevent silent tenancy / data-quality regressions, not for style.
+
+**Body schemas never name `facilityNumber`.** The facility a request belongs to is sourced from the Passport session via the `getFacilityNumber(req)` helper at the top of `opsRouter.ts`. The URL `:facilityNumber` path-param IDOR guard at `opsRouter.param("facilityNumber")` enforces the *URL* leg; this rule closes the *body* leg. A handler that ignored this rule and passed `parsed.data.facilityNumber` straight to storage would silently route writes into another tenant. Schemas with the field removed in this phase: `medPassSchema`, `controlledSubCountSchema`, `medDestructionSchema`, `admissionSchema`, `chargeSchema`, `generateInvoiceSchema`, `paymentSchema`. The corresponding POST handlers now read `const facilityNumber = getFacilityNumber(req)` and spread it into the storage payload AFTER `...parsed.data` so the session value always wins.
+
+**Money and quantity fields are bounded.** Unconstrained `z.number()` lets `NaN`, `±Infinity`, negatives, and float drift into BIGINT cents columns. The standard shapes:
+
+- **Dollars on the wire** (`amount` on `chargeSchema`, `paymentSchema`): `z.number().finite().min(0).max(1_000_000)` — `.finite()` rejects NaN AND ±Infinity in one shot; `$1M` is a sane single-charge upper bound for an ARF. Storage flips to cents per the Phase 2 money invariant.
+- **Cents on the wire** (`amountCents` on `trustLedgerCreateSchema`): `z.number().int().positive().max(100_000_000)` — `$1M` in cents, integer-only.
+- **Quantities** (`quantity` on `chargeSchema`, `medDestructionSchema`): `.finite().min(0).max(10_000)` (or `.int()` where the unit is countable like tablets).
+- **Vitals ranges** (`preVitalsPulse`, `preVitalsTemp`, `preVitalsSpo2` on `medPassSchema`): clinically-plausible per-vital bounds (`pulse 0–400`, `temp 0–120`, `spo2 0–100`).
+
+**Every request-body `z.object({...})` carries `.strict()`.** This makes unknown fields a `400` instead of a silent drop — without it, a client typo or an attacker probe gets the request-shape-mismatch failure mode that broke tour scheduling in an earlier round. Three exclusions:
+- Query-string / response-shape schemas don't get `.strict()`.
+- Schemas in `@shared/schema.ts` (`credentialInputSchema`, `workExperienceInputSchema`) are intentionally left non-strict — they cross the FE boundary and a future additive field should not require a coordinated FE+BE deploy.
+- `interestsRouter.submitSchema` and `routes.ts:registerSchema` legitimately accept `facilityNumber` from body because the caller has no facility session yet (jobseeker selecting a facility / first-time facility registration).
+
+**Tests.** Regression coverage lives in [server/__tests__/ops/phase6ValidationHardening.test.ts](server/__tests__/ops/phase6ValidationHardening.test.ts) — body-supplied facility number, money/quantity bounds, and unknown-field rejection are each asserted on one representative endpoint per pattern.
+
 ### Two Auth Systems
 
 **Facility auth** — Passport.js `LocalStrategy` + server-side sessions. Stored in `facility_accounts`. The `requireAuth` middleware in `routes.ts` protects facility-specific endpoints.

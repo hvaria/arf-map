@@ -266,6 +266,12 @@ function paymentOut<T extends { amount?: number | null }>(row: T): T & { amount:
 // All optional-fields use `.nullable().optional()` so FE forms that send
 // `null` for "user left blank" pass validation. Drizzle treats null and
 // undefined identically when inserting into a nullable column.
+//
+// Phase 6 — `.strict()` everywhere on request-body schemas so unknown fields
+// surface as a 400 (silent drop is what leaks server-sourced fields like
+// `facilityNumber` from body into storage). Body schemas never accept
+// `facilityNumber` from the wire — that comes from `req.user.facilityNumber`
+// (Passport session) via the IDOR guard and `getFacilityNumber(req)`.
 const residentSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
@@ -285,7 +291,7 @@ const residentSchema = z.object({
   regionalCenterId: z.string().nullable().optional(),
   status: z.string().optional(),
   dischargeDate: z.number().int().nullable().optional(),
-});
+}).strict();
 
 const assessmentSchema = z.object({
   assessmentType: z.string().min(1),
@@ -316,7 +322,7 @@ const assessmentSchema = z.object({
   nextDueDate: z.number().int().nullable().optional(),
   licFormNumber: z.string().nullable().optional(),
   rawJson: z.string().nullable().optional(),
-});
+}).strict();
 
 const carePlanSchema = z.object({
   createdBy: z.string().min(1),
@@ -327,7 +333,7 @@ const carePlanSchema = z.object({
   frequency: z.string().min(1),
   responsibleStaff: z.string().nullable().optional(),
   status: z.string().optional(),
-});
+}).strict();
 
 // Below — `.strict()` on small, single-purpose schemas so any unknown field
 // in the request surfaces as a 400 rather than being silently dropped. The
@@ -376,7 +382,7 @@ const discontinueMedSchema = z.object({
     .optional(),
   reasonNote: z.string().nullable().optional(),
   discontinuedBy: z.string().min(1).nullable().optional(),
-});
+}).strict();
 
 /**
  * Convert the validated form payload (scheduledTimes: string[]) to the storage
@@ -393,10 +399,12 @@ function toStorageShape<T extends { frequency?: MedicationFrequency; scheduledTi
     : Omit<T, "frequency" | "scheduledTimes"> & { frequency?: string; scheduledTimes?: string | null };
 }
 
+// Phase 6 — facilityNumber removed from body. The session-owned value is
+// added inside the route handler via `getFacilityNumber(req)`. Vitals
+// numeric ranges are bounded to keep NaN/Infinity/wild values out of DB.
 const medPassSchema = z.object({
   medicationId: z.number().int(),
   residentId: z.number().int(),
-  facilityNumber: z.string().min(1),
   scheduledDatetime: z.number().int(),
   administeredDatetime: z.number().int().nullable().optional(),
   administeredBy: z.string().nullable().optional(),
@@ -414,44 +422,51 @@ const medPassSchema = z.object({
   holdReason: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   preVitalsBp: z.string().nullable().optional(),
-  preVitalsPulse: z.number().int().nullable().optional(),
-  preVitalsTemp: z.number().nullable().optional(),
-  preVitalsSpo2: z.number().int().nullable().optional(),
+  // Bound vitals to clinically plausible ranges so a runaway client can't
+  // poison the row with NaN/Infinity or a negative/absurd value.
+  preVitalsPulse: z.number().int().min(0).max(400).nullable().optional(),
+  preVitalsTemp: z.number().finite().min(0).max(120).nullable().optional(),
+  preVitalsSpo2: z.number().int().min(0).max(100).nullable().optional(),
   prnReason: z.string().nullable().optional(),
-});
+}).strict();
 
 const prnFollowupSchema = z.object({
   effectivenessNotes: z.string().min(1),
   notedAt: z.number().int(),
 }).strict();
 
+// Phase 6 — facilityNumber removed from body; session-sourced in the
+// handler. Count quantities bounded so a NaN/Infinity/negative value
+// can't corrupt the controlled-sub ledger.
 const controlledSubCountSchema = z.object({
   medicationId: z.number().int(),
-  facilityNumber: z.string().min(1),
   countDate: z.number().int(),
   shift: z.string().min(1),
   countedBy: z.string().min(1),
   witnessedBy: z.string().min(1),
-  openingCount: z.number().int(),
-  closingCount: z.number().int(),
-  administeredCount: z.number().int().nullable().optional(),
-  wastedCount: z.number().int().nullable().optional(),
-  discrepancy: z.number().int().nullable().optional(),
+  openingCount: z.number().int().min(0).max(10_000),
+  closingCount: z.number().int().min(0).max(10_000),
+  administeredCount: z.number().int().min(0).max(10_000).nullable().optional(),
+  wastedCount: z.number().int().min(0).max(10_000).nullable().optional(),
+  // discrepancy can legitimately be negative (closing > opening + received)
+  // so we keep it signed but still bound the magnitude.
+  discrepancy: z.number().int().min(-10_000).max(10_000).nullable().optional(),
   discrepancyNotes: z.string().nullable().optional(),
-  resolved: z.number().int().nullable().optional(),
-});
+  resolved: z.number().int().min(0).max(1).nullable().optional(),
+}).strict();
 
+// Phase 6 — facilityNumber removed from body; session-sourced. Quantity
+// bounded (10k unit sanity cap, integer since meds are tablets/vials).
 const medDestructionSchema = z.object({
   medicationId: z.number().int(),
-  facilityNumber: z.string().min(1),
-  quantity: z.number().int(),
+  quantity: z.number().int().min(1).max(10_000),
   unit: z.string().min(1),
   destructionMethod: z.string().min(1),
   destroyedBy: z.string().min(1),
   witnessedBy: z.string().min(1),
   destructionDate: z.number().int(),
   reason: z.string().min(1),
-});
+}).strict();
 
 const incidentSchema = z.object({
   residentId: z.number().int().nullable().optional(),
@@ -481,7 +496,7 @@ const incidentSchema = z.object({
   followUpDate: z.number().int().nullable().optional(),
   followUpCompleted: z.number().int().nullable().optional(),
   status: z.string().optional(),
-});
+}).strict();
 
 const leadSchema = z.object({
   contactName: z.string().min(1),
@@ -502,7 +517,7 @@ const leadSchema = z.object({
   notes: z.string().nullable().optional(),
   lastContactDate: z.number().int().nullable().optional(),
   nextFollowUpDate: z.number().int().nullable().optional(),
-});
+}).strict();
 
 const tourSchema = z.object({
   scheduledAt: z.number().int(),
@@ -513,28 +528,36 @@ const tourSchema = z.object({
   completedAt: z.number().int().nullable().optional(),
 }).strict();
 
+// Phase 6 — leadId and facilityNumber removed from body. leadId comes
+// from the URL param (`/leads/:id/admissions`); facilityNumber comes from
+// the authenticated session. Allowing them on the wire let a client
+// override session-derived scope (e.g. attach a lead to an admission in
+// a different facility).
 const admissionSchema = z.object({
-  leadId: z.number().int(),
-  facilityNumber: z.string().min(1),
   moveInDate: z.number().int().nullable().optional(),
   assignedRoom: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
-});
+}).strict();
 
 const licFormSchema = z.object({
   completed: z.boolean(),
-});
+}).strict();
 
+// Phase 6 — facilityNumber removed from body (session-owned). Money on
+// the wire is dollars (per CLAUDE.md Phase 2 money invariant); the storage
+// layer converts to BIGINT cents. The bounds reject NaN / Infinity (via
+// .finite()) plus negative values and absurd magnitudes ($1M per single
+// charge is a sane upper bound for ARF billing).
 const chargeSchema = z.object({
-  facilityNumber: z.string().min(1),
   residentId: z.number().int(),
   chargeType: z.string().min(1),
   description: z.string().min(1),
   // amount is dollars on the wire (Phase 2 R2). Converted to BIGINT cents
-  // at the route boundary before passing to storage.
-  amount: z.number(),
+  // at the route boundary before passing to storage. Phase 6: bounded to
+  // reject NaN/Infinity/negatives and cap at $1M/row.
+  amount: z.number().finite().min(0).max(1_000_000),
   unit: z.string().nullable().optional(),
-  quantity: z.number().nullable().optional(),
+  quantity: z.number().finite().min(0).max(10_000).nullable().optional(),
   billingPeriodStart: z.number().int().nullable().optional(),
   billingPeriodEnd: z.number().int().nullable().optional(),
   isRecurring: z.number().int().nullable().optional(),
@@ -544,29 +567,30 @@ const chargeSchema = z.object({
   prorateTo: z.number().int().nullable().optional(),
   source: z.string().optional(),
   clinicalRefId: z.number().int().nullable().optional(),
-});
+}).strict();
 
+// Phase 6 — facilityNumber removed from body; session-sourced in handler.
 const generateInvoiceSchema = z.object({
-  facilityNumber: z.string().min(1),
   residentId: z.number().int(),
   periodStart: z.number().int(),
   periodEnd: z.number().int(),
-});
+}).strict();
 
+// Phase 6 — facilityNumber removed from body (session-owned). Amount is
+// dollars on the wire (storage flips to cents); $1M cap mirrors chargeSchema.
 const paymentSchema = z.object({
   invoiceId: z.number().int(),
-  facilityNumber: z.string().min(1),
   residentId: z.number().int(),
   // amount is dollars on the wire (Phase 2 R2). Converted to BIGINT cents
-  // at the route boundary before passing to storage.
-  amount: z.number(),
+  // at the route boundary before passing to storage. Phase 6: bounded.
+  amount: z.number().finite().min(0).max(1_000_000),
   paymentDate: z.number().int(),
   paymentMethod: z.string().min(1),
   referenceNumber: z.string().nullable().optional(),
   type: z.string().optional(),
   notes: z.string().nullable().optional(),
   recordedBy: z.string().nullable().optional(),
-});
+}).strict();
 
 // facilityNumber is intentionally NOT in the body schema — the server pulls
 // it from the authenticated session in the route handler. Letting clients
@@ -1354,7 +1378,15 @@ opsRouter.post("/med-passes", requireOpsPermission(OPS_RESOURCES.MED_PASS, "crea
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const medPass = await ops.recordMedPass({ ...parsed.data, createdAt: Date.now() }, getActor(req));
+    // Phase 6 — facilityNumber is session-owned; never trust the wire.
+    const facilityNumber = getFacilityNumber(req);
+    if (!facilityNumber) {
+      return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
+    const medPass = await ops.recordMedPass(
+      { ...parsed.data, facilityNumber, createdAt: Date.now() },
+      getActor(req),
+    );
     res.status(201).json({ success: true, data: medPass });
   } catch (e) {
     return handleRouteError(req, e, res);
@@ -1376,7 +1408,7 @@ const chartMedPassSchema = z.object({
   rightReason: z.number().int().optional(),
   rightDocumentation: z.number().int().optional(),
   rightToRefuse: z.number().int().optional(),
-});
+}).strict();
 
 opsRouter.put("/med-passes/:id", requireOpsPermission(OPS_RESOURCES.MED_PASS, "update"), async (req, res) => {
   try {
@@ -1482,7 +1514,16 @@ opsRouter.post("/controlled-sub-counts", requireOpsPermission(OPS_RESOURCES.CONT
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const record = await ops.recordControlledSubCount({ ...nullsToUndef(parsed.data), createdAt: Date.now() });
+    // Phase 6 — facilityNumber from session, never the wire.
+    const facilityNumber = getFacilityNumber(req);
+    if (!facilityNumber) {
+      return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
+    const record = await ops.recordControlledSubCount({
+      ...nullsToUndef(parsed.data),
+      facilityNumber,
+      createdAt: Date.now(),
+    });
     res.status(201).json({ success: true, data: record });
   } catch (e) {
     return handleRouteError(req, e, res);
@@ -1496,7 +1537,16 @@ opsRouter.post("/med-destruction", requireOpsPermission(OPS_RESOURCES.MED_DESTRU
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    const record = await ops.recordMedDestruction({ ...parsed.data, createdAt: Date.now() });
+    // Phase 6 — facilityNumber from session, never the wire.
+    const facilityNumber = getFacilityNumber(req);
+    if (!facilityNumber) {
+      return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
+    const record = await ops.recordMedDestruction({
+      ...parsed.data,
+      facilityNumber,
+      createdAt: Date.now(),
+    });
     res.status(201).json({ success: true, data: record });
   } catch (e) {
     return handleRouteError(req, e, res);
@@ -1744,11 +1794,14 @@ opsRouter.post("/leads/:id/admissions", requireOpsPermission(OPS_RESOURCES.ADMIS
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
     const now = Date.now();
+    // Phase 6 — session-owned scope fields come AFTER ...parsed.data so
+    // they cannot be clobbered even if a future schema regression lets
+    // a `leadId` / `facilityNumber` field slip through.
     const admission = await ops.startAdmission(
       {
+        ...parsed.data,
         leadId,
         facilityNumber,
-        ...parsed.data,
         createdAt: now,
         updatedAt: now,
       },
@@ -2014,10 +2067,16 @@ opsRouter.post("/billing/charges", requireOpsPermission(OPS_RESOURCES.BILLING, "
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    // Dollars -> cents at the wire boundary (Phase 2 R2). Storage is cents.
+    // Phase 6 — facilityNumber from session, never the wire.
+    const facilityNumber = getFacilityNumber(req);
+    if (!facilityNumber) {
+      return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
+    // Phase 2 R2 — dollars→cents at the wire boundary. Storage is cents.
     const stripped = nullsToUndef(parsed.data);
     const charge = await ops.createCharge({
       ...stripped,
+      facilityNumber,
       amount: dollarsToCents(parsed.data.amount),
       createdAt: Date.now(),
     });
@@ -2098,8 +2157,13 @@ opsRouter.post("/billing/invoices/generate", requireOpsPermission(OPS_RESOURCES.
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
+    // Phase 6 — facilityNumber from session, never the wire.
+    const facilityNumber = getFacilityNumber(req);
+    if (!facilityNumber) {
+      return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
     const invoice = await ops.generateInvoice(
-      parsed.data.facilityNumber,
+      facilityNumber,
       parsed.data.residentId,
       parsed.data.periodStart,
       parsed.data.periodEnd
@@ -2144,9 +2208,15 @@ opsRouter.post("/billing/payments", requireOpsPermission(OPS_RESOURCES.BILLING, 
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     }
-    // Dollars -> cents at the wire boundary (Phase 2 R2). Storage is cents.
+    // Phase 6 — facilityNumber from session, never the wire.
+    const facilityNumber = getFacilityNumber(req);
+    if (!facilityNumber) {
+      return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
+    // Phase 2 R2 — dollars→cents at the wire boundary. Storage is cents.
     const payment = await ops.recordPayment({
       ...parsed.data,
+      facilityNumber,
       amount: dollarsToCents(parsed.data.amount),
       createdAt: Date.now(),
     });
@@ -5729,7 +5799,10 @@ const trustLedgerListQuerySchema = z
 const trustLedgerCreateSchema = z
   .object({
     direction: z.enum(TRUST_LEDGER_DIRECTIONS),
-    amountCents: z.number().int().positive(),
+    // Phase 6 — bounded to $1M-in-cents per single trust ledger entry.
+    // `.int()` already rejects NaN/Infinity at the parser layer; the max
+    // sanity-checks a runaway client that might submit Number.MAX_SAFE_INTEGER.
+    amountCents: z.number().int().positive().max(100_000_000),
     category: z.enum(TRUST_LEDGER_CATEGORIES),
     description: z.string().min(1).max(500),
     transactedAt: z.number().int().positive(),
