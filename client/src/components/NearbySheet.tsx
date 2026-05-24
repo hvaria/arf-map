@@ -6,7 +6,9 @@ import { Separator } from "@/components/ui/separator";
 import type { FacilityPin } from "@shared/schema";
 
 interface DbJob {
-  id: number;
+  // Phase 7: API exposes `externalId` (URL-safe nanoid); the internal
+  // integer PK is no longer on the wire.
+  externalId: string;
   facilityNumber: string;
   title: string;
   type: string;
@@ -54,7 +56,7 @@ export function NearbySheet({ onSelectFacility, hidden, facilityByNumber }: Near
   const jobs = useMemo<DisplayJob[]>(() => {
     return dbJobs
       .map((j) => ({
-        key: `db-${j.id}`,
+        key: `db-${j.externalId}`,
         facilityNumber: j.facilityNumber,
         title: j.title,
         type: j.type,

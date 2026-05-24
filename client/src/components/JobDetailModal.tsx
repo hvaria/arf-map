@@ -26,7 +26,9 @@ import { ExpressInterestButton } from "@/components/ExpressInterestButton";
 // headings, primary CTA via portal-btn-primary inside ExpressInterestButton.
 
 interface JobDetail {
-  id: number;
+  // Phase 7: URLs and FE state use the URL-safe `externalId` (nanoid).
+  // The internal integer PK is never returned by the API.
+  externalId: string;
   facilityNumber: string;
   title: string;
   type: string;
@@ -50,7 +52,8 @@ interface FacilityPublic {
 }
 
 interface Props {
-  jobId: number | null;
+  /** Job's external_id (nanoid). Phase 7 — internal integer id is gone. */
+  jobExternalId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -75,11 +78,11 @@ function daysAgo(ts: number): string {
   return `${days} days ago`;
 }
 
-export function JobDetailModal({ jobId, open, onOpenChange }: Props) {
-  const validId = jobId != null && Number.isInteger(jobId) && jobId > 0;
+export function JobDetailModal({ jobExternalId, open, onOpenChange }: Props) {
+  const validId = jobExternalId != null && /^[A-Za-z0-9_-]{4,32}$/.test(jobExternalId);
 
   const { data: job, isLoading, isError } = useQuery<JobDetail | null>({
-    queryKey: [`/api/jobs/${jobId}`],
+    queryKey: [`/api/jobs/${jobExternalId}`],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: open && validId,
     staleTime: 60000,
@@ -208,7 +211,7 @@ export function JobDetailModal({ jobId, open, onOpenChange }: Props) {
                 <ExpressInterestButton
                   facilityNumber={job.facilityNumber}
                   facilityName={facility.name}
-                  jobId={job.id}
+                  jobExternalId={job.externalId}
                   jobTitle={job.title}
                   ctaLabel="Apply to this job"
                 />

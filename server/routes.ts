@@ -31,6 +31,7 @@ import {
   getFacilitiesMetaAsync,
   type FacilityDbRow,
 } from "./storage";
+import type { DbJobPosting } from "@shared/schema";
 import { pool } from "./db/index";
 
 const facilityOtpStore = new Map<string, { otp: string; expiry: number }>();
@@ -860,6 +861,20 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // ── Public job listings ──────────────────────────────────────────────────────
 
+  // Helper — strip the internal integer PK from a job-posting wire payload.
+  // Phase 7: only `externalId` is exposed in URLs / responses; the integer
+  // `id` is purely internal-FK glue and never crosses the wire.
+  function jobToWire(jp: DbJobPosting) {
+    const { payMin, payMax } = parseSalary(jp.salary);
+    const { id: _internalId, ...rest } = jp;
+    return {
+      ...rest,
+      requirements: JSON.parse(jp.requirements) as string[],
+      payMin,
+      payMax,
+    };
+  }
+
   app.get("/api/jobs", async (req, res) => {
     // Optional tag filter from the signed-in seeker's profile chips
     // (?tags=Caregiver,DSP). Empty / missing tags returns the full
@@ -869,35 +884,22 @@ export async function registerRoutes(server: Server, app: Express) {
     const matched = tags.length > 0
       ? jobs.filter((jp) => jobMatchesTags(jp, tags))
       : jobs;
-    res.json(
-      matched.map((jp) => {
-        const { payMin, payMax } = parseSalary(jp.salary);
-        return {
-          ...jp,
-          requirements: JSON.parse(jp.requirements) as string[],
-          payMin,
-          payMax,
-        };
-      }),
-    );
+    res.json(matched.map(jobToWire));
   });
 
-  app.get("/api/jobs/:id", async (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
+  // Phase 7 — URL param is the nanoid `externalId`, not the integer PK.
+  // Legacy `/api/jobs/<integer>` bookmarks 404; FE has been updated to
+  // construct URLs from the `externalId` field on every job-posting payload.
+  app.get("/api/jobs/:externalId", async (req, res) => {
+    const externalId = String(req.params.externalId ?? "");
+    if (!externalId || externalId.length < 4 || externalId.length > 32) {
       return res.status(400).json({ message: "Invalid job id" });
     }
-    const jp = await storage.getJobPostingById(id);
+    const jp = await storage.getJobPostingByExternalId(externalId);
     if (!jp) {
       return res.status(404).json({ message: "Job not found" });
     }
-    const { payMin, payMax } = parseSalary(jp.salary);
-    res.json({
-      ...jp,
-      requirements: JSON.parse(jp.requirements) as string[],
-      payMin,
-      payMax,
-    });
+    res.json(jobToWire(jp));
   });
 
   // ── Public facility data ─────────────────────────────────────────────────────
@@ -943,10 +945,11 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json({
       facility,
       overrides: overrides ?? null,
-      jobPostings: jobPostings.map((jp) => ({
-        ...jp,
-        requirements: JSON.parse(jp.requirements) as string[],
-      })),
+      // Strip internal integer PK; expose externalId only (Phase 7).
+      jobPostings: jobPostings.map((jp) => {
+        const { id: _internalId, ...rest } = jp;
+        return { ...rest, requirements: JSON.parse(jp.requirements) as string[] };
+      }),
     });
   });
 
@@ -954,12 +957,11 @@ export async function registerRoutes(server: Server, app: Express) {
 
   app.get("/api/facility/jobs", requireAuth, async (req, res) => {
     const jobs = await storage.getJobPostings(req.user!.facilityNumber);
-    res.json(
-      jobs.map((jp) => ({
-        ...jp,
-        requirements: JSON.parse(jp.requirements) as string[],
-      })),
-    );
+    // Strip internal integer PK; expose externalId only.
+    res.json(jobs.map((jp) => {
+      const { id: _internalId, ...rest } = jp;
+      return { ...rest, requirements: JSON.parse(jp.requirements) as string[] };
+    }));
   });
 
   app.post("/api/facility/jobs", requireAuth, async (req, res) => {
@@ -975,12 +977,18 @@ export async function registerRoutes(server: Server, app: Express) {
       description,
       requirements: JSON.stringify(requirements),
     });
-    res.status(201).json({ ...job, requirements: JSON.parse(job.requirements) as string[] });
+    // Strip the internal integer PK — the FE constructs subsequent URLs from
+    // `externalId`. Returning `id` here would re-leak the enumeration surface
+    // we just closed.
+    const { id: _internalId, ...rest } = job;
+    res.status(201).json({ ...rest, requirements: JSON.parse(job.requirements) as string[] });
   });
 
-  app.put("/api/facility/jobs/:id", requireAuth, async (req, res) => {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid job id" });
+  app.put("/api/facility/jobs/:externalId", requireAuth, async (req, res) => {
+    const externalId = String(req.params.externalId ?? "");
+    if (!externalId || externalId.length < 4 || externalId.length > 32) {
+      return res.status(400).json({ message: "Invalid job id" });
+    }
 
     const parsed = jobPostingInputSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -994,16 +1002,19 @@ export async function registerRoutes(server: Server, app: Express) {
     if (parsed.data.description) data.description = parsed.data.description;
     if (parsed.data.requirements) data.requirements = JSON.stringify(parsed.data.requirements);
 
-    const job = await storage.updateJobPosting(id, req.user!.facilityNumber, data);
+    const job = await storage.updateJobPostingByExternalId(externalId, req.user!.facilityNumber, data);
     if (!job) return res.status(404).json({ message: "Job posting not found" });
-    res.json({ ...job, requirements: JSON.parse(job.requirements) as string[] });
+    const { id: _internalId, ...rest } = job;
+    res.json({ ...rest, requirements: JSON.parse(job.requirements) as string[] });
   });
 
-  app.delete("/api/facility/jobs/:id", requireAuth, async (req, res) => {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid job id" });
+  app.delete("/api/facility/jobs/:externalId", requireAuth, async (req, res) => {
+    const externalId = String(req.params.externalId ?? "");
+    if (!externalId || externalId.length < 4 || externalId.length > 32) {
+      return res.status(400).json({ message: "Invalid job id" });
+    }
 
-    const deleted = await storage.deleteJobPosting(id, req.user!.facilityNumber);
+    const deleted = await storage.deleteJobPostingByExternalId(externalId, req.user!.facilityNumber);
     if (!deleted) return res.status(404).json({ message: "Job posting not found" });
     res.json({ ok: true });
   });

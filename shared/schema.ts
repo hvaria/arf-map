@@ -169,8 +169,13 @@ export const facilityOverrides = pgTable("facility_overrides", {
   updatedAt: ts("updated_at").notNull(),
 });
 
+// `external_id` is the URL-safe public identifier (Phase 7). All `/api/jobs/*`
+// and `/api/facility/jobs/*` routes URL-address rows by this column; the
+// integer `id` is internal-only and never appears in responses. Generated via
+// `nanoid(12)` on insert; backfilled by the Phase 7 migration for legacy rows.
 export const jobPostingsTable = pgTable("job_postings", {
   id: serial("id").primaryKey(),
+  externalId: text("external_id").notNull().unique(),
   facilityNumber: text("facility_number").notNull(),
   title: text("title").notNull(),
   type: text("type").notNull(),
@@ -208,8 +213,13 @@ export const facilitiesTable = pgTable("facilities", {
   enrichedAt: ts("enriched_at"),
 });
 
+// `external_id` is the URL-safe public identifier (Phase 7). The two URL-
+// exposed routes (`DELETE /api/jobseeker/interests/:externalId` and
+// `PATCH /api/facility/applicants/:externalId`) address rows via this column;
+// the integer `id` is internal-only. Generated via `nanoid(12)` on insert.
 export const applicantInterests = pgTable("applicant_interests", {
   id: serial("id").primaryKey(),
+  externalId: text("external_id").notNull().unique(),
   jobSeekerId: integer("job_seeker_id").notNull(),
   facilityNumber: text("facility_number").notNull(),
   // When jobId is set, the interest is scoped to one specific job posting

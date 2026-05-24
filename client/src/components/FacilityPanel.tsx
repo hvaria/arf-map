@@ -59,7 +59,9 @@ interface FacilityPanelProps {
 }
 
 interface DbJobPosting {
-  id: number;
+  // Phase 7: API exposes the URL-safe `externalId` (nanoid). The internal
+  // integer PK is never returned.
+  externalId: string;
   facilityNumber: string;
   title: string;
   type: string;
@@ -513,7 +515,7 @@ export function FacilityPanel({ facility, open, onClose, userLocation }: Facilit
                         postedDaysAgo: Math.floor((Date.now() - (job as DbJobPosting).postedAt) / 86400000),
                       }
                     : (job as JobPosting);
-                  return <JobCard key={isDbJob ? (job as DbJobPosting).id : idx} job={jobPosting as JobPosting} />;
+                  return <JobCard key={isDbJob ? (job as DbJobPosting).externalId : idx} job={jobPosting as JobPosting} />;
                 })}
               </div>
               <p className="text-[11.5px] text-stone-500 mt-2 italic">

@@ -15,9 +15,13 @@ import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { StatusBadge } from "@/components/StatusBadge";
 
 interface Applicant {
-  id: number;
+  // Phase 7: API exposes the URL-safe `externalId` (nanoid) instead of the
+  // internal integer PK. PATCH URLs are built from this string.
+  externalId: string;
   jobSeekerId: number;
   facilityNumber: string;
+  jobExternalId: string | null;
+  jobTitle: string | null;
   roleInterest: string | null;
   message: string | null;
   status: string;
@@ -45,7 +49,9 @@ function ApplicantCard({ applicant }: { applicant: Applicant }) {
 
   const statusMutation = useMutation({
     mutationFn: (status: string) =>
-      apiRequest("PATCH", `/api/facility/applicants/${applicant.id}`, { status }),
+      // Phase 7: URL param is the applicant interest's `externalId` (nanoid),
+      // not the internal integer PK.
+      apiRequest("PATCH", `/api/facility/applicants/${applicant.externalId}`, { status }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/facility/applicants"] });
     },
@@ -207,7 +213,7 @@ export function ApplicantsTab() {
       </div>
       <div className="space-y-3">
         {applicants.map((a) => (
-          <ApplicantCard key={a.id} applicant={a} />
+          <ApplicantCard key={a.externalId} applicant={a} />
         ))}
       </div>
     </div>

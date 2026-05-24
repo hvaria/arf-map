@@ -14,8 +14,10 @@ interface JobSeekerAuth {
 }
 
 interface SeekerInterest {
-  id: number;
-  jobId: number | null;
+  // Phase 7: API exposes the URL-safe `externalId` (nanoid) instead of the
+  // internal integer PK. `jobExternalId` likewise replaces `jobId`.
+  externalId: string;
+  jobExternalId: string | null;
   status: string;
 }
 
@@ -24,7 +26,7 @@ interface SeekerProfileTags {
 }
 
 interface DbJob {
-  id: number;
+  externalId: string;
   facilityNumber: string;
   title: string;
   type: string;
@@ -37,7 +39,7 @@ interface DbJob {
 }
 
 interface DisplayJob {
-  id: number;
+  externalId: string;
   key: string;
   facilityNumber: string;
   title: string;
@@ -102,10 +104,12 @@ const PENDING_JOB_MODAL_KEY = "pending_job_modal";
 
 export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber }: JobsPanelProps) {
   // Modal state — clicking a card opens the in-context job detail
-  // modal instead of navigating away. Direct /#/jobs/:id arrivals are
-  // funneled here via PENDING_JOB_MODAL_KEY (set by JobDetailPage's
+  // modal instead of navigating away. Direct /#/jobs/:externalId arrivals
+  // are funneled here via PENDING_JOB_MODAL_KEY (set by JobDetailPage's
   // redirector) — see the useEffect below.
-  const [modalJobId, setModalJobId] = useState<number | null>(null);
+  // Phase 7: the modal works in terms of `externalId` (nanoid string), not
+  // the integer PK that the URL used to expose.
+  const [modalJobExternalId, setModalJobExternalId] = useState<string | null>(null);
 
   // Drain the redirector handoff exactly once on mount. Failing
   // silently when sessionStorage is unavailable (private browsing)
@@ -113,9 +117,11 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
   useEffect(() => {
     try {
       const pending = sessionStorage.getItem(PENDING_JOB_MODAL_KEY);
-      if (pending) {
-        const id = Number(pending);
-        if (Number.isInteger(id) && id > 0) setModalJobId(id);
+      if (pending && /^[A-Za-z0-9_-]{4,32}$/.test(pending)) {
+        setModalJobExternalId(pending);
+        sessionStorage.removeItem(PENDING_JOB_MODAL_KEY);
+      } else if (pending) {
+        // Legacy integer-id handoff from a stale tab — discard silently.
         sessionStorage.removeItem(PENDING_JOB_MODAL_KEY);
       }
     } catch {
@@ -164,9 +170,9 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
     enabled: !!me,
     staleTime: 30000,
   });
-  const appliedJobIds = useMemo(() => {
-    const s = new Set<number>();
-    for (const i of myInterests) if (i.jobId != null) s.add(i.jobId);
+  const appliedJobExternalIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const i of myInterests) if (i.jobExternalId != null) s.add(i.jobExternalId);
     return s;
   }, [myInterests]);
 
@@ -174,8 +180,8 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
     return dbJobs
       .filter((j) => !isJunkJob(j))
       .map((j) => ({
-        id: j.id,
-        key: `db-${j.id}`,
+        externalId: j.externalId,
+        key: `db-${j.externalId}`,
         facilityNumber: j.facilityNumber,
         title: j.title,
         type: j.type,
@@ -289,7 +295,7 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
             jobs.map((job) => {
               const facility = facilityByNumber.get(job.facilityNumber) ?? null;
               const isSelected = selectedFacility?.number === job.facilityNumber;
-              const isApplied = appliedJobIds.has(job.id);
+              const isApplied = appliedJobExternalIds.has(job.externalId);
               return (
                 <JobCard
                   key={job.key}
@@ -303,7 +309,7 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
                     // back-from-modal feels grounded. Then open the
                     // detail modal in place — no navigation away.
                     if (facility) onSelectFacility(facility);
-                    setModalJobId(job.id);
+                    setModalJobExternalId(job.externalId);
                   }}
                 />
               );
@@ -323,13 +329,13 @@ export function JobsPanel({ selectedFacility, onSelectFacility, facilityByNumber
       )}
 
       {/* In-context job detail modal — opens on card click instead of
-          navigating to /#/jobs/:id. The route still works for shared
-          / deep-linked URLs. */}
+          navigating to /#/jobs/:externalId. The route still works for
+          shared / deep-linked URLs. */}
       <JobDetailModal
-        jobId={modalJobId}
-        open={modalJobId != null}
+        jobExternalId={modalJobExternalId}
+        open={modalJobExternalId != null}
         onOpenChange={(open) => {
-          if (!open) setModalJobId(null);
+          if (!open) setModalJobExternalId(null);
         }}
       />
     </div>
