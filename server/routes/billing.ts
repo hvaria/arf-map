@@ -124,14 +124,23 @@ billingRouter.post(
     const ua = req.headers["user-agent"] || null;
     const now = Date.now();
 
+    // Phase 5 review fix: insert + comp must be atomic from the customer's
+    // perspective. If the INSERT succeeds but compFacilityAccount throws
+    // (transient pool exhaustion, network blip), the customer is left with
+    // an orphan audit row that bricks their retry via the partial UNIQUE
+    // → 23505 → 409 BYPASS_ALREADY_REDEEMED. Compensate by deleting the
+    // just-inserted row before returning 500 so the user can simply retry.
+    let insertedRowId: number | null = null;
     try {
-      await pool.query(
+      const insertRes = await pool.query<{ id: number }>(
         `INSERT INTO billing_bypass_redemptions
            (code_prefix, account_id, redeemed_at, redeemed_ip,
             redeemed_user_agent, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $3, $3)`,
+         VALUES ($1, $2, $3, $4, $5, $3, $3)
+         RETURNING id`,
         [codePrefix, user.id, now, ip, ua],
       );
+      insertedRowId = insertRes.rows[0]?.id ?? null;
     } catch (err) {
       // 23505 = unique_violation. Partial-unique index hit means this
       // account already has an active (non-revoked) redemption row.
@@ -156,6 +165,23 @@ billingRouter.post(
       return res.json({ status: "active" });
     } catch (err) {
       console.error("[billing] redeem-code error:", (err as Error).message);
+      // Compensate the audit insert so the partial UNIQUE doesn't lock the
+      // customer out of retrying. Best-effort: if the compensation itself
+      // fails, log loudly so operators can clean up manually, but still
+      // return the original 500 to the caller.
+      if (insertedRowId !== null) {
+        try {
+          await pool.query(
+            `DELETE FROM billing_bypass_redemptions WHERE id = $1`,
+            [insertedRowId],
+          );
+        } catch (compErr) {
+          console.error(
+            `[billing] CRITICAL: redeem-code compensation DELETE failed for row ${insertedRowId} (account ${user.id}). Manual cleanup needed:`,
+            (compErr as Error).message,
+          );
+        }
+      }
       return res.status(500).json({ code: "REDEEM_FAILED" });
     }
   },
