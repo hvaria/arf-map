@@ -41,6 +41,54 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_PER_TICK = 200;
 
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 5 — multi-machine safety: pg_try_advisory_lock per tick.
+//
+// Mirrors the pattern in dailySummaryScheduler.ts. Without this gate, a
+// 2-machine Fly deploy would double-expire obligations because each
+// machine boots its own setInterval and both would race past the
+// state-machine guard. The session-scoped lock pins the tick to one
+// machine; losers no-op.
+//
+// Distinct lock-key constant: 0x6f626c_6967_6578_70 ≈ ASCII 'obligexp'
+// as a u64. Must NOT collide with the daily-summary key.
+// ─────────────────────────────────────────────────────────────────────────
+const OBLIGATION_EXPIRE_LOCK_KEY = 0x6f626c69676578_70; // 'obligexp'
+
+async function withObligationExpireLock<T>(fn: () => Promise<T>): Promise<T | null> {
+  const client = await pool.connect();
+  try {
+    const res = await client.query<{ pg_try_advisory_lock: boolean }>(
+      `SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock`,
+      [OBLIGATION_EXPIRE_LOCK_KEY],
+    );
+    if (!res.rows[0].pg_try_advisory_lock) {
+      // eslint-disable-next-line no-console
+      console.log("[obligationExpire] tick skipped — another machine is processing");
+      return null;
+    }
+    try {
+      return await fn();
+    } finally {
+      await client
+        .query(`SELECT pg_advisory_unlock($1)`, [OBLIGATION_EXPIRE_LOCK_KEY])
+        .catch(() => {
+          // Session-scoped lock is released when the client is released
+          // anyway; swallow to keep the tick clean.
+        });
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// Exported for tests so the lock semantics can be exercised without
+// pulling the entire scheduler tick into the unit test harness.
+export const _phase5Internals = {
+  OBLIGATION_EXPIRE_LOCK_KEY,
+  withObligationExpireLock,
+};
+
 const SYSTEM_ACTOR: AuditActor = { id: "system_expire_cron", role: "system" };
 
 function safeNonNegativeInt(raw: string | null | undefined, fallback: number): number {
@@ -119,39 +167,46 @@ export async function expireOverdueObligations(
 /**
  * Run one scheduler tick. Exported for testability — production
  * `setInterval` calls this every hour.
+ *
+ * Phase 5: wrapped in `withObligationExpireLock`. When another Fly machine
+ * holds the lock, returns `{ facilities: 0, expired: 0 }` and exits — the
+ * winning machine handles every pending obligation that pass.
  */
 export async function runObligationExpireTick(
   now: number = Date.now(),
 ): Promise<{ facilities: number; expired: number }> {
-  // Distinct facilities with at least one pending obligation. Tenant
-  // isolation is enforced inside expireOverdueObligations, so the
-  // dispatcher only needs the keys.
-  const res = await pool.query<{ facility_number: string }>(
-    `SELECT DISTINCT facility_number
-       FROM ops_obligations
-      WHERE status = 'pending'
-        AND deleted_at IS NULL`,
-  );
-  let expired = 0;
-  for (const row of res.rows) {
-    try {
-      const r = await expireOverdueObligations(row.facility_number, { now });
-      expired += r.expired;
-      if (r.expired > 0) {
+  const result = await withObligationExpireLock(async () => {
+    // Distinct facilities with at least one pending obligation. Tenant
+    // isolation is enforced inside expireOverdueObligations, so the
+    // dispatcher only needs the keys.
+    const res = await pool.query<{ facility_number: string }>(
+      `SELECT DISTINCT facility_number
+         FROM ops_obligations
+        WHERE status = 'pending'
+          AND deleted_at IS NULL`,
+    );
+    let expired = 0;
+    for (const row of res.rows) {
+      try {
+        const r = await expireOverdueObligations(row.facility_number, { now });
+        expired += r.expired;
+        if (r.expired > 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[obligationExpire] ${row.facility_number}: expired ${r.expired} obligation(s)`,
+          );
+        }
+      } catch (err) {
         // eslint-disable-next-line no-console
-        console.log(
-          `[obligationExpire] ${row.facility_number}: expired ${r.expired} obligation(s)`,
+        console.error(
+          `[obligationExpire] tick failed for ${row.facility_number}:`,
+          (err as Error)?.message ?? err,
         );
       }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[obligationExpire] tick failed for ${row.facility_number}:`,
-        (err as Error)?.message ?? err,
-      );
     }
-  }
-  return { facilities: res.rows.length, expired };
+    return { facilities: res.rows.length, expired };
+  });
+  return result ?? { facilities: 0, expired: 0 };
 }
 
 /**

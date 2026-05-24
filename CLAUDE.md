@@ -368,6 +368,18 @@ Every `/api/ops/*` route is action-gated. The middleware chain on `opsRouter` is
 
 **Local Stripe webhook testing**: `stripe listen --forward-to localhost:5000/api/billing/webhook` — copy the printed `whsec_...` into `STRIPE_WEBHOOK_SECRET`. The webhook route is mounted with `express.raw()` BEFORE the global JSON parser so Stripe's signature verification sees the unparsed body.
 
+### Phase 5 — multi-machine safety
+
+The codebase no longer relies on `min_machines_running = 1` for correctness. Every per-tick or per-window background job is gated by a Postgres advisory lock so a multi-machine Fly deploy can't double-fire.
+
+- **`server/ops/dailySummaryScheduler.ts`** wraps each tick in `withDailySummaryLock` (key `0x6461696c7973756d` — ASCII `dailysum`). Only the machine that wins `pg_try_advisory_lock` runs the work; the others log `tick skipped — another machine is processing` and no-op.
+- **`server/ops/obligationExpireScheduler.ts`** uses the same pattern with key `0x6f626c69676578_70` (`obligexp`). Distinct key, so the two schedulers never block each other.
+- **`server/ops/auditorMiddleware.ts`** dropped the in-process `lastAuditViewAt` Map (which over-emitted N× across N machines). Audit-view debounce now packs `(minuteBucket, shareLinkId)` into a single bigint key and calls `pg_try_advisory_xact_lock` inside a short BEGIN/COMMIT — `_xact_lock` releases automatically at txn end so we never leak. `_resetAuditorMiddlewareForTests` survives as a no-op for back-compat with existing test suites.
+- **`server/index.ts`** session store: `connect-pg-simple` now runs `pruneSessionInterval: 3600` so the `session` table doesn't grow unbounded. Idempotent sweep — running from every machine is safe.
+- **`billing_bypass_redemptions`** (`migrations/0007_phase_5_bypass_redemptions.sql`, mirrored in `bootstrap.ts`, Drizzle defs in `shared/schema.ts`) gives the bypass-code redeem flow a durable audit row + single-use-per-account enforcement via a partial UNIQUE index on `(account_id) WHERE revoked_at IS NULL`. The route translates Postgres 23505 (unique_violation) into a clean **409 `BYPASS_ALREADY_REDEEMED`**. Only the first 8 chars of the submitted code are persisted (`code_prefix`); the full code never enters the DB. IP + user-agent are captured for the operator dashboard.
+
+When adding a new in-process scheduler / debounce: pick a distinct 8-byte ASCII mnemonic for the lock key, expose it via `_phase5Internals` for the advisory-lock test suite (`server/__tests__/schedulers/advisoryLock.test.ts`), and document the key + mnemonic in this section.
+
 ### Deployment
 
 Deployed on Fly.io. `npm run deploy` runs `fly deploy`. Sessions and the SQLite DB persist via a Fly volume. The ETL enrichment child process writes to the same SQLite file using WAL mode for concurrent reads.

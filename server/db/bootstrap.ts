@@ -450,6 +450,33 @@ const MAIN_PG_SCHEMA_SQL = `
   DROP TRIGGER IF EXISTS trg_account_data_requests_updated_at ON account_data_requests;
   CREATE TRIGGER trg_account_data_requests_updated_at BEFORE UPDATE ON account_data_requests
     FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
+
+  -- ── Phase 5: bypass-code redemption audit ────────────────────────────────
+  -- See migrations/0007_phase_5_bypass_redemptions.sql for the canonical
+  -- definition. Single-use-per-account enforced by the partial UNIQUE
+  -- WHERE revoked_at IS NULL — the route translates the 23505 duplicate-key
+  -- into a clean 409 BYPASS_ALREADY_REDEEMED.
+  --
+  -- Privacy: only the first 8 chars of the code are persisted (code_prefix).
+  -- Logs may flow to aggregators; the full code never lives here.
+  CREATE TABLE IF NOT EXISTS billing_bypass_redemptions (
+    id                    BIGSERIAL PRIMARY KEY,
+    code_prefix           TEXT NOT NULL,
+    account_id            INTEGER NOT NULL REFERENCES facility_accounts(id) ON DELETE CASCADE,
+    redeemed_at           BIGINT NOT NULL,
+    redeemed_ip           TEXT,
+    redeemed_user_agent   TEXT,
+    expires_at            BIGINT,
+    revoked_at            BIGINT,
+    revoked_by            TEXT,
+    notes                 TEXT,
+    created_at            BIGINT NOT NULL,
+    updated_at            BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_bypass_redemptions_account
+    ON billing_bypass_redemptions(account_id, redeemed_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_bypass_redemptions_account_active
+    ON billing_bypass_redemptions(account_id) WHERE revoked_at IS NULL;
 `;
 
 // Bootstrap is idempotent, but concurrent vitest forks running ADD

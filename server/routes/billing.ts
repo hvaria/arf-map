@@ -21,6 +21,7 @@ import { isStripeConfigured } from "../billing/stripeClient";
 import { isValidBypassCode, bypassCodesAreConfigured } from "../billing/bypassCodes";
 import { compFacilityAccount } from "../billing/subscriptionRepository";
 import { billingRateLimiter } from "../middleware/rateLimiter";
+import { pool } from "../db/index";
 
 export const billingRouter = Router();
 
@@ -105,13 +106,52 @@ billingRouter.post(
       return res.status(400).json({ code: "INVALID_CODE" });
     }
     const user = req.user as FacilityAccount;
+
+    // Phase 5: persist redemption to billing_bypass_redemptions for audit.
+    // The partial UNIQUE index (account_id WHERE revoked_at IS NULL)
+    // enforces single-use-per-account at the DB level — a repeat redeem
+    // raises Postgres error 23505 (unique_violation) which we translate
+    // to a clean 409. Capturing IP + UA gives the operator dashboard
+    // enough context to spot abuse without storing the full code.
+    //
+    // First-8-chars prefix only: logs may flow to aggregators and the
+    // full code remains an out-of-band secret in OPERATIONS_BYPASS_CODES.
+    const codePrefix = submitted.slice(0, 8);
+    const ip =
+      (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+        || req.ip
+        || null;
+    const ua = req.headers["user-agent"] || null;
+    const now = Date.now();
+
+    try {
+      await pool.query(
+        `INSERT INTO billing_bypass_redemptions
+           (code_prefix, account_id, redeemed_at, redeemed_ip,
+            redeemed_user_agent, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $3, $3)`,
+        [codePrefix, user.id, now, ip, ua],
+      );
+    } catch (err) {
+      // 23505 = unique_violation. Partial-unique index hit means this
+      // account already has an active (non-revoked) redemption row.
+      const pgCode = (err as { code?: string }).code;
+      if (pgCode === "23505") {
+        console.log(
+          `[billing] account ${user.id} (${user.username}) attempted re-redeem; already has active bypass row`,
+        );
+        return res.status(409).json({ code: "BYPASS_ALREADY_REDEEMED" });
+      }
+      console.error("[billing] redeem-code audit insert failed:", (err as Error).message);
+      return res.status(500).json({ code: "REDEEM_FAILED" });
+    }
+
     try {
       await compFacilityAccount(user.id);
       // Log enough to audit (user id + code prefix) but never the full
       // code, since logs may flow to aggregators.
-      const prefix = submitted.slice(0, 3);
       console.log(
-        `[billing] account ${user.id} (${user.username}) redeemed bypass code starting with "${prefix}..."`,
+        `[billing] account ${user.id} (${user.username}) redeemed bypass code starting with "${codePrefix.slice(0, 3)}..."`,
       );
       return res.json({ status: "active" });
     } catch (err) {

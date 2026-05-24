@@ -89,6 +89,10 @@ const sessionStore = new PgSessionStore({
   pool,
   tableName: "session",
   createTableIfMissing: true,
+  // Phase 5 — sweep expired session rows hourly so the table doesn't grow
+  // unbounded. Per-process, but the sweep is idempotent so multi-machine
+  // deploys just over-sweep harmlessly.
+  pruneSessionInterval: 60 * 60,
 });
 
 if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {

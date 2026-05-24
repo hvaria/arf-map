@@ -47,6 +47,59 @@ import {
 const HOUR_MS = 60 * 60 * 1000;
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase 5 — multi-machine safety: pg_try_advisory_lock per tick.
+//
+// Fly.io deploys may spawn more than one machine. Each machine boots its
+// own scheduler interval, so without a cross-process gate every tick would
+// fan-out the daily summary email N times — once per machine. We wrap the
+// per-tick body in `pg_try_advisory_lock(DAILY_SUMMARY_LOCK_KEY)`: only the
+// machine that wins the lock does the work; the rest no-op. The lock is
+// HELD on a dedicated client for the duration of the tick, then released
+// in `finally`.
+//
+// Lock-key constant: 0x646169_6c79_7375_6d ≈ ASCII 'dailysum' as a u64.
+// Keep stable so locks are deterministic across deploys; changing it
+// would create a window where two machines both succeed because they're
+// looking at different keys.
+// ─────────────────────────────────────────────────────────────────────────
+const DAILY_SUMMARY_LOCK_KEY = 0x6461696c7973756d; // 'dailysum'
+
+async function withDailySummaryLock<T>(fn: () => Promise<T>): Promise<T | null> {
+  const client = await pool.connect();
+  try {
+    const res = await client.query<{ pg_try_advisory_lock: boolean }>(
+      `SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock`,
+      [DAILY_SUMMARY_LOCK_KEY],
+    );
+    if (!res.rows[0].pg_try_advisory_lock) {
+      // Another machine holds the lock; this tick is a no-op for us.
+      // eslint-disable-next-line no-console
+      console.log("[dailySummary] tick skipped — another machine is processing");
+      return null;
+    }
+    try {
+      return await fn();
+    } finally {
+      await client
+        .query(`SELECT pg_advisory_unlock($1)`, [DAILY_SUMMARY_LOCK_KEY])
+        .catch(() => {
+          // Unlock failure isn't fatal — releasing the client will drop the
+          // session-scoped lock anyway. Swallow to keep the tick clean.
+        });
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// Exported for tests so the lock semantics can be exercised without
+// pulling the entire scheduler tick into the unit test harness.
+export const _phase5Internals = {
+  DAILY_SUMMARY_LOCK_KEY,
+  withDailySummaryLock,
+};
+
+// ─────────────────────────────────────────────────────────────────────────
 // Section → include reg-setting key. If a key is missing here, the section
 // is always included (e.g. drills, charts, controlled-sub aging do not have
 // dedicated toggles in Wave 3 — they ride on the umbrella "obligations"
@@ -333,40 +386,48 @@ export async function sendDailySummaryForFacility(
 /**
  * Run one scheduler tick. Exported for testability — the production
  * `setInterval` calls this every hour; tests can invoke it directly.
+ *
+ * Phase 5: wrapped in `withDailySummaryLock` so only one Fly machine runs
+ * the work per tick. Returns `null` shape when another machine holds the
+ * lock (`{ attempted: 0, sent: 0, skipped: 0 }` — same shape so callers
+ * don't need to special-case the no-op).
  */
 export async function runDailySummaryTick(
   now: number = Date.now(),
 ): Promise<{ attempted: number; sent: number; skipped: number }> {
-  // One query lists every facility that has opted in. The tick is rare
-  // (once per UTC hour) and per-facility processing is fast, so the
-  // simple "fetch all enabled, then per-facility hour check" approach is
-  // acceptable for the ~100 user scale.
-  const res = await pool.query<{ facility_number: string }>(
-    `SELECT facility_number FROM ops_facility_settings
-       WHERE setting_key = 'DAILY_SUMMARY_ENABLED'
-         AND setting_value = 'true'`,
-  );
-  let attempted = 0;
-  let sent = 0;
-  let skipped = 0;
-  for (const row of res.rows) {
-    attempted += 1;
-    try {
-      const r = await sendDailySummaryForFacility(row.facility_number, { now });
-      sent += r.sent;
-      if (r.sent === 0) skipped += 1;
-    } catch (err) {
-      // Top-level guard — a single facility's failure must not stop the
-      // tick from processing the others.
-      // eslint-disable-next-line no-console
-      console.error(
-        `[dailySummary] tick failed for ${row.facility_number}:`,
-        (err as Error)?.message ?? err,
-      );
-      skipped += 1;
+  const result = await withDailySummaryLock(async () => {
+    // One query lists every facility that has opted in. The tick is rare
+    // (once per UTC hour) and per-facility processing is fast, so the
+    // simple "fetch all enabled, then per-facility hour check" approach is
+    // acceptable for the ~100 user scale.
+    const res = await pool.query<{ facility_number: string }>(
+      `SELECT facility_number FROM ops_facility_settings
+         WHERE setting_key = 'DAILY_SUMMARY_ENABLED'
+           AND setting_value = 'true'`,
+    );
+    let attempted = 0;
+    let sent = 0;
+    let skipped = 0;
+    for (const row of res.rows) {
+      attempted += 1;
+      try {
+        const r = await sendDailySummaryForFacility(row.facility_number, { now });
+        sent += r.sent;
+        if (r.sent === 0) skipped += 1;
+      } catch (err) {
+        // Top-level guard — a single facility's failure must not stop the
+        // tick from processing the others.
+        // eslint-disable-next-line no-console
+        console.error(
+          `[dailySummary] tick failed for ${row.facility_number}:`,
+          (err as Error)?.message ?? err,
+        );
+        skipped += 1;
+      }
     }
-  }
-  return { attempted, sent, skipped };
+    return { attempted, sent, skipped };
+  });
+  return result ?? { attempted: 0, sent: 0, skipped: 0 };
 }
 
 /**

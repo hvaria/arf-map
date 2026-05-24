@@ -150,6 +150,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Phase 5: clean up the bypass redemption rows before deleting the
+  // facility account (the ON DELETE CASCADE would do this for us, but
+  // being explicit makes the test isolation more obvious).
+  await pool.query(
+    `DELETE FROM billing_bypass_redemptions WHERE account_id = $1`,
+    [facilityAccountId],
+  );
   await pool.query(
     `DELETE FROM facility_accounts WHERE facility_number = $1`,
     [FACILITY_NUMBER],
@@ -164,6 +171,14 @@ beforeEach(async () => {
         SET subscription_status = NULL,
             subscription_current_period_end = NULL
       WHERE id = $1`,
+    [facilityAccountId],
+  );
+  // Phase 5: redeem-code writes a row to billing_bypass_redemptions and the
+  // partial UNIQUE on (account_id) WHERE revoked_at IS NULL prevents a second
+  // redeem from the same account. Each test in this file expects the account
+  // to start un-redeemed, so wipe the row between cases.
+  await pool.query(
+    `DELETE FROM billing_bypass_redemptions WHERE account_id = $1`,
     [facilityAccountId],
   );
   // Default to a known, single-code config; individual tests override.

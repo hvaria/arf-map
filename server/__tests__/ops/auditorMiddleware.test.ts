@@ -331,6 +331,47 @@ describe("auditor tenant scope", () => {
   });
 });
 
+describe("Phase 5 — debounce backed by pg_try_advisory_xact_lock", () => {
+  // Phase 5 swapped the in-process `lastAuditViewAt` Map for a Postgres
+  // transaction-scoped advisory lock keyed on (minuteBucket, shareLinkId).
+  // These assertions guard against an accidental revert that would
+  // reintroduce the multi-machine over-emit bug.
+
+  it("the auditorMiddleware module no longer exports a `lastAuditViewAt` symbol", async () => {
+    const mod = await import("../../ops/auditorMiddleware");
+    expect((mod as Record<string, unknown>).lastAuditViewAt).toBeUndefined();
+  });
+
+  it("_resetAuditorMiddlewareForTests is still callable (back-compat no-op)", async () => {
+    // Existing test suites (and the beforeEach above) call this helper
+    // between cases. It must remain a callable export, even though
+    // there's no in-process state left to reset.
+    const mod = await import("../../ops/auditorMiddleware");
+    expect(typeof mod._resetAuditorMiddlewareForTests).toBe("function");
+    // Calling it must not throw and must return undefined.
+    expect(mod._resetAuditorMiddlewareForTests()).toBeUndefined();
+  });
+
+  it("_auditorDebounceLockKey is deterministic for (shareLinkId, minute)", async () => {
+    const mod = await import("../../ops/auditorMiddleware");
+    const NOW = 1_700_000_000_000;
+    const SAME_MINUTE = NOW + 5_000; // still in the same minute bucket
+    const NEXT_MINUTE = NOW + 60_000;
+    const SHARE = 42;
+
+    expect(mod._auditorDebounceLockKey(SHARE, NOW)).toBe(
+      mod._auditorDebounceLockKey(SHARE, SAME_MINUTE),
+    );
+    expect(mod._auditorDebounceLockKey(SHARE, NOW)).not.toBe(
+      mod._auditorDebounceLockKey(SHARE, NEXT_MINUTE),
+    );
+    // Different share-links in the same minute must produce different keys.
+    expect(mod._auditorDebounceLockKey(SHARE, NOW)).not.toBe(
+      mod._auditorDebounceLockKey(SHARE + 1, NOW),
+    );
+  });
+});
+
 describe("auditor — Wave 5 reports mirror", () => {
   it("can list + download a ready report scoped to the auditor's facility", async () => {
     // Mint a share link for FACILITY_A.

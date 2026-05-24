@@ -531,6 +531,34 @@ export const accountDataRequests = pgTable("account_data_requests", {
 export type AccountDataRequest = typeof accountDataRequests.$inferSelect;
 export type InsertAccountDataRequest = typeof accountDataRequests.$inferInsert;
 
+// ── Phase 5: bypass-code redemption audit ────────────────────────────────────
+// One row per OPERATIONS_BYPASS_CODES redemption. Only the first 8 chars of
+// the submitted code are persisted (`codePrefix`); the full code never enters
+// the DB because logs may flow to aggregators. Single-use-per-account is
+// enforced by a partial UNIQUE index on (account_id) WHERE revoked_at IS NULL
+// — see migrations/0007_phase_5_bypass_redemptions.sql + the bootstrap
+// mirror. The redeem-code route translates the 23505 duplicate-key error into
+// a 409 BYPASS_ALREADY_REDEEMED so the FE can render a clear message.
+export const billingBypassRedemptions = pgTable("billing_bypass_redemptions", {
+  id: serial("id").primaryKey(),
+  codePrefix: text("code_prefix").notNull(),
+  accountId: integer("account_id").notNull(),
+  redeemedAt: ts("redeemed_at").notNull(),
+  redeemedIp: text("redeemed_ip"),
+  redeemedUserAgent: text("redeemed_user_agent"),
+  // nullable = no expiry (owner-issued perpetual comp).
+  expiresAt: ts("expires_at"),
+  // nullable = active. Setting revokedAt re-opens the unique index slot so
+  // the same account can redeem again.
+  revokedAt: ts("revoked_at"),
+  revokedBy: text("revoked_by"),
+  notes: text("notes"),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+});
+export type BillingBypassRedemption = typeof billingBypassRedemptions.$inferSelect;
+export type NewBillingBypassRedemption = typeof billingBypassRedemptions.$inferInsert;
+
 // ── Operations paywall subscription types (Phase 0) ──────────────────────────
 export type FacilitySubscription = typeof facilitySubscriptions.$inferSelect;
 export type NewFacilitySubscription = typeof facilitySubscriptions.$inferInsert;
