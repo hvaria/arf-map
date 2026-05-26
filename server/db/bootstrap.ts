@@ -1,6 +1,13 @@
 import { pool } from "./index";
 
 const MAIN_PG_SCHEMA_SQL = `
+  -- pg_trgm powers the GIN trigram indexes on facilities used by the
+  -- autocomplete typeahead (Phase 9). Originally enabled by migration
+  -- 0001 alongside idx_facilities_name_trgm — mirrored here so the
+  -- bootstrap path (fresh dev DB without migrations) doesn't fail on
+  -- the trigram index creation a few hundred lines down.
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
   CREATE TABLE IF NOT EXISTS users (
     id       SERIAL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,

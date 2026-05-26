@@ -73,20 +73,33 @@ beforeAll(async () => {
     dbReachable = false;
     return;
   }
-  await bootstrapMainSchema();
+  // bootstrapMainSchema() creates the pg_trgm extension + the trigram
+  // indexes. On a DB role without CREATE permissions, or in a hosted
+  // environment that doesn't allow the extension, this will throw —
+  // skip the suite rather than masquerading a setup problem as a
+  // regression.
+  try {
+    await bootstrapMainSchema();
+  } catch (err) {
+    console.warn(
+      `[autocompleteTrigram] bootstrapMainSchema failed; skipping suite. Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    dbReachable = false;
+    return;
+  }
   await cleanFixtures();
   const now = Date.now();
   for (const f of FIXTURES) {
+    // facility_type / facility_group are TEXT NOT NULL DEFAULT '' per
+    // server/db/bootstrap.ts. Omit them from the column list to let
+    // the DEFAULT apply (Postgres rejects an explicit NULL even on a
+    // column with a DEFAULT). Same pattern for total_visits /
+    // total_type_b — let the column defaults fill in.
     await pool.query(
       `INSERT INTO facilities
-         (number, name, facility_type, facility_group, county, address, city,
-          zip, phone, licensee, administrator, status, capacity,
-          first_license_date, closed_date, last_inspection_date,
-          total_visits, total_type_b, citations, lat, lng,
-          geocode_quality, updated_at)
-       VALUES ($1, $2, $3, NULL, $4, NULL, $5, NULL, NULL, NULL, NULL,
-               'ACTIVE', 6, NULL, NULL, NULL, 0, 0, NULL, NULL, NULL,
-               NULL, $6)`,
+         (number, name, facility_type, county, city, status, capacity,
+          total_visits, total_type_b, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'ACTIVE', 6, 0, 0, $6)`,
       [f.number, f.name, f.facility_type, f.county, f.city, now],
     );
   }
@@ -137,8 +150,11 @@ describe("Phase 9 — searchFacilitiesAutocompleteAsync", () => {
 
   it("respects the LIMIT parameter", async () => {
     if (!dbReachable) return;
+    // Three fixtures all start with TEST_PREFIX; LIMIT 2 must return
+    // exactly 2 (not 0, not 3) to lock down both the cap AND that
+    // substring matching is firing in the first place.
     const rows = await searchFacilitiesAutocompleteAsync(TEST_PREFIX, 2);
-    expect(rows.length).toBeLessThanOrEqual(2);
+    expect(rows.length).toBe(2);
   });
 
   it("returns an array even when no matches exist", async () => {

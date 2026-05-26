@@ -25,6 +25,18 @@
 -- `pg_trgm` extension was already enabled by migration
 -- 0001_phase_2_structural_lockdown.sql when idx_facilities_name_trgm
 -- was created. No CREATE EXTENSION needed here.
+--
+-- NOTE on CREATE INDEX vs CREATE INDEX CONCURRENTLY: the
+-- performance-tuning runbook (docs/runbooks/performance-tuning.md)
+-- prescribes CONCURRENTLY for production index builds. We use plain
+-- CREATE INDEX here because (a) the `facilities` table is ~50k rows
+-- and a GIN trigram build takes 5-15s, an acceptable lock window
+-- inside a deploy maintenance slot; (b) drizzle-kit wraps each
+-- migration file in a transaction by default and CONCURRENTLY cannot
+-- run inside a transaction block. For a larger table the right move
+-- is to split each CONCURRENTLY statement into its own migration
+-- file with the transaction disabled — see the runbook for the
+-- pattern. This trade-off is deliberate, not an oversight.
 
 CREATE INDEX IF NOT EXISTS idx_facilities_number_trgm
   ON facilities USING GIN (number gin_trgm_ops);
