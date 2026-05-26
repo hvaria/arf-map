@@ -63,7 +63,7 @@ npm run db:seed       # Seed facility overrides / accounts
 
 # Facilities data ETL
 npm run data:extract  # Extract raw CCLD data from CHHS open data API
-npm run data:seed     # Seed the local facilities SQLite table
+npm run data:seed     # Seed the local facilities table (Postgres)
 
 # Tests
 npm test                              # All tests
@@ -121,17 +121,17 @@ This is a **full-stack TypeScript monorepo** — one `package.json`, shared type
 
 The core data is California CCLD licensed-care facilities. There are two modes:
 
-1. **SQLite-first (preferred)**: Run `npm run data:seed` to populate the `facilities` table from the CHHS open-data API. Routes query SQLite directly via `server/storage.ts` (`queryFacilitiesAll`, `searchFacilitiesAutocomplete`). `server/services/facilitiesService.ts:isDatabaseSeeded()` is the gate.
+1. **DB-first (preferred)**: Run `npm run data:seed` to populate the `facilities` table from the CHHS open-data API into Postgres. Routes query the DB directly via `server/storage.ts` (`queryFacilitiesAllAsync`, `searchFacilitiesAutocompleteAsync`). `server/services/facilitiesService.ts:isDatabaseSeeded()` is the gate.
 
 2. **Live-fetch fallback**: If the DB is empty, `facilitiesService.ts:getCachedFacilities()` fetches all facilities from two CHHS API endpoints (GeoJSON + CCL CSV), merges them, and caches in memory for 24 hours. Production runs a nightly enrichment job (`server/etlScheduler.ts`) at 2 AM UTC via `dist/enrich.cjs` as a child process.
 
 ### Server (`server/`)
 
-- `index.ts` — Express + `express-session` + Passport.js setup; SQLite session store (`SqliteSessionStore`); trust proxy enabled for Fly.io TLS termination; pre-warms facility cache on startup.
+- `index.ts` — Express + `express-session` + Passport.js setup; Postgres session store via `connect-pg-simple` (one row per session in the `session` table, hourly prune sweep — see Phase 5); trust proxy enabled for Fly.io TLS termination; pre-warms facility cache on startup.
 - `routes.ts` — Main route file for facility auth, job postings, and job seeker auth/profile. Mounts three sub-routers: `jobseekerAuthRouter`, `adminEtlRouter`, `interestsRouter`.
-- `storage.ts` — All SQLite read/write operations via Drizzle ORM. Schema bootstrapped with `CREATE TABLE IF NOT EXISTS` on startup (no migration runner needed).
-- `services/facilitiesService.ts` — Dual-mode facility data (SQLite or CHHS live fetch), 24 h in-memory cache.
-- `repositories/` — Clean-architecture pattern: `jobSeekerRepository.ts` (interface) + `sqlite/sqliteJobSeekerRepository.ts` (implementation). Only the job seeker auth flow has been migrated to this pattern; facility auth remains in `routes.ts`.
+- `storage.ts` — Postgres read/write operations via Drizzle ORM + raw `pool.query` for the read-heavy facility-listing paths. Schema bootstrapped with `CREATE TABLE IF NOT EXISTS` on startup as a fallback for fresh dev DBs; the canonical schema source is the migration journal (see "Working with Migrations" above).
+- `services/facilitiesService.ts` — Dual-mode facility data (Postgres-seeded or CHHS live fetch), 24 h in-memory cache.
+- `repositories/` — Clean-architecture pattern: `jobSeekerRepository.ts` (interface) + `postgres/pgJobSeekerRepository.ts` (implementation). Only the job seeker auth flow has been migrated to this pattern; facility auth remains in `routes.ts`.
 - `email.ts` — Transactional email via Resend (`RESEND_API_KEY`). Used for OTP verification and password reset.
 - `auth.ts` — `bcrypt`-based `hashPassword` / `comparePassword` helpers.
 
@@ -260,7 +260,7 @@ Config-driven tracker system under [shared/tracker-schemas/](shared/tracker-sche
 **PDF reports.**
 `GET /api/ops/trackers/:slug/entries/export.pdf` mirrors the CSV endpoint exactly — same auth, validation, 92-day cap, `Cache-Control: no-store`, soft-delete exclusion. Response sets `X-Tracker-Export-Count` for the client toast. Renderer buffers all rows up-front because resident-grouped state-audit ordering can't stream.
 
-### Schema invariants (Phase 2)
+### Schema invariants — Phase 2 money cents
 
 - **Money** is stored as `BIGINT cents` in `ops_invoices.{subtotal,tax,total,amount_paid,balance_due}`, `ops_billing_charges.amount`, `ops_payments.amount`, and `ops_resident_trust_*`. The wire/UI format is **dollars** (number). Conversion happens at the route boundary via `dollarsToCents`/`centsToDollars` from [server/lib/money.ts](server/lib/money.ts). Never store dollars as floats; never expose cents on the wire. `ops_billing_charges.quantity` stays `DOUBLE PRECISION` because it represents fractional units (e.g. 1.5 hours), not money.
 
@@ -428,7 +428,7 @@ No other productive hard-deletes were found in `server/storage.ts`, `server/ops/
 | `NODE_ENV` | `development` enables Vite middleware; `production` serves static files and starts ETL scheduler |
 | `ETL_HOUR_UTC` | Override nightly enrichment hour (default: 2) |
 | `SKIP_PREWARM` | Set to skip facility cache pre-warm on startup |
-| `DATABASE_URL` | SQLite file path (used by Drizzle Kit) |
+| `DATABASE_URL` | Postgres connection string (Neon or Fly Postgres). Required for app boot, drizzle-kit, and the test harness. |
 | `STRIPE_SECRET_KEY` | Stripe API key (`sk_test_...` / `sk_live_...`) — required for `/api/billing/*`; absent ⇒ checkout returns 503 |
 | `STRIPE_WEBHOOK_SECRET` | Webhook signing secret (`whsec_...`) from `stripe listen` or the Dashboard endpoint config |
 | `STRIPE_PRICE_ID_OPS_PRO_MONTHLY` | Stripe Price ID for the $99/month Operations plan (created in the Dashboard) |
@@ -507,9 +507,30 @@ Mirrored in `server/db/bootstrap.ts` so fresh dev DBs get them at boot. The migr
 
 **What's deliberately NOT in Phase 9.** No composite indexes on `ops_*` tables. No query rewrites or materialized views. No connection-pool tuning. No N+1 query audit. Each of those is its own focused phase, gated on a real slow-query baseline showing it's the right next move.
 
+### Phase 10 — cleanup + docs
+
+Final phase in the structural-hardening track. Two new docs land, plus a pass through CLAUDE.md to clean up stale references that accumulated across earlier phases. No runtime code changes.
+
+**ERD by domain ([docs/architecture/erd.md](docs/architecture/erd.md)).** ~68 tables grouped into 5 Mermaid `erDiagram` blocks: Auth & Identity, Facilities + Marketing, Operations, Notes & Collaboration, Trackers. Plus a top-level flowchart showing how the domains connect. Mermaid renders natively in GitHub. The doc is a snapshot, not a generated artifact — update it in the same PR that changes the schema.
+
+**Solo-dev onboarding ([docs/onboarding.md](docs/onboarding.md)).** Tutorial-style "run these commands in this order and you'll have a working dev loop." Covers prereqs (Node 20 + Git LFS + Postgres), first-time setup (clone → install → provision DB → `.env` → migrate → seed → `npm run dev`), daily dev loop (the 4 commands, the 5 key URLs), common questions (why two auth systems, what's deferred, how to debug CSRF + session issues), and pointers into CLAUDE.md / the runbooks for deeper context. Distinct from CLAUDE.md, which is the architecture reference — onboarding.md is the *getting-started* path.
+
+**Stale-reference cleanup in CLAUDE.md.** Earlier phases were Postgres migrations on top of an original SQLite-first codebase. References to SQLite that lingered in the architecture-reference text were corrected:
+
+- The Data flow: Facilities section now says "DB-first" (Postgres) instead of "SQLite-first."
+- `server/index.ts` description names `connect-pg-simple` as the session store, not `SqliteSessionStore`.
+- `server/storage.ts` description is "Postgres read/write" + raw `pool.query`, not "SQLite via Drizzle."
+- `server/services/facilitiesService.ts` description is "Postgres-seeded or CHHS live fetch," not "SQLite or CHHS."
+- `server/repositories/postgres/pgJobSeekerRepository.ts` is named (the path), not the long-renamed `sqlite/sqliteJobSeekerRepository.ts`.
+- The `DATABASE_URL` env var description now says "Postgres connection string (Neon or Fly Postgres)" instead of "SQLite file path."
+- The Deployment section now describes Postgres session storage + no Fly volume in the production path, instead of the obsolete SQLite + Fly-volume description.
+- The duplicate "Schema invariants (Phase 2)" heading was disambiguated — the money-cents block is now "Schema invariants — Phase 2 money cents," distinct from the structural-lockdown block.
+
+**What's deliberately NOT in Phase 10.** No new code surface. No deleted endpoints. No schema changes. This phase is documentation-only — the goal is to make the next person (including future-you six months from now) able to ramp on the project without spelunking. If onboarding.md or erd.md drifts from the codebase, it's a documentation bug, not an architecture decision.
+
 ### Deployment
 
-Deployed on Fly.io. `npm run deploy` runs `fly deploy`. Sessions and the SQLite DB persist via a Fly volume. The ETL enrichment child process writes to the same SQLite file using WAL mode for concurrent reads.
+Deployed on Fly.io. `npm run deploy` runs `fly deploy`. Sessions live in the Postgres `session` table (managed by `connect-pg-simple`); CCLD facility data and all operational tables live in Postgres (Neon in production). The ETL enrichment child process connects to the same `DATABASE_URL`. There is no Fly volume in the production path anymore — every persistent surface is Postgres.
 
 ### Secrets (Fly.io)
 
