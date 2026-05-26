@@ -235,7 +235,9 @@ erDiagram
     text description
     text website
     text email
-    text logo_path
+    text logo_storage_uri "nullable - storage backend URI"
+    text logo_mime_type
+    bigint logo_updated_at
     jsonb hours_of_operation_json
     jsonb languages_spoken_json
     jsonb care_types_offered_json
@@ -678,7 +680,7 @@ erDiagram
     text facility_number
     text tracker_slug
     text rule_id "from shared/tracker-schemas/alerts.ts"
-    text severity "info|warning|critical"
+    text severity "info|warn|critical"
     bigint resident_id "nullable"
     bigint source_entry_id FK
     text shift "nullable"
