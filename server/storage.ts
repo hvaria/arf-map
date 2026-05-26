@@ -878,10 +878,26 @@ export async function getFacilityByNumberAsync(
 }
 
 export async function searchFacilitiesAutocompleteAsync(q: string, limit = 10): Promise<FacilityDbRow[]> {
-  const pattern = `%${q.toLowerCase()}%`;
+  // Phase 9 perf note: the OR'd substring LIKE pattern below uses three
+  // GIN trigram indexes (idx_facilities_name_trgm, idx_facilities_number_trgm,
+  // idx_facilities_city_trgm — added in migration 0009) so the planner can
+  // bitmap-OR three index scans. Pre-Phase-9, only the name index existed,
+  // which forced a seqscan because PG cannot bitmap-OR a mix of indexed and
+  // non-indexed branches. See docs/runbooks/performance-tuning.md for the
+  // EXPLAIN ANALYZE walk-through.
+  const ql = q.toLowerCase();
+  const pattern = `%${ql}%`;
+  // `number` is always numeric (CCLD facility numbers are 9-digit
+  // strings), so we substring-match it directly without LOWER. Avoids
+  // a redundant function call AND keeps the trigram index on raw
+  // `number` straightforward (no expression index needed).
   const result = await pool.query(
-    "SELECT * FROM facilities WHERE LOWER(name) LIKE $1 OR number LIKE $2 OR LOWER(city) LIKE $3 LIMIT $4",
-    [pattern, pattern, pattern, limit]
+    `SELECT * FROM facilities
+      WHERE LOWER(name) LIKE $1
+         OR number LIKE $2
+         OR LOWER(city) LIKE $3
+      LIMIT $4`,
+    [pattern, `%${q}%`, pattern, limit]
   );
   return result.rows as FacilityDbRow[];
 }

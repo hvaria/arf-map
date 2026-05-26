@@ -479,6 +479,34 @@ Don't poll `/api/health/deep` faster than once per minute from any single source
 
 **What's deliberately NOT in Phase 8.** TOTP / 2FA for admin accounts (planned as a focused follow-up phase — new DB schema, setup wizard, login challenge, recovery codes is significantly larger than the rest of Phase 8 combined). Object-storage backups (`ops_evidence_attachments` uploads) — out of scope until file-attachment volume justifies S3 + lifecycle. Synthetic transaction monitoring — out of scope until traffic volume makes log-in-and-click flows worth instrumenting separately from the health probes.
 
+### Phase 9 — performance polish
+
+One targeted change + a runbook. The codebase already ships ~160 indexes; the Phase 9 invariant is "do not add another one without a measured slow-query baseline." See [docs/runbooks/performance-tuning.md](docs/runbooks/performance-tuning.md) for how to measure, EXPLAIN-ANALYZE, and decide.
+
+**Autocomplete trigram indexes (migration 0009).** Two companion GIN trigram indexes were added to `facilities` so the typeahead query can actually use the pre-existing `idx_facilities_name_trgm`:
+
+- `idx_facilities_number_trgm` — `USING GIN (number gin_trgm_ops)`
+- `idx_facilities_city_trgm` — `USING GIN (LOWER(city) gin_trgm_ops)`
+
+Mirrored in `server/db/bootstrap.ts` so fresh dev DBs get them at boot. The migration also runs `ANALYZE facilities` so the planner's selectivity stats catch up immediately.
+
+**Why this was needed.** `searchFacilitiesAutocompleteAsync` runs `WHERE LOWER(name) LIKE $1 OR number LIKE $2 OR LOWER(city) LIKE $3`. Pre-Phase-9, only `LOWER(name)` had a trigram index. Postgres cannot bitmap-OR a mix of indexed and non-indexed branches, so the planner fell back to a seqscan over the full facilities table on every keystroke. With all three branches indexed, the planner now produces a `BitmapOr` over three `Bitmap Index Scan` nodes followed by a `Bitmap Heap Scan` — see the runbook for the before/after EXPLAIN walk-through.
+
+**No application-code change beyond a comment.** The query shape was already substring + LOWER, which the indexes match. The Phase 9 commit only adjusts the comment + reorders the `pattern` parameters slightly for clarity. Wire contract unchanged.
+
+**Regression test.** [server/__tests__/autocompleteTrigram.test.ts](server/__tests__/autocompleteTrigram.test.ts) seeds three fixture facilities and asserts substring matching works case-insensitively on name + city, exact-case on number, and respects LIMIT. Skip-on-no-DB pattern (matches `health.test.ts`). The actual EXPLAIN-ANALYZE check (verifying the planner picks the trigram path, not a seqscan) lives in the runbook — unit tests aren't the right surface for query-plan assertions because the planner reasonably picks seqscan on a small fixture dataset.
+
+**Performance-tuning runbook (Phase 9).** [docs/runbooks/performance-tuning.md](docs/runbooks/performance-tuning.md) covers:
+
+- How to find slow queries via Neon's Slow Queries dashboard or `pg_stat_statements` directly.
+- App-specific p95 latency budgets per surface (typeahead, map list, resident detail, dashboard aggregates, audit-trail reports).
+- How to EXPLAIN ANALYZE a candidate query and read the plan (Seq Scan vs Index Scan vs Bitmap Index Scan + BitmapOr).
+- The "don't add an index" checklist — low call volume, high write rate, low cardinality, dev-shaped data.
+- How to apply an index safely (`CREATE INDEX CONCURRENTLY`, mirror in `bootstrap.ts`, document in CLAUDE.md when it's an invariant).
+- Verification post-deploy (`pg_indexes`, `pg_stat_user_indexes.idx_scan`, EXPLAIN re-run).
+
+**What's deliberately NOT in Phase 9.** No composite indexes on `ops_*` tables. No query rewrites or materialized views. No connection-pool tuning. No N+1 query audit. Each of those is its own focused phase, gated on a real slow-query baseline showing it's the right next move.
+
 ### Deployment
 
 Deployed on Fly.io. `npm run deploy` runs `fly deploy`. Sessions and the SQLite DB persist via a Fly volume. The ETL enrichment child process writes to the same SQLite file using WAL mode for concurrent reads.

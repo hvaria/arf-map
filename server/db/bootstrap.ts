@@ -162,6 +162,16 @@ const MAIN_PG_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_facilities_county ON facilities(county);
   CREATE INDEX IF NOT EXISTS idx_facilities_facility_type ON facilities(facility_type);
   CREATE INDEX IF NOT EXISTS idx_facilities_coords ON facilities(lat, lng) WHERE lat IS NOT NULL AND lng IS NOT NULL;
+  -- Phase 9 — autocomplete typeahead. Companion GIN trigram indexes
+  -- to the pre-existing idx_facilities_name_trgm (from migration 0001).
+  -- Without these two, the OR'd substring LIKE in
+  -- searchFacilitiesAutocompleteAsync seqscans because PG cannot
+  -- bitmap-OR a mix of indexed and non-indexed branches. The pg_trgm
+  -- extension was already enabled by 0001.
+  CREATE INDEX IF NOT EXISTS idx_facilities_number_trgm
+    ON facilities USING GIN (number gin_trgm_ops);
+  CREATE INDEX IF NOT EXISTS idx_facilities_city_trgm
+    ON facilities USING GIN (LOWER(city) gin_trgm_ops);
 
   CREATE TABLE IF NOT EXISTS applicant_interests (
     id              SERIAL PRIMARY KEY,
