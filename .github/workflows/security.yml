@@ -48,7 +48,7 @@ jobs:
       # caching the npm cache here is dead weight. Cache stays on the
       # `typecheck` job below where `npm ci` actually consumes it.
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -73,7 +73,7 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
