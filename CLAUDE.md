@@ -453,6 +453,32 @@ The codebase no longer relies on `min_machines_running = 1` for correctness. Eve
 
 When adding a new in-process scheduler / debounce: pick a distinct 8-byte ASCII mnemonic for the lock key, expose it via `_phase5Internals` for the advisory-lock test suite (`server/__tests__/schedulers/advisoryLock.test.ts`), and document the key + mnemonic in this section.
 
+### Phase 8 — operational baseline
+
+Five pieces land in this phase. None of them change runtime behavior; all five make the next outage easier to recover from.
+
+**Health probes split into liveness + readiness.** Two endpoints in [server/routes.ts](server/routes.ts):
+
+- **`GET /api/health`** — liveness. Returns `{ status: "ok" }` unconditionally, no DB hit. This is what Fly's blue/green deploy + the `deploy.yml` smoke test poll. Liveness must not depend on DB reachability — a transient pool hiccup during the green-flip window would otherwise cascade into a deploy rollback.
+- **`GET /api/health/deep`** — readiness. Does a `SELECT 1` round-trip against Postgres with a hard 2 s `Promise.race` timeout. Returns `200 { status: "ok", checks: { db: "ok" } }` on success, `503 { status: "degraded", checks: { db: "fail" }, error }` on DB unreachable/slow. **This is the URL the external uptime monitor polls** — `/api/health` alone goes green even with a dead DB pool.
+
+Don't poll `/api/health/deep` faster than once per minute from any single source. Each call takes a pool connection.
+
+**External uptime monitor.** [docs/runbooks/uptime-monitor.md](docs/runbooks/uptime-monitor.md) — Better Stack walkthrough for both probes, 2-region check origin, alert thresholds (page on `/api/health` non-200 ≥ 60 s, `/api/health/deep` 503 ≥ 2 min). Same vendor as the log shipper (`LOGTAIL_SOURCE_TOKEN`) so one dashboard. **Setup is not automated** — when the monitor is provisioned, link its public status page from this section.
+
+**Backup / restore runbook.** [docs/runbooks/backup-restore.md](docs/runbooks/backup-restore.md) — quarterly drill procedure for Neon branch-from-timestamp restore (preferred — PITR granularity) with a Fly Postgres snapshot-clone fallback. Includes pre-flight checks, side-branch smoke test (`/api/health/deep` + spot-check rows + verify migration journal), cut-over (real incident only), and a 7-point post-drill checklist. Goal: end-to-end recovery in under 30 minutes. **A backup that has never been restored is not a backup** — run the drill once a quarter.
+
+**Dependabot config.** [.github/dependabot.yml](.github/dependabot.yml). Weekly cadence (Mondays 06:00 PT). npm + GitHub Actions ecosystems. Group rollups for `@radix-ui/*`, `@capacitor/*`, tailwind, dev-tooling, testing libs, and all major-version bumps so we don't get 30 PRs at once. Security updates fire independently of the weekly cadence — within hours of a CVE publication. Explicitly ignored major bumps: `drizzle-orm`, `react`, `react-dom`, `@types/react*` — these need a planned migration, not a Dependabot drive-by.
+
+**CI security workflow.** [.github/workflows/security.yml](.github/workflows/security.yml). Three triggers: PR against main, push to main, weekly cron (Monday 13:00 UTC). Two jobs:
+
+- `audit` — `npm audit --audit-level=high --omit=optional` (BLOCKING) + a non-blocking `--audit-level=moderate` for visibility.
+- `typecheck` — `npm ci` + `npm run check` (`tsc`). This is the same gate the dev loop uses locally, run in CI on every PR.
+
+**No vitest in CI yet** — the test suite needs a live Postgres harness and adding a CI service container is its own phase. Tests still run locally via `npm run test:server`.
+
+**What's deliberately NOT in Phase 8.** TOTP / 2FA for admin accounts (planned as a focused follow-up phase — new DB schema, setup wizard, login challenge, recovery codes is significantly larger than the rest of Phase 8 combined). Object-storage backups (`ops_evidence_attachments` uploads) — out of scope until file-attachment volume justifies S3 + lifecycle. Synthetic transaction monitoring — out of scope until traffic volume makes log-in-and-click flows worth instrumenting separately from the health probes.
+
 ### Deployment
 
 Deployed on Fly.io. `npm run deploy` runs `fly deploy`. Sessions and the SQLite DB persist via a Fly volume. The ETL enrichment child process writes to the same SQLite file using WAL mode for concurrent reads.

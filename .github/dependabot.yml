@@ -1,0 +1,90 @@
+version: 2
+
+# Dependabot — Phase 8 operational baseline.
+#
+# Cadence: weekly. The repo is a solo-developer SaaS so we don't want
+# Dependabot opening 30 PRs at once; groups collapse related ecosystems
+# (Radix, Capacitor, Tailwind, dev tooling) into a single rollup PR per
+# week. Major-version bumps stay separate because they're more likely
+# to need code changes — a single weekly major-bumps PR is easier to
+# triage than receiving them inside a rollup.
+#
+# Security updates run independently of this schedule — Dependabot
+# opens a PR within hours of a CVE being published regardless of the
+# weekly cadence, so we never have to wait a week to patch.
+
+updates:
+  # npm — application + dev dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    labels:
+      - "dependencies"
+      - "auto-merge-candidate"
+    groups:
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+      capacitor:
+        patterns:
+          - "@capacitor/*"
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
+          - "tailwind-merge"
+          - "tailwindcss-animate"
+          - "tw-animate-css"
+      dev-tooling:
+        patterns:
+          - "@vitejs/*"
+          - "@vitest/*"
+          - "vitest"
+          - "vite"
+          - "esbuild"
+          - "drizzle-kit"
+          - "tsx"
+          - "typescript"
+          - "@types/*"
+      testing:
+        patterns:
+          - "@testing-library/*"
+          - "supertest"
+          - "@types/supertest"
+          - "jsdom"
+      majors:
+        update-types:
+          - "major"
+    ignore:
+      # Drizzle ORM major bumps regenerate types in incompatible ways
+      # and have to be planned. Skip auto-PRs for major bumps here.
+      - dependency-name: "drizzle-orm"
+        update-types: ["version-update:semver-major"]
+      # React 19 migration is a planned phase, not a Dependabot drop-in.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions — workflow file dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 3
+    labels:
+      - "ci"
+      - "dependencies"

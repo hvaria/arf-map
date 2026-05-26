@@ -1,0 +1,80 @@
+name: Security audit + type-check
+
+# Phase 8 operational baseline.
+#
+# Three triggers:
+#   - Every PR against main: blocks merge if `npm audit` finds HIGH or
+#     CRITICAL CVEs, or if `tsc` fails.
+#   - Every push to main: same checks; if these ever go red on main it
+#     means a fast-tracked merge skipped CI, and we want to know.
+#   - Weekly cron (Monday 13:00 UTC = 06:00 PT): catches CVEs that were
+#     published AFTER the last merge.
+#
+# Why separate from deploy.yml: deploy.yml is the production cut path;
+# adding test steps there would couple "is this safe to merge" to "is
+# Fly.io reachable right now." A failing audit should block a PR
+# without needing Fly secrets.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm audit (high/critical block)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: npm audit (high+ blocking)
+        run: npm audit --audit-level=high --omit=optional
+
+      - name: npm audit (moderate, informational)
+        if: always()
+        continue-on-error: true
+        run: npm audit --audit-level=moderate --omit=optional
+
+  typecheck:
+    name: TypeScript type-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Type-check (tsc)
+        run: npm run check
