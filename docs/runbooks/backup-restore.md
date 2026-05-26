@@ -107,8 +107,9 @@ Run:
 
 ```sql
 -- Total row counts on critical tables — should match your mental model
--- of what existed at the restore timestamp.
-SELECT 'facility_accounts' AS table, COUNT(*) FROM facility_accounts
+-- of what existed at the restore timestamp. (`tbl` rather than `table`
+-- because `table` is a reserved keyword in some stricter SQL clients.)
+SELECT 'facility_accounts' AS tbl, COUNT(*) FROM facility_accounts
 UNION ALL SELECT 'job_postings', COUNT(*) FROM job_postings
 UNION ALL SELECT 'ops_residents', COUNT(*) FROM ops_residents
 UNION ALL SELECT 'ops_invoices', COUNT(*) FROM ops_invoices;

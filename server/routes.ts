@@ -18,6 +18,7 @@ import { billingRouter } from "./routes/billing";
 import { facilityProfileRouter } from "./routes/facilityProfile";
 import { accountRouter } from "./routes/account";
 import { legalRouter, legalApiRouter } from "./routes/legal";
+import { registerHealthRoutes } from "./health";
 import { requireJobSeekerAuth } from "./middleware/requireJobSeekerAuth";
 import { getOrCreateCsrfToken } from "./middleware/csrfToken";
 import { recordAcceptance, getPendingAcceptances } from "./lib/legal";
@@ -175,36 +176,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.use("/legal", legalRouter);
   app.use("/api/legal", legalApiRouter);
 
-  // Liveness — Fly.io uses this for blue/green machine flip + the deploy.yml
-  // smoke test. Intentionally does NOT touch the DB so a transient pool
-  // hiccup cannot cascade into a rollback during a normal deploy.
-  app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok" });
-  });
-
-  // Readiness — Phase 8. Verifies the app can actually serve traffic by
-  // doing a DB round-trip with a hard timeout. Returns 503 if the DB is
-  // unreachable or slow. Use this for the uptime monitor (Better Stack) —
-  // /api/health alone goes green even with a dead DB pool.
-  app.get("/api/health/deep", async (_req, res) => {
-    const DB_TIMEOUT_MS = 2000;
-    try {
-      await Promise.race([
-        pool.query("SELECT 1"),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("db timeout")), DB_TIMEOUT_MS),
-        ),
-      ]);
-      res.json({ status: "ok", checks: { db: "ok" } });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(503).json({
-        status: "degraded",
-        checks: { db: "fail" },
-        error: message,
-      });
-    }
-  });
+  registerHealthRoutes(app);
 
   // ── Facilities (live from CHHS open data, 24 h server-side cache) ─────────
 

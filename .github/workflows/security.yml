@@ -25,8 +25,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: security-${{ github.ref }}
-  cancel-in-progress: true
+  # Include trigger + ref so a Monday cron run on main doesn't cancel
+  # a concurrent push-to-main run (or vice versa) — for a security
+  # audit we want each trigger's verdict.
+  group: security-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   audit:
@@ -41,11 +44,13 @@ jobs:
         with:
           fetch-depth: 1
 
+      # `audit` only reads package-lock.json — no install step runs, so
+      # caching the npm cache here is dead weight. Cache stays on the
+      # `typecheck` job below where `npm ci` actually consumes it.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
       - name: npm audit (high+ blocking)
         run: npm audit --audit-level=high --omit=optional
