@@ -204,15 +204,23 @@ erDiagram
   facilities {
     text number PK "CCLD facility number"
     text name
-    text facility_type "RCFE|ARF|GH|FFA|FFH"
-    text facility_group "Adult & Senior Care|Children's Residential|..."
-    text county
-    text city
+    text facility_type "default '' - RCFE|ARF|GH|FFA|FFH"
+    text facility_group "default '' - Adult & Senior Care|..."
     text status "ACTIVE|CLOSED|..."
-    int capacity
-    bigint first_license_date
-    bigint last_inspection_date
-    int total_visits
+    text address "nullable"
+    text city "nullable"
+    text county "nullable"
+    text zip "nullable"
+    text phone "nullable"
+    text licensee "nullable"
+    text administrator "nullable"
+    int capacity "default 0"
+    text first_license_date "TEXT - source format from CCLD, not bigint"
+    text closed_date "TEXT"
+    text last_inspection_date "TEXT"
+    int total_visits "default 0"
+    int total_type_b "default 0 - Type B citation count"
+    int citations "default 0"
     double lat
     double lng
     text geocode_quality
@@ -239,24 +247,24 @@ erDiagram
   job_postings {
     serial id PK
     text external_id UK "nanoid(12) - URL-exposed (Phase 7)"
-    text facility_number FK
+    text facility_number "soft FK by name only; no DB constraint (ETL races)"
     text title
     text type "Caregiver|DSP|Med Tech|..."
     text salary "free-text; parsed by services/payParser.ts"
     text description
-    jsonb requirements "string[]"
-    bigint created_at
+    jsonb requirements "string[] default '[]'::jsonb (Phase 2 R2)"
+    bigint posted_at
   }
 
   applicant_interests {
     serial id PK
     text external_id UK "nanoid(12) - URL-exposed (Phase 7)"
-    int job_seeker_id FK
-    int job_id FK "nullable: facility-level interest possible"
+    int job_seeker_id "soft FK to job_seeker_accounts.id"
+    int job_id "nullable - soft FK to job_postings.id (no DB constraint); when null = facility-level interest"
     text facility_number
     text role_interest
     text message
-    text status "new|contacted|hired|rejected"
+    text status "default 'pending'; viewed|shortlisted"
     bigint created_at
     bigint updated_at
   }
@@ -341,7 +349,6 @@ erDiagram
   ops_staff ||--o{ ops_shifts : "composite FK"
   ops_leads ||--o{ ops_tours : "composite FK"
   ops_temperature_fixtures ||--o{ ops_temperature_logs : "composite FK"
-  ops_share_links ||--o{ ops_share_links : "auditor scoped access"
 
   ops_residents {
     serial id PK
@@ -371,31 +378,61 @@ erDiagram
 
   ops_med_passes {
     serial id PK
+    bigint medication_id
+    bigint resident_id
     text facility_number
-    int medication_id FK
-    int resident_id FK
     bigint scheduled_datetime
-    bigint given_at
-    text given_by
-    text status "pending|given|late|missed|refused"
+    bigint administered_datetime "nullable - null while pending"
+    text administered_by "free-text staff name at administration"
+    text witness_by "nullable - required for controlled subs"
+    int right_resident "0|1 - five-rights checklist"
+    int right_medication "0|1"
+    int right_dose "0|1"
+    int right_route "0|1"
+    int right_time "0|1"
+    int right_reason "0|1"
+    int right_documentation "0|1"
+    int right_to_refuse "0|1"
+    text status "default 'pending'; given|late|missed|refused|held"
+    text refusal_reason
+    text hold_reason
+    text notes
+    text pre_vitals_bp "TEXT - blood pressure as 'sys/dia'"
     int pre_vitals_pulse
-    int pre_vitals_temp
+    double pre_vitals_temp
     int pre_vitals_spo2
+    text prn_reason
+    bigint prn_effectiveness_noted_at
+    text prn_effectiveness_notes
+    bigint created_at
+    bigint updated_at
+    text created_by
+    text updated_by
   }
 
   ops_invoices {
     serial id PK
     text facility_number
-    int resident_id FK
-    bigint period_start
-    bigint period_end
-    bigint subtotal "BIGINT cents"
-    bigint tax "BIGINT cents"
-    bigint total "BIGINT cents"
-    bigint amount_paid "BIGINT cents"
-    bigint balance_due "BIGINT cents"
-    text status "draft|open|paid|void"
-    bigint due_date
+    bigint resident_id
+    text invoice_number UK
+    bigint billing_period_start
+    bigint billing_period_end
+    bigint subtotal "BIGINT cents, default 0"
+    bigint tax "BIGINT cents, default 0"
+    bigint total "BIGINT cents, default 0"
+    bigint amount_paid "BIGINT cents, default 0"
+    bigint balance_due "BIGINT cents, default 0"
+    text status "default 'draft'; open|paid|void"
+    bigint due_date "nullable"
+    bigint sent_at "nullable"
+    bigint paid_at "nullable"
+    text payment_method "nullable - set at first payment"
+    text payment_reference "nullable"
+    text notes
+    bigint created_at
+    bigint updated_at
+    text created_by "default 'system'"
+    text updated_by "nullable"
   }
 
   ops_billing_charges {
@@ -422,14 +459,15 @@ erDiagram
   ops_audit_trail {
     serial id PK
     text facility_number
-    text resource_type "residents|medications|invoices|..."
-    int resource_id
-    text action "create|update|delete|view"
-    jsonb before_json
-    jsonb after_json
     text actor_id "user / system identifier"
-    bigint created_at
-    text created_by "= actor_id"
+    text actor_role "snapshotted role at write-time"
+    text action "create|update|delete|view"
+    text entity_type "residents|medications|invoices|..."
+    bigint entity_id
+    text before_json "TEXT - intentionally NOT JSONB; see CLAUDE.md Phase 2 R2"
+    text after_json "TEXT - same"
+    bigint occurred_at
+    text created_by "default 'system' - audit attribution"
   }
 ```
 
@@ -448,63 +486,116 @@ erDiagram
 
 ```mermaid
 erDiagram
-  ops_notes ||--o{ ops_note_versions : "CASCADE delete on archive"
+  ops_notes ||--o{ ops_note_versions : "CASCADE on note delete"
   ops_notes ||--o{ ops_note_tags : "CASCADE"
   ops_notes ||--o{ ops_note_mentions : "CASCADE"
   ops_notes ||--o{ ops_note_attachments : "CASCADE"
   ops_notes ||--o{ ops_note_acknowledgments : "CASCADE"
   ops_notes ||--o{ ops_note_audit_log : "actions on this note"
+  ops_notes ||--o{ ops_notes : "self-ref parent_note_id (threading)"
 
   ops_notes {
     serial id PK
     text facility_number
-    int resident_id FK "nullable: facility-level note"
-    text group_key "category for sidebar filter"
-    text content "markdown body"
-    text status "draft|published|archived"
-    bigint deleted_at "soft-delete"
-    text deleted_by
+    bigint parent_note_id FK "self-ref for thread replies"
+    text category "categorical tag for sidebar filter"
+    bigint resident_id "nullable: facility-level note"
+    bigint shift_id "nullable: shift handoff link"
+    text title "nullable"
+    text body "markdown body"
+    text visibility_scope "default 'facility_wide'"
+    text priority "default 'normal'"
+    text status "default 'open'"
+    int ack_required "0|1"
+    text ack_required_role "nullable role string"
+    bigint follow_up_by
+    bigint effective_until
+    int is_quick "0|1"
+    bigint author_facility_account_id
+    bigint author_staff_id
+    text author_display_name
+    text author_role
+    int edit_count "increments on UPDATE"
+    bigint last_edited_at
+    bigint last_edited_by_account_id
+    bigint archived_at "nullable - separate from soft-delete"
+    bigint archived_by_account_id
+    bigint deleted_at "soft-delete signal"
+    bigint deleted_by_account_id
     bigint created_at
     bigint updated_at
-    text created_by
-    text updated_by
   }
 
   ops_note_versions {
     serial id PK
-    int note_id FK
-    text content
-    bigint created_at
-    text created_by
+    bigint note_id FK
+    int version "incrementing version number"
+    text title "nullable, snapshot at edit"
+    text body "snapshot at edit"
+    bigint edited_by_account_id
+    text edit_reason "nullable free-text"
+    bigint edited_at
   }
 
   ops_note_tags {
-    serial id PK
-    int note_id FK
-    text tag
+    bigint note_id PK "composite PK with tag"
+    text tag PK
   }
 
   ops_note_mentions {
     serial id PK
-    int note_id FK
-    text mentioned_user
+    bigint note_id FK
+    bigint mentioned_staff_id "nullable"
+    text mentioned_role "nullable role-mention"
+    bigint read_at "nullable read receipt"
+    bigint created_at
+  }
+
+  ops_note_attachments {
+    serial id PK
+    bigint note_id FK
+    bigint uploaded_by_account_id
+    text storage_key
+    text filename
+    text mime_type
+    bigint size_bytes
+    text scan_status "default 'pending'"
+    bigint scanned_at
+    bigint removed_at "nullable soft-delete"
+    bigint removed_by_account_id
+    text removed_reason
+    bigint created_at
+  }
+
+  ops_note_acknowledgments {
+    serial id PK
+    bigint note_id FK
+    bigint acknowledger_facility_account_id
+    bigint acknowledger_staff_id
+    bigint acknowledged_at
+    text device_info "nullable user-agent snapshot"
   }
 
   ops_note_audit_log {
     serial id PK
-    int note_id
+    bigint note_id
+    bigint actor_facility_account_id "nullable"
     text action
-    jsonb payload_diff
-    text actor_id
-    bigint created_at
+    jsonb payload_diff "Phase 2 R2 - was TEXT, now JSONB"
+    text ip_address
+    text user_agent
+    bigint occurred_at
   }
 ```
 
 **Key relationships:**
 
-- **`ops_notes` is the parent for the entire collaboration subtree.** Cascading delete on the child tables is OK because they're explicit collections, not financial/clinical data — see CLAUDE.md "Schema invariants (Phase 2)" → "ON DELETE CASCADE only for explicit child collections."
-- **`ops_note_versions`** stores every edit; the latest content lives on `ops_notes.content`. The version table is append-only.
-- **`ops_notes.deleted_at`** is the soft-delete signal. Restoring a note is a single `UPDATE ops_notes SET deleted_at = NULL` — but the policy is to almost never do this (use a new note that references the old one in audit metadata).
+- **`ops_notes` is the parent for the entire collaboration subtree.** The five child tables (versions, tags, mentions, attachments, acknowledgments) all CASCADE on note delete — OK because they're explicit collections, not financial/clinical data. See CLAUDE.md "Schema invariants (Phase 2)" → "ON DELETE CASCADE only for explicit child collections."
+- **`ops_notes.parent_note_id`** is a self-FK used for thread replies (one parent → many children, each a reply).
+- **`ops_note_versions`** is append-only. Every edit writes a new row; the latest copy of the title/body lives on `ops_notes`. Reconstruction uses the highest `version` number.
+- **`ops_notes.status`** default is `'open'`. Archiving sets `archived_at` (separate column) — status itself is the editorial state, not a delete signal.
+- **`ops_note_tags` has a composite PK `(note_id, tag)`** — no surrogate id. Means a note cannot carry the same tag twice.
+- **`ops_note_audit_log.payload_diff` is JSONB** (flipped from TEXT in Phase 2 R2). The wire-compat shim does NOT re-stringify it because no FE consumer parses this column today.
 
 ---
 
@@ -518,69 +609,98 @@ registry entry — no new tables.
 
 ```mermaid
 erDiagram
-  tracker_definitions ||--o{ tracker_entries : "FK definition_id"
-  tracker_entries ||--o{ tracker_entry_versions : "snapshot on edit"
-  tracker_entries ||--o{ tracker_alerts : "fired by alerts.ts evaluator"
-  tracker_definitions ||--o{ tracker_audit_log : "definition events"
-  tracker_entries ||--o{ tracker_audit_log : "entry events"
+  tracker_definitions ||--o{ tracker_entries : "FK tracker_definition_id"
+  tracker_entries ||--o{ tracker_entry_versions : "snapshot on edit (CASCADE)"
+  tracker_entries ||--o{ tracker_alerts : "FK source_entry_id - fired by alerts.ts"
 
   tracker_definitions {
     serial id PK
     text slug UK "adl|vitals|toileting|hygiene|skin_check|seizure|sleep|inventory|cleaning"
-    text label
-    bool requires_resident "false: inventory, cleaning"
-    jsonb config "shared/tracker-schemas/<slug>.ts serialized for the FE"
+    text name "human-readable label"
+    text category "domain category"
+    int schema_version "default 1"
+    text config_json "stringified shared/tracker-schemas/slug.ts config"
+    int is_active "0|1, default 1"
+    bigint created_at
+    bigint updated_at
   }
 
   tracker_entries {
     serial id PK
-    int definition_id FK
+    text client_id "client-generated dedupe key"
+    text tracker_slug
+    bigint tracker_definition_id FK
     text facility_number
-    int resident_id "nullable: facility-level trackers"
-    text goal_id "for grid trackers (adl, hygiene, sleep)"
-    jsonb payload "shape per tracker-schemas/<slug>.ts Zod schema"
+    bigint resident_id "nullable: facility-level trackers (inventory, cleaning)"
+    text shift "nullable shift label"
     bigint occurred_at
-    bigint deleted_at "soft-delete"
-    text deleted_by
-    text created_by
-    text updated_by
+    bigint reported_by_facility_account_id
+    bigint reported_by_staff_id "nullable"
+    text reported_by_display_name
+    text reported_by_role
+    text payload "TEXT - JSON.stringify'd per the tracker Zod schema"
+    text status "default 'active'"
+    int is_incident "0|1, default 0"
+    bigint created_at
+    bigint updated_at
+    bigint deleted_at "soft-delete signal"
+    bigint deleted_by_account_id
   }
 
   tracker_entry_versions {
     serial id PK
-    int entry_id FK
-    jsonb payload
-    bigint created_at
-    text created_by
-  }
-
-  tracker_alerts {
-    serial id PK
-    int entry_id FK
-    text severity "info|warning|critical"
-    text rule_id "from shared/tracker-schemas/alerts.ts"
-    text message
-    bigint created_at
-    bigint acknowledged_at
-    text acknowledged_by
+    bigint entry_id FK "CASCADE on entry delete"
+    int version_number
+    text payload_snapshot "TEXT snapshot at edit"
+    bigint changed_by_facility_account_id
+    bigint changed_by_staff_id
+    bigint changed_at
+    text change_reason "nullable free-text"
   }
 
   tracker_audit_log {
     serial id PK
-    text resource_type "definition|entry"
-    int resource_id
+    text entity_type "definition|entry"
+    bigint entity_id
     text action
-    jsonb payload_diff
-    text actor_id
+    bigint actor_facility_account_id
+    bigint actor_staff_id
+    text facility_number
+    text before "TEXT diff"
+    text after "TEXT diff"
+    text ip_address
+    text user_agent
     bigint created_at
+  }
+
+  tracker_alerts {
+    serial id PK
+    text facility_number
+    text tracker_slug
+    text rule_id "from shared/tracker-schemas/alerts.ts"
+    text severity "info|warning|critical"
+    bigint resident_id "nullable"
+    bigint source_entry_id FK
+    text shift "nullable"
+    text message
+    text detail "nullable extended payload"
+    text status "default 'active'"
+    bigint acknowledged_by_facility_account_id
+    bigint acknowledged_by_staff_id
+    bigint acknowledged_at
+    text acknowledged_note
+    bigint resolved_at
+    bigint created_at
+    bigint updated_at
   }
 ```
 
 **Key relationships:**
 
 - **`tracker_definitions`** is seeded by `bootstrapTrackersSchema()` from the registry in [`shared/tracker-schemas/index.ts`](../../shared/tracker-schemas/index.ts). Updates to the TS registry are reflected at server boot.
-- **`tracker_entries.payload`** is JSONB shaped per the tracker's Zod schema — validated at the route boundary. The schema itself is NOT enforced by the DB (it'd require per-tracker CHECK constraints we don't want to maintain); validation lives in the route.
-- **`tracker_alerts`** are evaluated by `shared/tracker-schemas/alerts.ts` on every entry insert/update. Phase 1 supports `payload-matches` rules only — cross-entry rules (cluster detection, missing-for-N-days) are deferred.
+- **`tracker_entries.payload` is TEXT, not JSONB.** This is the one place in the codebase where a JSON document survived as `TEXT` through the Phase 2 R2 JSONB pass — see CLAUDE.md "Schema invariants (Phase 2)" for the JSONB-conversion list (tracker payload is not on it). Validation against the per-tracker Zod schema happens at the route boundary, not at the DB.
+- **`tracker_alerts.source_entry_id`** points back at the entry that fired the alert. Alerts are evaluated by `shared/tracker-schemas/alerts.ts` on every entry insert/update. Phase 1 supports `payload-matches` rules only — cross-entry rules (cluster detection, missing-for-N-days) are deferred.
+- **`tracker_entry_versions`** is append-only with `ON DELETE CASCADE` from `tracker_entries`. If a tracker entry is hard-deleted, its history goes too — but the standard flow is soft-delete via `deleted_at`, which preserves history.
 
 ---
 

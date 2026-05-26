@@ -108,9 +108,9 @@ The full list of env vars lives in [CLAUDE.md → Environment Variables](../CLAU
 npm run db:migrate
 ```
 
-This applies all 9 migrations in order, creating the schema from
-scratch. On a fresh DB you should see something like:
-"9 migrations applied" with no errors.
+This applies all migrations in `migrations/meta/_journal.json` in order,
+creating the schema from scratch. On a fresh DB you should see one line
+per migration with no errors.
 
 If you ever pull a branch that added new schema, re-run `db:migrate`
 before starting the dev server. The bootstrap layer is a safety net,
@@ -246,7 +246,7 @@ exactly for this.
 
 A few things are intentionally not yet built. The current snapshot:
 
-- **TOTP / 2FA for admin accounts** (Phase 8.5) — planned, not implemented.
+- **TOTP / 2FA for admin accounts** — planned as a focused follow-up phase, not implemented.
 - **External IDs (nanoid) for `ops_*` tables** — only `job_postings`
   and `applicant_interests` carry external_ids today. Resident-scoped
   URLs (50+ paths) still expose the integer PK. Phase 7 documented
