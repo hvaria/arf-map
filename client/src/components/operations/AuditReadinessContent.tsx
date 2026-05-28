@@ -67,10 +67,19 @@ import { useIsWritable } from "@/context/AuditorContext";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, Download } from "lucide-react";
 import type { TriageItem, TriageSection } from "@shared/triage";
+import { TRIAGE_SECTION_LABELS } from "@shared/triage";
+import { useToast } from "@/hooks/use-toast";
 
 interface Props {
   facilityNumber: string;
   onBack?: () => void;
+  /**
+   * Cross-Operations sub-view nav, supplied by OperationsTab's `goToSubView`.
+   * Used by triage rows whose destination is a sibling sub-view (Staff for
+   * credentials, Residents for charts, Incidents for SLA, etc.). Optional so
+   * the component remains drop-in usable in tests/storybook without the shell.
+   */
+  onNavigateOps?: (subView: "incidents" | "residents" | "staff" | "compliance") => void;
 }
 
 // ── Minimal shapes mirrored from sub-views (kept local to avoid coupling) ────
@@ -160,11 +169,14 @@ function OverviewTab({
   facilityNumber,
   onOpenSettings,
   onSwitchTab,
+  onNavigateOps,
 }: {
   facilityNumber: string;
   onOpenSettings: () => void;
   onSwitchTab: (tab: string) => void;
+  onNavigateOps?: (subView: "incidents" | "residents" | "staff" | "compliance") => void;
 }) {
+  const { toast } = useToast();
   const complaintsQ = useQuery<{ success: boolean; data: ComplaintLite[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/complaints`],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -346,26 +358,53 @@ function OverviewTab({
   // shared union can widen later without a UI deploy. Until the cross-tab
   // nav primitive lands in Wave 4 (see OperationsTab.tsx:1272 `goToSubView`),
   // trust-drift rows stay on Overview informationally.
-  const SECTION_TO_TAB: Record<string, string> = {
+  // Every triage section now has a destination so "Open →" never silently
+  // no-ops. Three buckets:
+  //   1) sections owned by an Audit Readiness sub-tab → onSwitchTab
+  //   2) sections owned by a sibling Operations sub-view → onNavigateOps
+  //   3) sections with no direct destination yet → toast hint
+  const SECTION_TO_AUDIT_TAB: Partial<Record<TriageSection, string>> = {
     temperature_out_of_range_open: "logs",
     vendors_expired: "vendors",
     vendors_expiring: "vendors",
     complaints_open: "complaints",
     drills_quarter_deficit: "drills",
     postings_stale_or_missing: "postings",
-    // No matching Audit Readiness sub-tab — informational link only;
-    // cross-sub-view jump to Billing/Trust lives in OperationsTab.
-    trust_reconciliation_drift: "",
-    // Reports Hub extensibility hook — wave-5: when a future triage
-    // section deep-links to the Reports library (e.g. a "missing
-    // audit-trail export" alert), this maps that section to the
-    // Reports tab. Cross-sub-view jump goes through OperationsTab.tsx
-    // `goToSubView` similar to trust-drift.
-    reports: "reports",
+  };
+  const SECTION_TO_OPS_SUBVIEW: Partial<
+    Record<TriageSection, "incidents" | "residents" | "staff" | "compliance">
+  > = {
+    incidents_past_sla: "incidents",
+    credentials_expired: "staff",
+    credentials_expiring: "staff",
+    charts_incomplete: "residents",
+  };
+  const SECTION_TOAST_HINT: Partial<Record<TriageSection, string>> = {
+    overdue_obligations:
+      "Tracked under Reg Settings → Obligation engine. Direct link coming soon.",
+    controlled_sub_discrepancies_aging:
+      "Review under Operations → Compliance. Direct link coming soon.",
+    trust_reconciliation_drift:
+      "Review under Operations → Billing → Trust accounts. Direct link coming soon.",
   };
   const handleDeepLink = (item: TriageItem) => {
-    const next = SECTION_TO_TAB[item.section];
-    if (next && next.length > 0) onSwitchTab(next);
+    const auditTab = SECTION_TO_AUDIT_TAB[item.section];
+    if (auditTab) {
+      onSwitchTab(auditTab);
+      return;
+    }
+    const opsSubView = SECTION_TO_OPS_SUBVIEW[item.section];
+    if (opsSubView && onNavigateOps) {
+      onNavigateOps(opsSubView);
+      return;
+    }
+    const hint = SECTION_TOAST_HINT[item.section];
+    toast({
+      title: TRIAGE_SECTION_LABELS[item.section] ?? "Triage item",
+      description:
+        hint ??
+        "This item doesn't have a direct link yet. Open the matching Operations sub-view to resolve.",
+    });
   };
 
   return (
@@ -505,7 +544,7 @@ function OverviewTab({
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
+export function AuditReadinessContent({ facilityNumber, onBack, onNavigateOps }: Props) {
   const [tab, setTab] = useState<string>("overview");
   const [shareOpen, setShareOpen] = useState(false);
   const [pullOpen, setPullOpen] = useState(false);
@@ -621,6 +660,7 @@ export function AuditReadinessContent({ facilityNumber, onBack }: Props) {
               facilityNumber={facilityNumber}
               onOpenSettings={() => setTab("settings")}
               onSwitchTab={setTab}
+              onNavigateOps={onNavigateOps}
             />
           </TabsContent>
 

@@ -1,3 +1,7 @@
+# Render.com deployment manifest (NOT the primary deploy target — production
+# runs on Fly.io via fly.toml). Kept as an alternative-host blueprint.
+# Provision an external Postgres (e.g. Neon) and wire DATABASE_URL through
+# the Render dashboard or sync: false env vars before deploying.
 services:
   - type: web
     name: arf-map
@@ -9,8 +13,8 @@ services:
         value: production
       - key: SESSION_SECRET
         generateValue: true
-      - key: DATA_DIR
-        value: /data
+      - key: DATABASE_URL
+        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -21,7 +25,3 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
-    disk:
-      name: sqlite-data
-      mountPath: /data
-      sizeGB: 1

@@ -7,14 +7,14 @@ You are the **devops-agent** for the arf-map project. You own deployment safety,
 
 ## Deployment architecture
 
-- **Platform**: Fly.io — single machine, single region.
+- **Platform**: Fly.io — multi-machine capable, primary region `lax`.
 - **Process**: one `node dist/index.cjs` process serves both the API and the static frontend.
 - **TLS**: terminated at the Fly.io edge; the app runs HTTP internally. `app.set('trust proxy', 1)` is required for `req.secure` to be correct and for session cookies with `secure: true` to work.
-- **Persistence**: SQLite database on a Fly volume. The DB file path is controlled by `DATABASE_URL`. WAL mode is enabled for concurrent reads during ETL writes.
+- **Persistence**: Postgres (Neon in production). Connection string in `DATABASE_URL`. No Fly volume in the production path — Postgres is the system of record.
 - **Build**: `npm run build` runs `tsx script/build.ts` which bundles client (Vite) and server (esbuild) into `dist/`. The ETL enrichment script compiles to `dist/enrich.cjs`.
 - **Static files**: served by `server/static.ts` in production; Vite middleware handles dev.
-- **Session store**: `SqliteSessionStore` (same SQLite file as app data) — sessions survive restarts but not volume loss.
-- **ETL scheduler**: `server/etlScheduler.ts` spawns `dist/enrich.cjs` as a child process nightly at 2 AM UTC. Controlled by `ETL_HOUR_UTC` env var.
+- **Session store**: `connect-pg-simple` against the `session` table in Postgres. Hourly prune sweep. Sessions survive restarts and machine replacements.
+- **ETL scheduler**: `server/etlScheduler.ts` spawns `dist/enrich.cjs` as a child process nightly at 2 AM UTC. Controlled by `ETL_HOUR_UTC` env var. Multi-machine safe via Postgres advisory lock — see CLAUDE.md "Phase 5 — multi-machine safety".
 
 ## Environment variables
 
@@ -26,7 +26,7 @@ You are the **devops-agent** for the arf-map project. You own deployment safety,
 | `NODE_ENV` | Yes | `production` enables static serving, starts ETL scheduler; `development` enables Vite |
 | `ETL_HOUR_UTC` | No (default 2) | UTC hour for nightly CCLD enrichment |
 | `SKIP_PREWARM` | No | Set to skip facility cache pre-warm on startup |
-| `DATABASE_URL` | Yes (drizzle-kit) | SQLite file path for `drizzle-kit push` |
+| `DATABASE_URL` | Yes | Postgres connection string for app boot, drizzle-kit migrations, and the test harness |
 
 **Flag any new env var added by any implementation agent** — it must be documented here and added to Fly.io secrets before deployment.
 
@@ -48,30 +48,31 @@ You are the **devops-agent** for the arf-map project. You own deployment safety,
 - Confirm it does not contain a secret that could end up in build artifacts or client-side bundles.
 
 ### Schema changes at deploy time
-- Any new `CREATE TABLE IF NOT EXISTS` or `ALTER TABLE ADD COLUMN` in `server/storage.ts` runs automatically on startup — verify it is idempotent.
-- Drizzle Kit (`db:push`) is a dev tool only — confirm it is not part of the production startup.
-- For destructive schema changes, prepare a manual migration step and document it in the deploy checklist.
+- New schema goes through drizzle-kit migrations under `migrations/`. Confirm `npm run db:migrate` runs in the deploy pipeline (or that the CI step applies pending migrations before traffic flips).
+- The bootstrap SQL in `server/db/bootstrap.ts` and `server/ops/*Schema.ts` is a `CREATE TABLE IF NOT EXISTS` fresh-DB safety net that runs on startup — verify any change there is idempotent.
+- `db:push` is deprecated — confirm it is not part of any deploy step.
+- For destructive schema changes, prepare a manual migration step and document it in the deploy checklist. See `docs/runbooks/phase-2-migration-orphan-cleanup.md` for FK/CHECK addition rollouts.
 
 ### ETL changes
 - If `server/etlScheduler.ts` or `scripts/` change, verify the compiled output path (`dist/enrich.cjs`) matches the `spawn` call.
-- Enrichment writes to the same SQLite file — confirm WAL mode is still enabled and no exclusive locks are held.
+- Enrichment writes to the same Postgres DB via `DATABASE_URL`. Multi-machine safety is via the advisory-lock pattern in `server/ops/dailySummaryScheduler.ts` / `obligationExpireScheduler.ts` — see CLAUDE.md "Phase 5 — multi-machine safety".
 
 ### Session / auth config
 - `cookie.secure` must be `true` in production — confirm `NODE_ENV` is set correctly on Fly.
 - `SESSION_SECRET` must not be the default string in production. Flag this as a critical risk if deploying with the default.
-- Session invalidation on password reset uses a raw `DELETE FROM sessions` — confirm this works with the `SqliteSessionStore` schema.
+- Session invalidation on password reset uses a raw `DELETE FROM session WHERE ...` — confirm this works with the `connect-pg-simple` schema (note: the table is `session`, singular).
 
 ### Release safety
 - `npm run deploy` = `fly deploy` — this is a live production deployment with no staging step. Always confirm:
   - `npm run check` passes.
   - `npm test` passes.
   - New env vars are set in Fly.io secrets (`fly secrets set`).
-  - Volume is backed up if schema changes are included.
+  - Pending migrations have been reviewed and a Neon PITR window covers the cut-over. See `docs/runbooks/backup-restore.md`.
 
 ## Hard rules
 
 - Do not introduce unnecessary infrastructure changes.
-- Flag any change that requires downtime or a volume migration before it reaches the deploy stage.
+- Flag any change that requires downtime or a destructive Postgres migration before it reaches the deploy stage.
 - Be explicit about rollback steps for every release risk identified.
 - Do not approve a deployment that adds a required env var that hasn't been set in Fly.io secrets.
 
@@ -95,9 +96,9 @@ You are the **devops-agent** for the arf-map project. You own deployment safety,
 - [ ] `npm run check` passes
 - [ ] `npm test` passes
 - [ ] New env vars set in `fly secrets set`
-- [ ] Schema changes are idempotent on startup
+- [ ] Pending migrations reviewed; bootstrap fallback still idempotent
 - [ ] ETL scheduler path correct if ETL changed
-- [ ] Rollback plan documented if schema is destructive
+- [ ] Rollback plan documented if schema is destructive (Neon PITR or branch-restore)
 
 ### Rollback notes
 [How to roll back this change if it causes issues in production]

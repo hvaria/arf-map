@@ -198,10 +198,17 @@ app.use(csrfTokenMiddleware());
 app.use("/api", requirePendingLegalAcceptancesAuto());
 
 // ── F-01: Facility account lockout — Passport LocalStrategy ───────────────────
+// The client login form accepts either a username or an email in the same
+// field (see FacilityPortal.tsx login form). Try username first, then fall
+// back to email so owners can sign in with whichever they remember.
 passport.use(
-  new LocalStrategy(async (username, password, done) => {
+  new LocalStrategy(async (identifier, password, done) => {
     try {
-      const account = await storage.getFacilityAccountByUsername(username);
+      const account =
+        (await storage.getFacilityAccountByUsername(identifier)) ??
+        (identifier.includes("@")
+          ? await storage.getFacilityAccountByEmail(identifier)
+          : undefined);
       if (!account) return done(null, false, { message: "Invalid credentials" });
 
       // Check lockout before password comparison (prevent timing oracle)
@@ -339,7 +346,7 @@ app.use((req, res, next) => {
       log(`[facilitiesService] auto-seed error: ${err.message}`),
     );
 
-    // Legacy pre-warm: only runs if DB is already seeded (fast SQLite path).
+    // Legacy pre-warm: only runs if DB is already seeded (fast DB-read path).
     if (!process.env.SKIP_PREWARM && !process.env.SKIP_CACHE_PREWARM) {
       getCachedFacilities()
         .then((f) => { if (f.length) log(`[facilitiesService] pre-warmed ${f.length} facilities`); })

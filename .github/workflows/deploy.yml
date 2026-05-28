@@ -1,18 +1,108 @@
-name: Deploy to Fly.io
+name: Deploy to Fly.io (blue-green)
+
+# Blue-green deploys to the `ncu` Fly app.
+#
+# - Triggered on push to main, or manually via the Actions tab
+#   (workflow_dispatch lets you deploy any branch / tag / SHA).
+# - Uses Fly's native `--strategy bluegreen`: stands up green machines,
+#   waits for their HTTP health checks, flips traffic, then drains blue.
+# - If the deploy fails OR the post-deploy smoke test fails,
+#   the `rollback-on-failure` job runs `flyctl releases rollback`.
+# - Concurrency group prevents two deploys racing each other.
+#
+# Required GitHub repo secret: FLY_API_TOKEN (generate with `flyctl auth token`).
+# Application env vars / secrets are managed in Fly (`flyctl secrets`),
+# not here.
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (branch, tag, or SHA). Leave blank to deploy the current branch."
+        required: false
+        default: ""
+
+concurrency:
+  group: fly-deploy-ncu
+  cancel-in-progress: false
+
+env:
+  FLY_APP: ncu
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+  HEALTHCHECK_URL: https://ncu.fly.dev/api/health
 
 jobs:
   deploy:
-    name: Deploy
+    name: Blue-green deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
-        env:
-          FLY_APP_NAME: ncu
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+          fetch-depth: 1
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Verify Fly auth + app exists
+        run: flyctl status -a "$FLY_APP"
+
+      - name: Capture pre-deploy release version
+        id: pre
+        run: |
+          PREV=$(flyctl releases list -a "$FLY_APP" --json | jq -r '.[0].version')
+          echo "previous_version=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Pre-deploy release: v$PREV"
+
+      - name: Deploy (blue-green)
+        run: |
+          flyctl deploy \
+            --app "$FLY_APP" \
+            --remote-only \
+            --strategy bluegreen \
+            --wait-timeout 600 \
+            --image-label "gh-${GITHUB_SHA::7}-$(date -u +%Y%m%d-%H%M%S)"
+
+      - name: Smoke test /api/health
+        run: |
+          set -e
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "$HEALTHCHECK_URL" || echo "000")
+            echo "Attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "Health check passed."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Health check failed after 6 attempts." >&2
+          exit 1
+
+      - name: Post-deploy status
+        if: always()
+        run: flyctl status -a "$FLY_APP"
+
+  rollback-on-failure:
+    name: Roll back on failure
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Roll back to previous release
+        run: |
+          echo "Deploy failed — rolling back $FLY_APP."
+          flyctl releases rollback -a "$FLY_APP" --yes
+          flyctl status -a "$FLY_APP"

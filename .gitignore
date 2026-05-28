@@ -1,6 +1,9 @@
 node_modules
 dist
 .env
+.env.bak
+*.env.bak
+.env.*.local
 .DS_Store
 server/public
 vite.config.ts.*

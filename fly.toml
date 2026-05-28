@@ -15,14 +15,13 @@ primary_region = 'lax'
   NODE_ENV = 'production'
   PORT = '8080'
 
-# NOTE (Phase 2 R1): the legacy `arf_data` Fly volume mount from the
-# SQLite era has been removed. The app no longer writes to /data —
-# Postgres (Neon/Supabase) is the system of record. To free the volume
-# bytes after the next successful deploy:
+# NOTE: the legacy `arf_data` Fly volume mount has been removed. The app
+# no longer writes to /data — Postgres (Neon) is the system of record.
+# If `fly deploy` warns that a machine still has a volume mounted, that
+# warning can be cleared by destroying the volume once the new release
+# is healthy:
 #     fly volumes list                # find the vol id
 #     fly volumes destroy <vol-id>    # one-shot, irreversible
-# The deploy reconciliation no longer requires the mount because every
-# machine now boots without /data on its filesystem.
 
 [http_service]
   internal_port = 8080
@@ -30,6 +29,17 @@ primary_region = 'lax'
   auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 1
+
+  # Health check used by `flyctl deploy --strategy bluegreen` to decide when
+  # a green machine is ready to receive traffic. Without this, blue-green
+  # flips traffic the moment the machine boots, before the app is ready.
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/api/health"
+    protocol = "http"
+    timeout = "5s"
 
 [[vm]]
   memory = '512mb'

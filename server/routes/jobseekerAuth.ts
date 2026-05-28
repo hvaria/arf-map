@@ -10,8 +10,8 @@ import { authRateLimiter } from "../middleware/rateLimiter";
 import { getPendingAcceptances } from "../lib/legal";
 
 // ── Dependency wiring ────────────────────────────────────────────────────────
-// To replace SQLite with Postgres or an external IdP, swap the repository or
-// service here.  Nothing else in the codebase needs to change.
+// To replace the storage backend or drop in an external IdP, swap the
+// repository or service here. Nothing else in the codebase needs to change.
 const repo = new PgJobSeekerRepository();
 const authService = new AuthService(repo);
 
@@ -175,8 +175,8 @@ jobseekerAuthRouter.get("/me", requireJobSeekerAuth, async (req, res, next) => {
  *
  * Extension point — Snowflake / warehouse read layer:
  *   Replace the hardcoded stub with a WarehouseJobSeekerRepository call that
- *   reads enriched candidate data from Snowflake while writing still goes to
- *   the transactional SQLite (or Postgres) database.
+ *   reads enriched candidate data from Snowflake while writes still go to the
+ *   transactional Postgres database.
  */
 jobseekerAuthRouter.get("/dashboard", requireJobSeekerAuth, async (req, res, next) => {
   try {

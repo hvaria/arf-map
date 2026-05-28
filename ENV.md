@@ -4,8 +4,7 @@
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `DATABASE_URL` | Yes (prod) | PostgreSQL connection string. Set automatically by `fly postgres attach`. Format: `postgres://user:pass@host:5432/db` |
-| `DATA_DIR` | No | SQLite fallback: directory containing `data.db`. Used when `DATABASE_URL` is not set. Production Fly volume: `/data` |
+| `DATABASE_URL` | Yes | Postgres connection string (Neon or Fly Postgres). Required for app boot, drizzle-kit, and the test harness. Format: `postgres://user:pass@host:5432/db` |
 
 ## Security
 

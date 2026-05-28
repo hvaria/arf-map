@@ -920,10 +920,12 @@ for client; `npx vitest run path` for single files.
 
 ### 13.4 Backups
 
-- Fly volume snapshot policy (existing) covers the SQLite session
-  store and the `/data/evidence/` tree. **Open item:** confirm
-  snapshot cadence and retention; if absent, propose a Wave 0.5
-  ticket to harden.
+- Sessions live in Postgres (`session` table via `connect-pg-simple`),
+  so session backups follow the database backup policy — see
+  `docs/runbooks/backup-restore.md` (Neon PITR / branch-from-timestamp).
+  Fly volume snapshot policy (existing) covers the `/data/evidence/`
+  tree only. **Open item:** confirm snapshot cadence and retention for
+  the evidence volume; if absent, propose a Wave 0.5 ticket to harden.
 
 ---
 

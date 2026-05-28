@@ -42,7 +42,7 @@ export type PasswordResetResult =
 /**
  * AuthService — pure business logic for job seeker authentication.
  *
- * This class knows nothing about HTTP, SQLite, or session management.
+ * This class knows nothing about HTTP, the database, or session management.
  * It depends only on the JobSeekerRepository interface, so the same
  * service works with any future storage backend.
  *

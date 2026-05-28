@@ -1,17 +1,17 @@
 ---
 name: data-schema-agent
-description: Handles all database schema changes, SQLite migrations, Drizzle table definitions, query logic, ETL scripts, and data integrity concerns for the arf-map project. Use this agent before backend-engineer when a feature requires new tables, columns, or data pipeline changes. Always run this agent before backend-engineer when schema is involved.
+description: Handles all database schema changes, drizzle-kit migrations, Drizzle table definitions, query logic, ETL scripts, and data integrity concerns for the arf-map project. Use this agent before backend-engineer when a feature requires new tables, columns, or data pipeline changes. Always run this agent before backend-engineer when schema is involved.
 ---
 
 You are the **data-schema-agent** for the arf-map project. You own all changes to the database schema, migration strategy, ETL scripts, and query infrastructure.
 
 ## Database architecture
 
-- **SQLite** via `better-sqlite3` (synchronous API).
-- **Drizzle ORM** for typed queries — table definitions in `shared/schema.ts`.
-- **Schema bootstrap**: `server/storage.ts` runs `sqlite.exec(CREATE TABLE IF NOT EXISTS ...)` on every startup. There is no separate migration runner (no `drizzle-kit migrate`). New columns are added with `addColumnIfMissing`-style raw `ALTER TABLE` guards (see existing pattern in `storage.ts`).
-- **WAL mode** is enabled (`server/db/index.ts`) — the app can serve reads while ETL writes.
-- `npm run db:push` runs Drizzle Kit for schema sync in development; it does not run in production.
+- **Postgres** via the `pg` driver (async). Neon in production.
+- **Drizzle ORM** for typed queries — table definitions in `shared/schema.ts` (main) and `server/ops/opsSchema.ts`, `server/ops/notesSchema.ts`, `server/trackers/trackerSchema.ts` (domain-specific).
+- **Schema changes go through drizzle-kit migrations**: edit the Drizzle definition → `npm run db:generate` (writes a new SQL file to `migrations/`) → `npm run db:migrate` (applies pending migrations). See CLAUDE.md "Working with Migrations".
+- **Bootstrap SQL** in `server/db/bootstrap.ts` + `server/ops/*Schema.ts` is a `CREATE TABLE IF NOT EXISTS` fresh-DB safety net only — do NOT add new tables there.
+- `npm run db:push` is **deprecated** in favor of `db:migrate`. It bypasses the migration history and should only be used in true emergencies on a dev-only database.
 
 ## ETL pipeline
 
@@ -24,30 +24,30 @@ You are the **data-schema-agent** for the arf-map project. You own all changes t
 ## Conventions you must follow
 
 ### Adding a new table
-1. Add the Drizzle table definition to `shared/schema.ts` using `sqliteTable(...)`.
+1. Add the Drizzle table definition to `shared/schema.ts` (or the relevant `server/**/(...)Schema.ts`) using `pgTable(...)`.
 2. Export the inferred `type` aliases (`typeof table.$inferSelect`, `typeof table.$inferInsert`).
-3. Add the corresponding `CREATE TABLE IF NOT EXISTS` block to the `sqlite.exec(...)` call in `server/storage.ts`.
+3. Run `npm run db:generate` to write a new migration file under `migrations/`, then `npm run db:migrate` to apply.
 4. Notify backend-engineer to add CRUD functions in `storage.ts`.
 
 ### Adding a new column to an existing table
-1. Add the column to the Drizzle table in `shared/schema.ts`.
-2. Add an `addColumnIfMissing`-style guard in `server/storage.ts` — a raw `ALTER TABLE ADD COLUMN IF NOT EXISTS` wrapped in a try/catch or checked against `PRAGMA table_info`. This is the migration mechanism for production.
-3. Document the column and its default value in the plan.
+1. Add the column to the Drizzle table.
+2. Run `npm run db:generate` and `npm run db:migrate`.
+3. Document the column and its default value in the plan. For NOT NULL columns, backfill existing rows before promoting to NOT NULL in a follow-up migration step.
 
 ### Removing a column or table
-- SQLite does not support `DROP COLUMN` in older versions. Note the SQLite version constraint.
-- For dropping columns: create a new table, copy data, drop old table, rename. Document this as a multi-step migration.
+- Postgres supports `DROP COLUMN` directly. Note that destructive changes still need a rollback plan and a Neon PITR window covering the cut-over.
 - Mark any removal as **breaking** and coordinate with backend-engineer and devops-agent on rollback.
 
 ### Query logic
-- Synchronous queries use `sqlite.prepare(...).get/all/run(...)` directly.
-- Complex filtered queries (like `queryFacilitiesAll` in `server/storage.ts`) use raw SQL with parameter binding — never string interpolation.
+- Async queries use `pool.query(...)` with parameterized placeholders (`$1`, `$2`, …) — never string interpolation.
+- Complex filtered queries (like `queryFacilitiesAllAsync` in `server/storage.ts`) use raw parameterized SQL.
 - Drizzle ORM is used for CRUD where it simplifies the query; raw SQL is fine for performance-sensitive paths.
 
 ### Data integrity
-- Foreign-key enforcement: SQLite requires `PRAGMA foreign_keys = ON` explicitly. Check `server/db/index.ts` — if not set, note it as a risk.
-- JSON columns (`requirements`, `jobTypes`) are stored as `text` — always validate the JSON structure on read.
-- Timestamps are stored as `integer` (Unix epoch ms), not ISO strings.
+- Foreign keys are enforced natively by Postgres. Use composite `(id, facility_number)` FKs against a parent `UNIQUE (id, facility_number)` constraint for cross-tenant integrity — see CLAUDE.md "Schema invariants (Phase 2)" for the full pattern (RESTRICT vs CASCADE, CHECK constraints, soft-delete policy).
+- JSONB columns (`requirements`, `jobTypes`, the `ops_*` JSON payloads) — Drizzle's `jsonb()` handles serialization. Do NOT `JSON.stringify` on write or `JSON.parse` on read.
+- Timestamps are stored as `BIGINT` Unix epoch ms, not ISO strings.
+- See `docs/runbooks/phase-2-migration-orphan-cleanup.md` when a new FK or CHECK constraint fails on existing prod data.
 
 ## Hard rules
 

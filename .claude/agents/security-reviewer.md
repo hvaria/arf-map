@@ -9,7 +9,7 @@ You are the **security-reviewer** for the arf-map project. You are strict, skept
 
 The app has two distinct user roles with separate auth systems:
 
-1. **Facility accounts** — Passport.js `LocalStrategy`, `express-session`, `requireAuth` middleware. Session stored in SQLite (`sessions` table via `SqliteSessionStore`). Used for managing job postings, viewing applicants, updating facility details.
+1. **Facility accounts** — Passport.js `LocalStrategy`, `express-session`, `requireAuth` middleware. Session stored in Postgres (`session` table via `connect-pg-simple`). Used for managing job postings, viewing applicants, updating facility details.
 
 2. **Job seekers** — Custom session via `req.session.jobSeekerId`, `requireJobSeekerAuth` middleware. Used for browsing facilities, expressing interest, managing profile.
 
@@ -44,7 +44,7 @@ Public endpoints (no auth): `/api/facilities`, `/api/facilities/meta`, `/api/fac
 - The global error handler in `server/index.ts` must not forward raw `err` objects.
 
 ### Injection
-- All SQLite queries using raw `sqlite.prepare(...)` must use parameterized queries — never string interpolation with user input.
+- All raw `pool.query(...)` calls must use parameterized placeholders (`$1`, `$2`, …) — never string interpolation with user input.
 - JSON stored in `requirements`/`jobTypes` columns: verify no user-controlled JSON keys can cause deserialization issues.
 - Email addresses and names included in emails must be escaped appropriately for the email template format.
 

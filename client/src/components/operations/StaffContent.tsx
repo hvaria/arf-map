@@ -45,6 +45,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  Pencil,
   ShieldAlert,
   ShieldCheck,
   Trash2,
@@ -71,6 +72,8 @@ interface Shift {
   shiftDate: number;
   startTime: string;
   endTime: string;
+  status?: string;
+  notes?: string | null;
 }
 
 const ROLES = [
@@ -85,6 +88,27 @@ const ROLES = [
   "maintenance",
   "other",
 ];
+
+/**
+ * Display labels for role enum values. Replaces the previous
+ * `r.replace(/_/g, " ")` + CSS `capitalize` combo, which (a) wasn't applied
+ * to the Radix SelectValue (so the trigger showed raw lowercase), and (b)
+ * butchered initialisms — "rn" → "Rn", "lpn" → "Lpn".
+ */
+const ROLE_LABEL: Record<string, string> = {
+  administrator:         "Administrator",
+  caregiver:             "Caregiver",
+  med_tech:              "Med Tech",
+  rn:                    "RN",
+  lpn:                   "LPN",
+  activity_coordinator:  "Activity Coordinator",
+  dietary:               "Dietary",
+  housekeeping:          "Housekeeping",
+  maintenance:           "Maintenance",
+  other:                 "Other",
+};
+const roleLabel = (r: string | null | undefined): string =>
+  (r && ROLE_LABEL[r]) || (r ?? "—");
 
 const SHIFT_TYPES = ["AM", "PM", "NOC"] as const;
 
@@ -275,7 +299,7 @@ function AddStaffDialog({
               <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
               <SelectContent>
                 {ROLES.map((r) => (
-                  <SelectItem key={r} value={r} className="capitalize">{r.replace(/_/g, " ")}</SelectItem>
+                  <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -304,6 +328,150 @@ function AddStaffDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button onClick={submit} disabled={mutation.isPending}>
               {mutation.isPending ? "Adding..." : "Add Staff"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditStaffDialog({
+  staff,
+  open,
+  onOpenChange,
+  facilityNumber,
+}: {
+  staff: StaffMember;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  facilityNumber: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [form, setForm] = useState(() => ({
+    firstName: staff.firstName ?? "",
+    lastName: staff.lastName ?? "",
+    role: staff.role ?? "",
+    email: staff.email ?? "",
+    phone: staff.phone ?? "",
+    hireDate: staff.hireDate
+      ? new Date(staff.hireDate).toISOString().slice(0, 10)
+      : "",
+    licenseExpiry: staff.licenseExpiry
+      ? new Date(staff.licenseExpiry).toISOString().slice(0, 10)
+      : "",
+    status: staff.status ?? "active",
+  }));
+  const [showErrors, setShowErrors] = useState(false);
+  const set = (k: keyof typeof form, v: string) =>
+    setForm((f) => ({ ...f, [k]: v }));
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        ...form,
+        hireDate: form.hireDate ? toLocalEpochMs(form.hireDate) : null,
+        licenseExpiry: form.licenseExpiry ? toLocalEpochMs(form.licenseExpiry) : null,
+      };
+      const res = await apiRequest("PUT", `/api/ops/staff/${staff.id}`, body);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/staff`],
+      });
+      toast({ title: "Staff member updated" });
+      onOpenChange(false);
+      setShowErrors(false);
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Couldn't update staff member",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const expiryMs = form.licenseExpiry ? toLocalEpochMs(form.licenseExpiry) : null;
+  const errors = {
+    firstName:     !form.firstName.trim() ? "First name is required" : undefined,
+    lastName:      !form.lastName.trim()  ? "Last name is required"  : undefined,
+    role:          !form.role             ? "Pick a role"            : undefined,
+    licenseExpiry:
+      expiryMs !== null && expiryMs <= Date.now() ? "Must be a future date" : undefined,
+  };
+  const isValid =
+    !errors.firstName && !errors.lastName && !errors.role && !errors.licenseExpiry;
+
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit Staff Member</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="First Name" required error={showErrors ? errors.firstName : undefined}>
+              <Input value={form.firstName} onChange={(e) => set("firstName", e.target.value)} />
+            </FormField>
+            <FormField label="Last Name" required error={showErrors ? errors.lastName : undefined}>
+              <Input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} />
+            </FormField>
+          </div>
+          <FormField label="Role" required error={showErrors ? errors.role : undefined}>
+            <Select value={form.role} onValueChange={(v) => set("role", v)}>
+              <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+              <SelectContent>
+                {ROLES.map((r) => (
+                  <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+          <FormField label="Status">
+            <Select value={form.status} onValueChange={(v) => set("status", v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="on_leave">On leave</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
+            </Select>
+          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Email">
+              <Input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
+            </FormField>
+            <FormField label="Phone">
+              <Input value={form.phone} onChange={(e) => set("phone", e.target.value)} />
+            </FormField>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Hire Date">
+              <Input type="date" value={form.hireDate} onChange={(e) => set("hireDate", e.target.value)} />
+            </FormField>
+            <FormField
+              label="License Expiry"
+              error={showErrors ? errors.licenseExpiry : undefined}
+              hint="Must be in the future"
+            >
+              <Input type="date" value={form.licenseExpiry} onChange={(e) => set("licenseExpiry", e.target.value)} />
+            </FormField>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button onClick={submit} disabled={mutation.isPending}>
+              {mutation.isPending ? "Saving..." : "Save changes"}
             </Button>
           </div>
         </div>
@@ -572,7 +740,211 @@ function AddShiftDialog({
   );
 }
 
-function WeeklySchedule({ shifts }: { shifts: Shift[] }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// Shift edit modal — opened by clicking a pill in WeeklySchedule.
+// Mirrors AddShiftDialog's form fields but pre-fills from the existing row,
+// PUTs `/api/ops/shifts/:id`, and adds Status + Notes for in-flight edits.
+// Credential evaluate-shift is intentionally skipped on edit (same staff +
+// date as the original; if those change in a future iteration we can rewire).
+// ─────────────────────────────────────────────────────────────────────────────
+function EditShiftDialog({
+  shift,
+  open,
+  onOpenChange,
+  facilityNumber,
+  staff,
+}: {
+  shift: Shift;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  facilityNumber: string;
+  staff: StaffMember[];
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const isoDate = (ms: number) => {
+    const d = new Date(ms);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const [form, setForm] = useState(() => ({
+    staffId: String(shift.staffId),
+    shiftType: shift.shiftType,
+    shiftDate: isoDate(shift.shiftDate),
+    startTime: shift.startTime,
+    endTime: shift.endTime,
+    status: shift.status ?? "scheduled",
+    notes: shift.notes ?? "",
+  }));
+  const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
+  const [showErrors, setShowErrors] = useState(false);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        staffId: Number(form.staffId),
+        shiftType: form.shiftType,
+        shiftDate: toLocalEpochMs(form.shiftDate),
+        startTime: form.startTime,
+        endTime: form.endTime,
+        status: form.status,
+        notes: form.notes.trim() || null,
+      };
+      const res = await apiRequest("PUT", `/api/ops/shifts/${shift.id}`, body);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/schedule`],
+      });
+      toast({ title: "Shift updated" });
+      onOpenChange(false);
+      setShowErrors(false);
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Couldn't update shift",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", `/api/ops/shifts/${shift.id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/schedule`],
+      });
+      toast({ title: "Shift deleted" });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Couldn't delete shift",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDelete = () => {
+    const ok = window.confirm(
+      `Delete this ${shift.shiftType} shift for ${shift.staffName} on ${new Date(shift.shiftDate).toLocaleDateString()}? This cannot be undone. (To preserve the record instead, change Status to "Cancelled".)`,
+    );
+    if (ok) deleteMutation.mutate();
+  };
+
+  const errors = {
+    staffId: !form.staffId ? "Pick a staff member" : undefined,
+    times: form.startTime >= form.endTime ? "End time must be after start" : undefined,
+  };
+  const isValid = !errors.staffId && !errors.times;
+
+  const submit = () => {
+    if (!isValid || mutation.isPending) {
+      setShowErrors(true);
+      return;
+    }
+    mutation.mutate();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit Shift</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3" onKeyDown={onSubmitKey(submit)}>
+          <FormField label="Staff Member" required error={showErrors ? errors.staffId : undefined}>
+            <Select value={form.staffId} onValueChange={(v) => set("staffId", v)}>
+              <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
+              <SelectContent>
+                {staff.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.firstName} {s.lastName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Shift Type">
+              <Select value={form.shiftType} onValueChange={(v) => set("shiftType", v as typeof SHIFT_TYPES[number])}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SHIFT_TYPES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label="Date">
+              <Input type="date" value={form.shiftDate} onChange={(e) => set("shiftDate", e.target.value)} />
+            </FormField>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Start Time" error={showErrors ? errors.times : undefined}>
+              <Input type="time" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} />
+            </FormField>
+            <FormField label="End Time">
+              <Input type="time" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} />
+            </FormField>
+          </div>
+          <FormField label="Status">
+            <Select value={form.status} onValueChange={(v) => set("status", v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="scheduled">Scheduled</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="no_show">No-show</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
+              </SelectContent>
+            </Select>
+          </FormField>
+          <FormField label="Notes">
+            <Textarea
+              value={form.notes}
+              onChange={(e) => set("notes", e.target.value)}
+              placeholder="Optional notes about this shift…"
+              className="resize-none min-h-[60px] text-xs"
+            />
+          </FormField>
+          <div className="flex gap-2 justify-between items-center">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending || mutation.isPending}
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              data-testid="shift-delete"
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-1" />
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button onClick={submit} disabled={mutation.isPending || deleteMutation.isPending}>
+                {mutation.isPending ? "Saving..." : "Save changes"}
+              </Button>
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground -mt-1 text-right">
+            <kbd className="px-1 rounded border bg-gray-50">Enter</kbd> to save
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function WeeklySchedule({ shifts, onShiftClick }: { shifts: Shift[]; onShiftClick: (s: Shift) => void }) {
   // Build a week starting from Sunday
   const today = new Date();
   const dayOfWeek = today.getDay();
@@ -617,9 +989,16 @@ function WeeklySchedule({ shifts }: { shifts: Shift[] }) {
                 return (
                   <td key={i} className="border px-1 py-1 align-top min-h-[40px]">
                     {dayShifts.map((s) => (
-                      <div key={s.id} className="text-xs bg-primary/10 rounded px-1 py-0.5 mb-0.5 truncate">
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => onShiftClick(s)}
+                        className="w-full text-left text-xs bg-primary/10 hover:bg-primary/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5 mb-0.5 truncate transition-colors"
+                        aria-label={`Edit shift for ${s.staffName}`}
+                        data-testid={`shift-pill-${s.id}`}
+                      >
                         {s.staffName}
-                      </div>
+                      </button>
                     ))}
                   </td>
                 );
@@ -1284,6 +1663,42 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
   const [addStaffOpen, setAddStaffOpen] = useState(false);
   const [addShiftOpen, setAddShiftOpen] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
+  const [editingShift, setEditingShift] = useState<Shift | null>(null);
+
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const deactivateMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/ops/staff/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: [`/api/ops/facilities/${facilityNumber}/staff`],
+      });
+      toast({ title: "Staff member deactivated" });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Couldn't deactivate",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDeactivate = (s: StaffMember) => {
+    if (s.status === "inactive") {
+      toast({ title: `${s.firstName} is already inactive.` });
+      return;
+    }
+    const ok = window.confirm(
+      `Deactivate ${s.firstName} ${s.lastName}? They'll be marked inactive but kept on file for audit history. You can reactivate later via Edit.`,
+    );
+    if (ok) deactivateMutation.mutate(s.id);
+  };
 
   const { data: staffEnvelope, isLoading: loadingStaff, error: staffError } = useQuery<{ success: boolean; data: StaffMember[] } | null>({
     queryKey: [`/api/ops/facilities/${facilityNumber}/staff`],
@@ -1291,9 +1706,29 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
     enabled: !!facilityNumber,
   });
 
+  // The schedule endpoint filters by a 7-day window starting at `weekStart`
+  // (defaults to epoch=0 on the server, which returns shifts from 1970 — i.e.
+  // none). The grid below renders the *current* local week (Sun–Sat), so the
+  // query must ask for that exact window. Sunday-midnight of the current week
+  // is recomputed on each render — cheap, and `useMemo` keeps the queryKey
+  // stable until the day actually flips.
+  const currentWeekStart = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - d.getDay());
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, []);
   const { data: shiftsEnvelope, isLoading: loadingShifts } = useQuery<{ success: boolean; data: Shift[] } | null>({
-    queryKey: [`/api/ops/facilities/${facilityNumber}/schedule`],
-    queryFn: getQueryFn({ on401: "returnNull" }),
+    queryKey: [`/api/ops/facilities/${facilityNumber}/schedule`, currentWeekStart],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/ops/facilities/${facilityNumber}/schedule?weekStart=${currentWeekStart}`,
+        { credentials: "include" },
+      );
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
     enabled: !!facilityNumber,
   });
 
@@ -1380,6 +1815,7 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
                       <th className="text-left px-4 py-3 font-medium">Status</th>
                       <th className="text-left px-4 py-3 font-medium">Hire Date</th>
                       <th className="text-left px-4 py-3 font-medium">License Expiry</th>
+                      <th className="text-right px-4 py-3 font-medium w-24">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -1389,8 +1825,8 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
                         <tr key={s.id} className="hover:bg-muted/20 transition-colors">
                           <td className="px-4 py-3 font-medium">{s.firstName} {s.lastName}</td>
                           <td className="px-4 py-3">
-                            <Badge variant="secondary" className="capitalize text-xs">
-                              {s.role?.replace(/_/g, " ")}
+                            <Badge variant="secondary" className="text-xs">
+                              {roleLabel(s.role)}
                             </Badge>
                           </td>
                           <td className="px-4 py-3">
@@ -1414,6 +1850,31 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
                               <span className="text-muted-foreground">—</span>
                             )}
                           </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="inline-flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0"
+                                onClick={() => setEditingStaff(s)}
+                                aria-label={`Edit ${s.firstName} ${s.lastName}`}
+                                data-testid={`staff-edit-${s.id}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                onClick={() => handleDeactivate(s)}
+                                disabled={deactivateMutation.isPending || s.status === "inactive"}
+                                aria-label={`Deactivate ${s.firstName} ${s.lastName}`}
+                                data-testid={`staff-deactivate-${s.id}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
@@ -1429,12 +1890,35 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
                     <div key={s.id} className="rounded-lg border p-3">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-sm">{s.firstName} {s.lastName}</span>
-                        <Badge variant={s.status === "active" ? "default" : "outline"} className="text-xs capitalize">
-                          {s.status?.replace(/_/g, " ")}
-                        </Badge>
+                        <div className="flex items-center gap-1">
+                          <Badge variant={s.status === "active" ? "default" : "outline"} className="text-xs capitalize">
+                            {s.status?.replace(/_/g, " ")}
+                          </Badge>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0"
+                            onClick={() => setEditingStaff(s)}
+                            aria-label={`Edit ${s.firstName} ${s.lastName}`}
+                            data-testid={`staff-edit-mobile-${s.id}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            onClick={() => handleDeactivate(s)}
+                            disabled={deactivateMutation.isPending || s.status === "inactive"}
+                            aria-label={`Deactivate ${s.firstName} ${s.lastName}`}
+                            data-testid={`staff-deactivate-mobile-${s.id}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-2 mt-1 text-xs text-muted-foreground">
-                        <span className="capitalize">{s.role?.replace(/_/g, " ")}</span>
+                        <span>{roleLabel(s.role)}</span>
                         {s.licenseExpiry && (
                           <span className={cn(licExpired ? "text-red-600" : "")}>
                             {licExpired && "EXPIRED: "}Lic expires {new Date(s.licenseExpiry).toLocaleDateString()}
@@ -1448,7 +1932,27 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
             </>
           )}
 
-          <AddStaffDialog open={addStaffOpen} onOpenChange={setAddStaffOpen} facilityNumber={facilityNumber} />
+          {/*
+            `key` flips with the dialog's open state so the component remounts
+            on every open. Guarantees a fresh form. Previously the dialog
+            preserved values across opens unless the user happened to switch
+            tabs (Radix TabsContent unmount masked the bug).
+          */}
+          <AddStaffDialog
+            key={addStaffOpen ? "open" : "closed"}
+            open={addStaffOpen}
+            onOpenChange={setAddStaffOpen}
+            facilityNumber={facilityNumber}
+          />
+          {editingStaff && (
+            <EditStaffDialog
+              key={`edit-${editingStaff.id}`}
+              staff={editingStaff}
+              open={!!editingStaff}
+              onOpenChange={(v) => { if (!v) setEditingStaff(null); }}
+              facilityNumber={facilityNumber}
+            />
+          )}
         </TabsContent>
 
         {/* Schedule Tab */}
@@ -1463,7 +1967,7 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
           {loadingShifts ? (
             <Skeleton className="h-48 w-full" />
           ) : (
-            <WeeklySchedule shifts={shifts} />
+            <WeeklySchedule shifts={shifts} onShiftClick={setEditingShift} />
           )}
 
           <AddShiftDialog
@@ -1472,6 +1976,16 @@ export function StaffContent({ facilityNumber, onBack }: { facilityNumber: strin
             facilityNumber={facilityNumber}
             staff={staff}
           />
+          {editingShift && (
+            <EditShiftDialog
+              key={`edit-shift-${editingShift.id}`}
+              shift={editingShift}
+              open={!!editingShift}
+              onOpenChange={(v) => { if (!v) setEditingShift(null); }}
+              facilityNumber={facilityNumber}
+              staff={staff}
+            />
+          )}
         </TabsContent>
 
         {/* Credentials Tab — W3 */}

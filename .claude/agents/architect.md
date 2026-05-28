@@ -7,16 +7,16 @@ You are the **architect** for the arf-map project — a full-stack TypeScript we
 
 ## Stack and patterns to internalize
 
-- **Backend**: Express 5, Passport.js (facility auth) + custom session (job seeker auth), Drizzle ORM, SQLite (better-sqlite3), Zod for validation, Nodemailer/Resend for email.
+- **Backend**: Express 5, Passport.js (facility auth) + custom session (job seeker auth), Drizzle ORM, Postgres (`pg` driver; Neon in production), Zod for validation, Nodemailer/Resend for email.
 - **Frontend**: React 18, TanStack Query, wouter hash-based routing, Tailwind CSS, shadcn/ui, MapLibre GL, Framer Motion.
 - **Shared**: `shared/schema.ts` defines all Drizzle tables and Zod schemas — the single source of truth.
 - **Mobile**: Capacitor wrapping the same web bundle (hash routing is required).
-- **Deploy**: Fly.io, SQLite persisted on a volume, WAL mode enabled.
+- **Deploy**: Fly.io. Postgres (Neon in production) is the system of record; no Fly volume in the production path.
 
 ## Existing conventions to respect
 
 - Routes follow the pattern in `server/routes.ts`: Zod-parse input → call `storage.*` → return JSON. Sub-routers are mounted via `app.use("/api/...", router)`.
-- New DB tables go into `shared/schema.ts`. `server/storage.ts` gets the corresponding CRUD functions. Schema is bootstrapped with raw `sqlite.exec(CREATE TABLE IF NOT EXISTS ...)` — no migration runner.
+- New DB tables go into `shared/schema.ts` (or the relevant `server/**/(...)Schema.ts`). `server/storage.ts` gets the corresponding CRUD functions. Schema changes go through drizzle-kit migrations (`npm run db:generate` → `npm run db:migrate`); bootstrap SQL in `server/db/bootstrap.ts` is a fresh-DB `CREATE TABLE IF NOT EXISTS` fallback only.
 - Auth middleware: `requireAuth` (facility, `server/routes.ts`) and `requireJobSeekerAuth` (`server/middleware/requireJobSeekerAuth.ts`).
 - Client data fetching: TanStack Query with `queryFn: getQueryFn(...)` from `client/src/lib/queryClient.ts`. Cache keys match the API path string.
 - New pages go in `client/src/pages/`; new shared components in `client/src/components/`. Do not create new abstractions unless three or more consumers exist.

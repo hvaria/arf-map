@@ -5,7 +5,7 @@
  * the ETL scripts. No side-effects, no imports from server/ or scripts/.
  *
  * This file is the single source of truth for:
- *  - FacilityDbRow interface (the SQLite/Postgres table shape)
+ *  - FacilityDbRow interface (the Postgres `facilities` table shape)
  *  - GEO_STATUS lookup (CCLD GeoJSON STATUS code → label)
  *  - typeToGroup() legacy substring-based domain heuristic
  *  - formatPhone() utility
@@ -26,7 +26,7 @@
 
 // ── FacilityDbRow ─────────────────────────────────────────────────────────────
 
-/** Shape of a row in the `facilities` SQLite table. */
+/** Shape of a row in the `facilities` Postgres table. */
 export interface FacilityDbRow {
   number:               string;
   name:                 string;

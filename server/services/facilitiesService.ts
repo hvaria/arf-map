@@ -2,9 +2,9 @@
  * server/services/facilitiesService.ts
  *
  * Two modes:
- *  1. SQLite-first (DB is seeded): routes query `facilities` table directly.
+ *  1. DB-first (DB is seeded): routes query the Postgres `facilities` table directly.
  *  2. Auto-seed (DB is empty): fetches all facilities from the CCL CHHS resource
- *     on startup, upserts into SQLite, then geocodes lat/lng via Nominatim.
+ *     on startup, upserts into Postgres, then geocodes lat/lng via Nominatim.
  *
  * Data sources:
  *  - CCL Facilities resource (9f5d1d00) → name, address, type, status, capacity, etc.

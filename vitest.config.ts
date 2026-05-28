@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     projects: [
       {
-        // Backend integration tests — real Node environment, real SQLite
+        // Backend integration tests — real Node environment, real Postgres
         test: {
           name: "server",
           include: ["server/__tests__/**/*.test.ts"],

@@ -8,7 +8,7 @@ You are the **backend-engineer** for the arf-map project. You implement server-s
 ## Stack
 
 - Express 5, TypeScript ESM
-- Drizzle ORM with better-sqlite3 (synchronous)
+- Drizzle ORM + `pg` driver (Postgres, async). Neon in production.
 - Passport.js LocalStrategy — facility account auth
 - Custom session auth — job seeker auth via `req.session.jobSeekerId`
 - Zod for all request validation
@@ -31,18 +31,18 @@ You are the **backend-engineer** for the arf-map project. You implement server-s
 - Always call out explicitly when an endpoint changes auth requirements.
 
 ### Storage layer
-- All DB access goes through `server/storage.ts` — never call `db` or `sqlite` directly from routes.
+- All DB access goes through `server/storage.ts` — never call `db` or `pool` directly from routes.
 - Add new CRUD functions to `storage.ts`; import them in the route.
-- For new tables, `server/storage.ts` adds the `CREATE TABLE IF NOT EXISTS` block to the `sqlite.exec(...)` call at the top of the file.
-- Drizzle ORM is used for complex queries; raw `sqlite.prepare(...).run(...)` is acceptable for simple DDL or one-off statements.
+- For new tables, follow the drizzle-kit migration workflow (`npm run db:generate` → `npm run db:migrate`). Do NOT add new tables to `server/db/bootstrap.ts` — that file is a fresh-DB `CREATE TABLE IF NOT EXISTS` fallback only. See CLAUDE.md "Working with Migrations".
+- Drizzle ORM is used for complex queries; raw `pool.query(...)` with parameterized placeholders is acceptable for simple one-off statements or the read-heavy facility paths.
 
 ### Data / types
 - Zod schemas and Drizzle table types live in `shared/schema.ts`. Import from `@shared/schema` in both server and client.
 - Do not redefine types in route files — use inferred Drizzle types (`typeof table.$inferSelect`).
-- `requirements` and `jobTypes` arrays are stored as JSON strings in SQLite — always `JSON.stringify` on write, `JSON.parse` on read.
+- `requirements` and `jobTypes` arrays are stored as JSONB columns — Drizzle's `jsonb()` handles serialization. Do NOT `JSON.stringify` on write or `JSON.parse` on read. See CLAUDE.md "JSONB instead of TEXT-as-JSON (Phase 2 R2)".
 
 ### Facilities data
-- Check `isDatabaseSeeded()` from `server/services/facilitiesService.ts` before deciding between SQLite query and live-fetch fallback.
+- Check `isDatabaseSeeded()` from `server/services/facilitiesService.ts` before deciding between DB query and live-fetch fallback.
 - Never call the CHHS API directly from a route — always go through `getCachedFacilities()`.
 - The facility cache is pre-warmed on startup; invalidate it via `invalidateFacilitiesCache()`.
 

@@ -1838,7 +1838,13 @@ function OperationsTabInner({ facilityNumber }: { facilityNumber: string }) {
     subView === "crm"        ? <CrmContent        facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "staff"      ? <StaffContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "compliance" ? <ComplianceContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
-    subView === "audit_readiness" ? <AuditReadinessContent facilityNumber={facilityNumber} onBack={subViewBack} /> :
+    subView === "audit_readiness" ? (
+      <AuditReadinessContent
+        facilityNumber={facilityNumber}
+        onBack={subViewBack}
+        onNavigateOps={(sv) => goToSubView(sv as SubView)}
+      />
+    ) :
     subView === "reports"    ? <ReportsContent      facilityNumber={facilityNumber} onBack={subViewBack} /> :
     subView === "calendar"   ? (
       <OpsCalendar

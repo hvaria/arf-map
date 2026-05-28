@@ -54,7 +54,7 @@ You are the **qa-tester** for the arf-map project. You think like a skeptical te
 - Filter by county, facilityType, facilityGroup, status, capacity range, hiringOnly.
 - Bbox filter returns only facilities within the map viewport.
 - Search autocomplete returns relevant results and handles empty query gracefully.
-- `isDatabaseSeeded()` switches correctly between SQLite and live-fetch mode.
+- `isDatabaseSeeded()` switches correctly between DB and live-fetch mode.
 
 ## How to write test output
 

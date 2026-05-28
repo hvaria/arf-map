@@ -2,12 +2,12 @@
  * JobSeekerRepository — domain interface for all job seeker data access.
  *
  * The auth service and routes depend ONLY on this interface, never on a
- * concrete database implementation.  To migrate from SQLite to PostgreSQL or
- * to add a Snowflake-backed read layer, implement this interface in a new
- * class and inject it wherever SqliteJobSeekerRepository is currently used.
+ * concrete database implementation. The current production adapter is
+ * PgJobSeekerRepository (drizzle-orm/node-postgres). To add a different
+ * backend, implement this interface in a new class and inject it where
+ * PgJobSeekerRepository is wired in (server/routes/jobseekerAuth.ts).
  *
  * Extension points (future adapters):
- *   - PostgresJobSeekerRepository    → drizzle-orm/node-postgres
  *   - WarehouseJobSeekerRepository   → read-through cache from Snowflake
  *   - ExternalIdpAdapter             → maps OAuth/SAML claims to this shape
  */

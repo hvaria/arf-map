@@ -8,7 +8,7 @@ Added a full "expression of interest" system connecting job seekers to facilitie
 
 **Why:** Facility operators wanted to see interested candidates without requiring resume uploads.
 
-**New table:** `applicant_interests` (SQLite) — `job_seeker_id` + `facility_number` UNIQUE pair, `role_interest`, `message`, `status` (pending/viewed/shortlisted), timestamps.
+**Table:** `applicant_interests` (Postgres) — `job_seeker_id` + `facility_number` UNIQUE pair, `role_interest`, `message`, `status` (pending/viewed/shortlisted), timestamps. URL surface uses `external_id` (nanoid12); see CLAUDE.md "URL-exposed identifiers (Phase 7)".
 
 **New API endpoints (server/routes/interests.ts, registered at /api):**
 - POST /api/jobseeker/interests

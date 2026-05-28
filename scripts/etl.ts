@@ -2,13 +2,17 @@
  * scripts/etl.ts
  *
  * Standalone ETL — extracts California CCLD facility data from the CHHS open-
- * data API and loads it into the local SQLite database.
+ * data API and loads it into the `facilities` table.
  *
  * Usage:
  *   npx tsx scripts/etl.ts
  *
  * No app server needed. Safe to re-run (idempotent upsert).
  * Edit scripts/etl-config.ts to change sources, fields, filters, or run mode.
+ *
+ * NOTE: Currently broken — imports ./db-writer which was removed during the
+ * Postgres migration. See scripts/enrich-from-transparency.ts for the
+ * current Postgres data path.
  */
 
 // ── 1. Bootstrap DB + write helpers (no server/ imports) ─────────────────────
@@ -200,7 +204,7 @@ async function main() {
     log("DRY RUN — DB write skipped");
     log(`Would upsert ${toWrite.length.toLocaleString()} facilities`);
   } else {
-    log(`Writing ${toWrite.length.toLocaleString()} facilities to SQLite…`);
+    log(`Writing ${toWrite.length.toLocaleString()} facilities to the database…`);
     const CHUNK = 1000;
     let done = 0;
     for (let i = 0; i < toWrite.length; i += CHUNK) {

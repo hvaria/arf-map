@@ -5,13 +5,21 @@
  * GEO feed (for coordinates), normalizes `facility_type` via the canonical
  * taxonomy in shared/taxonomy.ts, and upserts to PostgreSQL.
  *
+ * After CCL rows are committed, runs a CDSS Transparency API gap-fill for
+ * every facility number in GEO but missing from all CCL feeds — this catches
+ * freshly-licensed facilities that CHHS hasn't yet published in its CCL feeds.
+ *
  * Usage:
  *   npx tsx scripts/extract-all-ccld.ts
  *
  * Idempotent — upserts by facility number (PK).
  *
- * Skips Nominatim geocoding (separate phase). Coordinates come from the GEO
- * source; CCL rows without a GEO match will have null lat/lng.
+ * Env knobs:
+ *   DATABASE_URL          (required) Postgres connection string
+ *   SKIP_GAP_FILL=1       Bypass the CDSS gap-fill phase
+ *   GAP_FILL_LIMIT=N      Cap CDSS calls (smoke test)
+ *   GAP_FILL_RPS=N        CDSS requests per second (default 3)
+ *   GAP_FILL_FLUSH=N      DB flush batch during gap-fill (default 50)
  */
 
 import "dotenv/config";
@@ -20,13 +28,26 @@ import * as path from "path";
 import { Pool } from "pg";
 import { normalizeRawType, resolveGeoTypeCode } from "../shared/taxonomy";
 import { formatPhone } from "../shared/etl-types";
+import {
+  fetchCdssFacilityDetail,
+  buildRowFromCdss,
+  rateLimiter,
+  type GeoCoords,
+} from "./cdss-facility-detail";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL not set — check .env");
   process.exit(1);
 }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// keepAlive keeps the TCP socket alive across the long CDSS gap-fill phase
+// (typically 20+ minutes) so the Fly proxy doesn't drop the connection.
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 30_000,
+  idleTimeoutMillis: 0,
+});
 
 // ── CHHS sources ─────────────────────────────────────────────────────────────
 
@@ -87,7 +108,6 @@ async function fetchAllPages(resourceId: string, label: string): Promise<any[]> 
 function cleanString(v: unknown): string {
   if (v === null || v === undefined) return "";
   const s = String(v).trim();
-  // CCL feeds use the literal string "Unavailable" for missing fields
   if (s.toLowerCase() === "unavailable") return "";
   return s;
 }
@@ -101,7 +121,6 @@ function parseCapacity(v: unknown): number {
 function normalizeStatus(v: unknown): string {
   const s = cleanString(v).toUpperCase();
   if (!s) return "LICENSED";
-  // Reject obvious bad values (e.g., a date string leaking into the status column)
   if (/^\d/.test(s)) return "LICENSED";
   return s;
 }
@@ -137,6 +156,19 @@ interface BuiltRow {
 async function main() {
   const startMs = Date.now();
   log("━━━ Unified CCLD ETL — fetching all 6 CCL feeds + GEO ━━━");
+
+  // ── Step 0: verify DB reachable BEFORE doing 13s of CHHS API work ───────
+  try {
+    await pool.query("SELECT 1");
+    log("DB reachable ✓");
+  } catch (err: any) {
+    console.error("\n[etl] DB ping failed:", err?.code ?? err?.message);
+    console.error("\nIf you're running through `fly proxy 15432:5432 -a ncu-db`,");
+    console.error("the proxy's upstream session may have gone stale. Stop it");
+    console.error("(Ctrl-C in the proxy window) and restart it, then try again.\n");
+    await pool.end();
+    process.exit(1);
+  }
 
   // ── Step 1: fetch all CCL feeds ─────────────────────────────────────────
   const allCclRows: { row: any; sourceFeed: string }[] = [];
@@ -194,7 +226,6 @@ async function main() {
     const facilityType  = tax?.officialLabel ?? rawType;
     const facilityGroup = tax?.domain ?? "Unknown";
 
-    // Lookup GEO match for coordinates (and as a fallback for type)
     const geo = geoByNumber.get(num);
     let lat: number | null = null;
     let lng: number | null = null;
@@ -268,12 +299,14 @@ async function main() {
     log(`Wrote ${unnormalized.length} unnormalized rows to ${unmappedPath}`);
   }
 
-  // ── Step 6: upsert to PG in chunks ──────────────────────────────────────
+  // ── Step 6: upsert CCL rows to PG in chunks ─────────────────────────────
+  // Write CCL data FIRST, before the long-running gap-fill phase, so we
+  // never lose a working CCL extract to a late-stage network blip.
   const rows = [...builtByNumber.values()];
   const CHUNK = 500;
   let written = 0;
 
-  log(`Upserting ${rows.length.toLocaleString()} facilities to PostgreSQL…`);
+  log(`Upserting ${rows.length.toLocaleString()} CCL facilities to PostgreSQL…`);
 
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
@@ -282,8 +315,111 @@ async function main() {
     process.stdout.write(`\r    ${written.toLocaleString()} / ${rows.length.toLocaleString()}`);
   }
   process.stdout.write("\n");
+  console.log();
 
-  // ── Step 7: summary ─────────────────────────────────────────────────────
+  // ── Step 7: gap-fill from CDSS Transparency API ─────────────────────────
+  // CHHS publishes the CCL category feeds with a lag — newly-licensed
+  // facilities may appear in the GEO feed (coordinates) before they appear
+  // in any CCL feed (license metadata). For each GEO-only facility number,
+  // ask CDSS directly. Skip ones already in our DB.
+  //
+  // Each fetched row is upserted immediately in small batches so a late
+  // network blip doesn't waste 20+ minutes of CDSS API calls.
+  //
+  // Disable with SKIP_GAP_FILL=1 if you need to bypass the extra API calls.
+  if (process.env.SKIP_GAP_FILL !== "1") {
+    const geoOnlyNumbers = [...geoByNumber.keys()].filter((n) => !builtByNumber.has(n));
+    log(`Gap-fill candidates (in GEO, not in any CCL feed): ${geoOnlyNumbers.length.toLocaleString()}`);
+
+    // Skip facilities already in the DB — most GEO-only numbers persist for
+    // weeks before CHHS catches up, so we'd waste calls re-fetching them.
+    let toFetch: string[] = geoOnlyNumbers;
+    if (geoOnlyNumbers.length > 0) {
+      const existing = await pool.query<{ number: string }>(
+        `SELECT number FROM facilities WHERE number = ANY($1::text[])`,
+        [geoOnlyNumbers],
+      );
+      const existingSet = new Set(existing.rows.map((r) => r.number));
+      toFetch = geoOnlyNumbers.filter((n) => !existingSet.has(n));
+      log(`  already in DB (skipped): ${(geoOnlyNumbers.length - toFetch.length).toLocaleString()}`);
+      log(`  to fetch from CDSS:      ${toFetch.length.toLocaleString()}`);
+    }
+
+    const limit = parseInt(process.env.GAP_FILL_LIMIT ?? "", 10);
+    if (Number.isFinite(limit) && limit > 0 && toFetch.length > limit) {
+      log(`  GAP_FILL_LIMIT=${limit} — capping fetch list`);
+      toFetch = toFetch.slice(0, limit);
+    }
+
+    if (toFetch.length > 0) {
+      const throttle = rateLimiter(parseFloat(process.env.GAP_FILL_RPS ?? "3"));
+      const FLUSH_EVERY = parseInt(process.env.GAP_FILL_FLUSH ?? "50", 10);
+      const startGap = Date.now();
+      let gapAdded = 0;
+      let gapMissing = 0;
+      let pendingBatch: BuiltRow[] = [];
+      const newNames: string[] = [];
+
+      const flush = async (): Promise<void> => {
+        if (pendingBatch.length === 0) return;
+        await upsertChunk(pendingBatch);
+        pendingBatch = [];
+      };
+
+      for (let i = 0; i < toFetch.length; i++) {
+        const num = toFetch[i];
+        await throttle();
+        const cdss = await fetchCdssFacilityDetail(num);
+        if (!cdss) {
+          gapMissing++;
+        } else {
+          const geo = geoByNumber.get(num);
+          const coords: GeoCoords | null = geo
+            ? {
+                lat:      parseFloat(geo.FAC_LATITUDE),
+                lng:      parseFloat(geo.FAC_LONGITUDE),
+                typeCode: cleanString(geo.FAC_TYPE_CODE),
+              }
+            : null;
+          const row = buildRowFromCdss(num, cdss, coords);
+          pendingBatch.push({
+            ...row,
+            source_feed:       "CDSS_GAPFILL",
+            raw_facility_type: row.facility_type,
+          } as BuiltRow);
+          gapAdded++;
+          if (newNames.length < 20) newNames.push(`${num} — ${row.name} (${row.city})`);
+
+          if (pendingBatch.length >= FLUSH_EVERY) {
+            await flush();
+          }
+        }
+
+        if ((i + 1) % 50 === 0 || i === toFetch.length - 1) {
+          process.stdout.write(
+            `\r    gap-fill ${i + 1}/${toFetch.length} — added ${gapAdded}, missing ${gapMissing}, flushed ${gapAdded - pendingBatch.length}`,
+          );
+        }
+      }
+
+      // Final flush
+      await flush();
+      process.stdout.write("\n");
+
+      const elapsedGap = ((Date.now() - startGap) / 1000).toFixed(1);
+      log(`Gap-fill complete in ${elapsedGap}s — added ${gapAdded}, missing-in-CDSS ${gapMissing}`);
+      if (newNames.length > 0) {
+        log(`  sample of newly added:`);
+        for (const n of newNames) log(`    + ${n}`);
+      }
+      console.log();
+    }
+  } else {
+    log("Gap-fill skipped (SKIP_GAP_FILL=1)");
+    console.log();
+  }
+
+  // ── Step 8: summary ─────────────────────────────────────────────────────
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
   console.log();
   log(`━━━ Done in ${elapsed}s ━━━`);
@@ -335,7 +471,29 @@ async function upsertChunk(chunk: BuiltRow[]): Promise<void> {
     ON CONFLICT (number) DO UPDATE SET ${updateAssignments}
   `;
 
-  await pool.query(sql, params);
+  // Retry transient connection errors — common when running through a long-
+  // lived Fly proxy where the upstream socket can get reset between bursts.
+  const TRANSIENT_CODES = new Set([
+    "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "ENOTFOUND",
+    "57P01", // admin_shutdown
+    "57P02", // crash_shutdown
+    "57P03", // cannot_connect_now
+    "08000", "08003", "08006", "08001", "08004", // connection_exception family
+  ]);
+  let attempt = 0;
+  while (true) {
+    try {
+      await pool.query(sql, params);
+      return;
+    } catch (err: any) {
+      const code = String(err?.code ?? "");
+      if (!TRANSIENT_CODES.has(code) || attempt >= 4) throw err;
+      attempt++;
+      const waitMs = 1000 * Math.pow(2, attempt); // 2s, 4s, 8s, 16s
+      console.error(`\n    upsert transient error (${code}) — attempt ${attempt}/4, waiting ${waitMs}ms…`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
 }
 
 main().catch((err) => {

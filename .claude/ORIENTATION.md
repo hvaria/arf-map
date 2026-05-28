@@ -3,9 +3,9 @@
 ## Stack
 - **Runtime**: Node.js ESM + TypeScript, compiled via tsx
 - **Framework**: Express 5.x
-- **Database**: SQLite (better-sqlite3) + Drizzle ORM
+- **Database**: Postgres (Neon in prod / `pg` driver) + Drizzle ORM. Migrations via drizzle-kit; bootstrap SQL in `server/db/bootstrap.ts` + `server/ops/*Schema.ts` as fresh-DB fallback.
 - **Frontend**: React 18 + Vite + Wouter (hash routing) + TanStack Query + Shadcn/ui + Tailwind CSS
-- **Auth**: Passport.js LocalStrategy (facility) + custom session (job seeker via req.session.jobSeekerId)
+- **Auth**: Passport.js LocalStrategy (facility) + custom session (job seeker via req.session.jobSeekerId). Session store: `connect-pg-simple` against the `session` table.
 - **Email**: Resend API
 - **Deploy**: Fly.io (fly.toml)
 
@@ -44,8 +44,12 @@
 - `requireJobSeekerAuth` — checks `req.session.jobSeekerId`
 
 ## Schema Pattern
-All new tables are bootstrapped via idempotent `sqlite.exec()` calls in `server/storage.ts`.
-Drizzle table definitions live in `shared/schema.ts`.
+New schema changes go through drizzle-kit migrations: edit the Drizzle table
+in `shared/schema.ts` (or the relevant `server/**/(...)Schema.ts`), run
+`npm run db:generate`, then `npm run db:migrate`. The bootstrap SQL in
+`server/db/bootstrap.ts` and `server/ops/*Schema.ts` is a `CREATE TABLE IF NOT
+EXISTS` fresh-DB safety net only — do NOT add new tables there.
+See CLAUDE.md "Working with Migrations" for the full workflow.
 
 ## New Module Namespace
 - **API**: `/api/ops/*` (mounted in server/index.ts, never modifying server/routes.ts)
@@ -62,7 +66,7 @@ All new tables prefixed with ops_ to avoid collisions:
 - ops_staff, ops_shifts, ops_facility_settings, ops_compliance_calendar
 
 ## Key Decisions
-1. facility_number (TEXT) is the foreign key linking all ops tables to a facility
-2. All timestamps stored as INTEGER (Unix ms) — consistent with existing tables
-3. No new ORM/migration frameworks — follow existing CREATE TABLE IF NOT EXISTS pattern
+1. facility_number (TEXT) is the foreign key linking all ops tables to a facility. Composite FKs on (id, facility_number) enforce tenant integrity at the DB layer — see CLAUDE.md "Schema invariants (Phase 2)".
+2. All timestamps stored as BIGINT (Unix ms) — consistent across the schema.
+3. Schema changes go through drizzle-kit migrations (`npm run db:generate` / `npm run db:migrate`), not raw bootstrap edits.
 4. portal auth reuses facility Passport session (requireAuth middleware)

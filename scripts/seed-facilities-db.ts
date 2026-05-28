@@ -2,12 +2,16 @@
  * scripts/seed-facilities-db.ts
  *
  * Reads data/ccld_all_facilities.json (produced by extract-ccld-data.ts)
- * and bulk-upserts all records into the SQLite `facilities` table.
+ * and bulk-upserts all records into the `facilities` table.
  *
  * Usage:
  *   npx tsx scripts/seed-facilities-db.ts
  *
- * Safe to re-run — uses INSERT OR REPLACE so it won't duplicate rows.
+ * Safe to re-run — upsert is idempotent.
+ *
+ * NOTE: Currently broken — imports ./db-writer which was removed during the
+ * Postgres migration. See scripts/enrich-from-transparency.ts for the
+ * current Postgres data path. Fixing this seeder is tracked separately.
  */
 
 import * as fs from "fs";
@@ -66,7 +70,7 @@ async function main() {
     process.stdout.write(`\r  Seeded ${inserted} / ${rows.length}…`);
   }
 
-  console.log(`\n✓ Seeded ${inserted} facilities into SQLite`);
+  console.log(`\n✓ Seeded ${inserted} facilities into the database`);
   console.log("  The app will now serve from the database (fast, filterable).");
   console.log("  Restart the server to apply.");
 }

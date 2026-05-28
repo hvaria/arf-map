@@ -3163,9 +3163,8 @@ export function handleRouteError(req: Request, e: unknown, res: Response) {
       error: (e as Error).message,
     });
   }
-  // Postgres unique violation. The pg driver exposes `code` on the
-  // thrown error; better-sqlite3 throws SqliteError with a different
-  // shape but production runs on Postgres so this is the hot path.
+  // Postgres unique violation. The pg driver exposes `code` ('23505') on
+  // the thrown error.
   const err = e as { code?: string; constraint?: string; message?: string };
   if (err && err.code === "23505") {
     return res.status(409).json({
