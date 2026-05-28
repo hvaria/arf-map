@@ -3,6 +3,7 @@ import {
   getCsrfToken,
   pickScopeForUrl,
   refreshCsrfTokenFromMe,
+  setCsrfTokenFromMeBody,
 } from "./csrfToken";
 import { forceLegalModalOpen } from "@/lib/legalState";
 
@@ -167,9 +168,25 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(`${API_BASE}${queryKey.join("/")}`, {
+    const path = queryKey.join("/");
+    const res = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
     });
+
+    // Capture the per-session CSRF token from /me responses on BOTH the 200
+    // and 401 paths. The server mints + returns it even when unauthenticated
+    // so pre-auth POSTs (login/register) can carry it. Without this the
+    // facility /me query (driving useSession) silently drops the token on the
+    // unauthenticated first load, and the first login POST 403s until the
+    // apiRequest/login 403-retry recovers it — a wasted round-trip. Clone so
+    // the body stays readable by the JSON parse below.
+    if (path.endsWith("/me") && (res.status === 200 || res.status === 401)) {
+      try {
+        setCsrfTokenFromMeBody(await res.clone().json());
+      } catch {
+        /* body wasn't JSON — leave the existing token alone */
+      }
+    }
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

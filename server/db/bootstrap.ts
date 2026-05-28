@@ -175,6 +175,12 @@ const MAIN_PG_SCHEMA_SQL = `
   -- searchFacilitiesAutocompleteAsync seqscans because PG cannot
   -- bitmap-OR a mix of indexed and non-indexed branches. The pg_trgm
   -- extension was already enabled by 0001.
+  -- idx_facilities_name_trgm was created by migration 0001; mirror it here
+  -- too so bootstrap-built dev DBs (which never run migrations) get the full
+  -- trigram set. Without all three, the OR'd autocomplete query seqscans
+  -- because Postgres cannot bitmap-OR a mix of indexed + non-indexed branches.
+  CREATE INDEX IF NOT EXISTS idx_facilities_name_trgm
+    ON facilities USING GIN (LOWER(name) gin_trgm_ops);
   CREATE INDEX IF NOT EXISTS idx_facilities_number_trgm
     ON facilities USING GIN (number gin_trgm_ops);
   CREATE INDEX IF NOT EXISTS idx_facilities_city_trgm

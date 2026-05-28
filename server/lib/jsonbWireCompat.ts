@@ -45,7 +45,15 @@ const FACILITY_OVERRIDE_JSON_KEYS = [
   "prefilledFields",
 ] as const;
 
-const JOB_POSTING_JSON_KEYS = ["requirements"] as const;
+// `requirements` was re-stringified by the Phase 2 R2 shim to preserve the
+// legacy string-on-the-wire contract. Phase 7 swept every FE job consumer
+// (JobsPanel, JobDetailModal, FacilityPanel) to expect a native `string[]`
+// and call `.map()` directly — so re-stringifying it now crashes the job
+// detail/panel render (`"[...]".map is not a function`). The wire contract
+// for job_postings.requirements is a native array; nothing on the FE parses
+// it anymore. Left empty (not deleted) so a future JSONB column on this row
+// can plug into the same shim if it ever needs the string treatment.
+const JOB_POSTING_JSON_KEYS = [] as const;
 
 // Empty — see header comment. `jobTypes` is intentionally NOT
 // re-stringified; the wire contract for that field is `string[]`, matching
