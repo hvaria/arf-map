@@ -52,6 +52,7 @@ import {
   markReportReady,
   markReportFailed,
 } from "./reportsStorage";
+import { renderPreauditPullPdf } from "./reportPdf";
 import type { OpsReport } from "./opsSchema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -501,21 +502,19 @@ export async function persistAsReport(
   pullId: number,
 ): Promise<OpsReport | undefined> {
   try {
-    const payload = {
+    const generatedAt = Date.now();
+    const bytes = await renderPreauditPullPdf({
       facilityNumber,
-      generatedAt: Date.now(),
+      generatedAt,
       generatedBy,
-      spec: {
-        audience: spec.audience,
-        audienceLabel: spec.audienceLabel,
-        windowStartAt: spec.windowStartAt,
-        windowEndAt: spec.windowEndAt,
-        sections: spec.sections,
-      },
+      audience: spec.audience,
+      audienceLabel: spec.audienceLabel,
+      windowStartAt: spec.windowStartAt,
+      windowEndAt: spec.windowEndAt,
+      sections: spec.sections,
       totals,
       bundle,
-    };
-    const bytes = Buffer.from(JSON.stringify(payload, null, 2), "utf8");
+    });
     const stub = await createReportStub(
       {
         facilityNumber,
@@ -537,7 +536,7 @@ export async function persistAsReport(
     return await markReportReady(
       stub.id,
       facilityNumber,
-      { bytes, mime: "application/json" },
+      { bytes, mime: "application/pdf" },
       actor,
     );
   } catch (err) {

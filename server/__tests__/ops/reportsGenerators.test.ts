@@ -2,10 +2,10 @@
  * Wave 5 — Reports Hub generators tests.
  *
  * Coverage (the six implemented generators):
- *  - preaudit_pull           → application/json, non-empty bytes, parses back
+ *  - preaudit_pull           → application/pdf, %PDF header, non-empty bytes
  *  - incident_summary        → application/pdf, %PDF header, window honored
  *  - mar_export              → text/csv, header row + empty body for no rows
- *  - audit_trail             → text/csv, window honored
+ *  - audit_trail             → text/csv, humanized "changes" column, window honored
  *  - monthly_trust_statement → application/pdf, %PDF header
  *  - vendor_coi_matrix       → text/csv, header + body rows
  *  - stubs (e.g. tracker_export) → throw "Not implemented yet"
@@ -104,7 +104,7 @@ function ctx(now: number) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("REPORT_GENERATORS.preaudit_pull", () => {
-  it("produces non-empty JSON bytes parsable back to a bundle", async () => {
+  it("produces a human-readable PDF (not raw JSON)", async () => {
     const now = Date.now();
     const gen = getReportGenerator("preaudit_pull")!;
     const out = await gen(ctx(now), {
@@ -113,11 +113,9 @@ describe("REPORT_GENERATORS.preaudit_pull", () => {
       windowEndAt: now,
       sections: ["incidents"],
     });
-    expect(out.mime).toBe("application/json");
+    expect(out.mime).toBe("application/pdf");
     expect(out.bytes.byteLength).toBeGreaterThan(0);
-    const parsed = JSON.parse(out.bytes.toString("utf8"));
-    expect(parsed.spec.audience).toBe("internal");
-    expect(parsed.bundle).toBeDefined();
+    expect(out.bytes.subarray(0, 4).toString("ascii")).toBe("%PDF");
     expect(out.parameters.audience).toBe("internal");
   });
 });
@@ -164,7 +162,7 @@ describe("REPORT_GENERATORS.mar_export", () => {
     });
     expect(out.mime).toBe("text/csv");
     const text = out.bytes.toString("utf8");
-    expect(text.startsWith("id,scheduled_at,administered_at")).toBe(true);
+    expect(text.startsWith("ID,Scheduled (PT),Administered (PT)")).toBe(true);
   });
 });
 
@@ -196,6 +194,12 @@ describe("REPORT_GENERATORS.audit_trail", () => {
     const lines = out.bytes.toString("utf8").trim().split(/\r?\n/);
     // header + 3 data rows.
     expect(lines.length).toBeGreaterThanOrEqual(4);
+    // Humanized: a readable "Changes" column, no raw before/after JSON blobs.
+    expect(lines[0].endsWith("Changes")).toBe(true);
+    expect(lines[0]).not.toContain("before_json");
+    expect(lines[0]).not.toContain("after_json");
+    // The three planted rows are creates → "Created…" summary, never "{".
+    expect(out.bytes.toString("utf8")).not.toContain('{"');
   });
 });
 
@@ -279,7 +283,7 @@ describe("REPORT_GENERATORS.vendor_coi_matrix", () => {
     const out = await gen(ctx(now), {});
     expect(out.mime).toBe("text/csv");
     const text = out.bytes.toString("utf8");
-    expect(text.startsWith("id,vendor_name,vendor_type")).toBe(true);
+    expect(text.startsWith("ID,Vendor,Service Type")).toBe(true);
     // Header + 2 rows + trailing newline.
     const lines = text.trim().split(/\r?\n/);
     expect(lines.length).toBe(3);
@@ -287,36 +291,88 @@ describe("REPORT_GENERATORS.vendor_coi_matrix", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// stubs
+// Other window-scoped CSVs (complaint, drill, posting verification) — header
+// shape + empty body for an empty window. Detailed row coverage lives in the
+// per-storage suites; this is a smoke test that the generators run end-to-end.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("REPORT_GENERATORS stubs", () => {
-  it("tracker_export throws 'Not implemented yet'", async () => {
-    const gen = REPORT_GENERATORS.tracker_export;
-    expect(gen).toBeDefined();
-    if (gen) {
-      await expect(gen(ctx(Date.now()), {})).rejects.toThrow(
-        /Not implemented yet/,
-      );
-    }
-  });
-
-  it("credentials_matrix / complaint_log / drill_log_export all throw", async () => {
-    for (const k of [
-      "credentials_matrix",
-      "complaint_log",
-      "drill_log_export",
-      "posting_verification_log",
-      "chart_completeness_snapshot",
-    ] as const) {
-      const gen = REPORT_GENERATORS[k];
+describe("REPORT_GENERATORS window-scoped CSVs", () => {
+  it("complaint_log / drill_log_export / posting_verification_log return CSV with Title Case headers", async () => {
+    const now = Date.now();
+    const window = { windowStartAt: now - DAY, windowEndAt: now };
+    const cases: Array<{ kind: string; firstColumn: string }> = [
+      { kind: "complaint_log", firstColumn: "ID,Received (PT)" },
+      { kind: "drill_log_export", firstColumn: "ID,Executed (PT)" },
+      { kind: "posting_verification_log", firstColumn: "ID,Verified (PT)" },
+    ];
+    for (const c of cases) {
+      const gen = REPORT_GENERATORS[c.kind as keyof typeof REPORT_GENERATORS];
       expect(gen).toBeDefined();
       if (gen) {
         // eslint-disable-next-line no-await-in-loop
-        await expect(gen(ctx(Date.now()), {})).rejects.toThrow(
-          /Not implemented yet/,
-        );
+        const out = await gen(ctx(now), window);
+        expect(out.mime).toBe("text/csv");
+        expect(out.bytes.toString("utf8").startsWith(c.firstColumn)).toBe(true);
       }
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Snapshot CSVs (credentials_matrix, chart_completeness_snapshot)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("REPORT_GENERATORS snapshot CSVs", () => {
+  it("credentials_matrix returns CSV with Title Case header", async () => {
+    const gen = REPORT_GENERATORS.credentials_matrix;
+    expect(gen).toBeDefined();
+    if (gen) {
+      const out = await gen(ctx(Date.now()), {});
+      expect(out.mime).toBe("text/csv");
+      expect(out.bytes.toString("utf8").startsWith("ID,Staff ID,Credential Type")).toBe(true);
+    }
+  });
+
+  it("chart_completeness_snapshot returns CSV with Title Case header", async () => {
+    const gen = REPORT_GENERATORS.chart_completeness_snapshot;
+    expect(gen).toBeDefined();
+    if (gen) {
+      const out = await gen(ctx(Date.now()), {});
+      expect(out.mime).toBe("text/csv");
+      expect(
+        out.bytes.toString("utf8").startsWith("Resident ID,Resident Last Name"),
+      ).toBe(true);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// tracker_export — needs a slug. Empty window with no entries is the smoke test.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("REPORT_GENERATORS.tracker_export", () => {
+  it("returns CSV when given a valid slug and window", async () => {
+    const gen = REPORT_GENERATORS.tracker_export;
+    expect(gen).toBeDefined();
+    if (gen) {
+      const now = Date.now();
+      const out = await gen(ctx(now), {
+        slug: "adl",
+        windowStartAt: now - DAY,
+        windowEndAt: now,
+      });
+      expect(out.mime).toBe("text/csv");
+      expect(out.bytes.toString("utf8").startsWith("ID,Occurred (PT)")).toBe(true);
+    }
+  });
+
+  it("throws when slug is missing", async () => {
+    const gen = REPORT_GENERATORS.tracker_export;
+    if (gen) {
+      const now = Date.now();
+      await expect(
+        gen(ctx(now), { windowStartAt: now - DAY, windowEndAt: now }),
+      ).rejects.toThrow(/slug is required/i);
     }
   });
 });

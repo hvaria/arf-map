@@ -5376,6 +5376,7 @@ opsRouter.post(
         shareLinkId,
         shareToken,
         reportId,
+        deliveryMethod: spec.deliveryMethod,
         generatedAt: pull.generatedAt,
         windowStartAt: pull.windowStartAt,
         windowEndAt: pull.windowEndAt,

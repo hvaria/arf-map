@@ -288,8 +288,10 @@ function GenerateReportDialog({
     if (kind === "monthly_trust_statement") {
       const [y, m] = trustMonth.split("-").map(Number);
       if (!y || !m) return null;
+      const accId = Number(trustAccountId);
+      if (!Number.isFinite(accId) || accId <= 0) return null;
       return {
-        accountId: trustAccountId ? Number(trustAccountId) : undefined,
+        accountId: accId,
         year: y,
         month: m,
       };
@@ -477,13 +479,17 @@ function GenerateReportDialog({
           {/* monthly_trust_statement */}
           {kind === "monthly_trust_statement" && (
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Account ID">
+              <FormField
+                label="Account ID"
+                required
+                error={showErrors ? errors.params : undefined}
+              >
                 <Input
                   type="number"
                   min={1}
                   value={trustAccountId}
                   onChange={(e) => setTrustAccountId(e.target.value)}
-                  placeholder="Optional"
+                  placeholder="e.g. 12"
                   aria-label="Trust account id"
                 />
               </FormField>

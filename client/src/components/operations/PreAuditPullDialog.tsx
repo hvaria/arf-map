@@ -116,19 +116,18 @@ function parseLocalDate(value: string): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
-function downloadJson(filename: string, payload: unknown): void {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: "application/json",
-  });
-  const url = URL.createObjectURL(blob);
+// The pre-audit pull is materialized server-side as a PDF report row; we
+// download it via the Reports streaming endpoint (Content-Disposition wins)
+// rather than building a client-side file. A plain `<a download>` click is
+// all that's needed.
+function triggerReportDownload(reportId: number): void {
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
+  a.href = `/api/ops/reports/${reportId}/download`;
+  a.rel = "noopener";
+  a.setAttribute("download", "");
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // Defer the revoke so the click handler can finish in older Safari.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function fmtRelativeFuture(ms: number): string {
@@ -259,8 +258,10 @@ export function PreAuditPullDialog({
         windowEndAt: endMs,
         sections: selectedSections,
         deliveryMethod: delivery,
-        // Wave 5 Reports Hub — opt-in mirror to the library.
-        saveToReports,
+        // The "download" delivery hands back a server-rendered PDF, which is
+        // the persisted report row — so a download always materializes one
+        // (regardless of the share_link-only "save to library" toggle below).
+        saveToReports: delivery === "download" ? true : saveToReports,
       };
       if (delivery === "share_link") {
         const preset =
@@ -276,16 +277,17 @@ export function PreAuditPullDialog({
       return (await res.json()) as PreauditPullResponse;
     },
     onSuccess: (resp) => {
-      const result = resp.data;
-      setGenerated(result);
-      // Wave 5 — the BE may surface `savedReportId` when `saveToReports`
-      // was true. Capture for the in-dialog deep-link confirmation row.
-      const respWithReportId = result as PreauditPullResult & {
+      const result = resp.data as PreauditPullResult & {
         deliveryMethod: DeliveryMethod;
-        savedReportId?: number | null;
+        reportId?: number | null;
       };
-      if (saveToReports && respWithReportId.savedReportId) {
-        setSavedReportId(respWithReportId.savedReportId);
+      setGenerated(result);
+      // The pull is persisted as a PDF report row (always for download,
+      // opt-in for share_link). Capture its id for the in-dialog deep-link
+      // and trigger the PDF download.
+      const reportId = result.reportId ?? null;
+      if (reportId) {
+        setSavedReportId(reportId);
         void qc.invalidateQueries({
           predicate: (q) => {
             const k = q.queryKey[0];
@@ -308,16 +310,16 @@ export function PreAuditPullDialog({
         },
       });
 
-      if (result.deliveryMethod === "download" && result.bundle) {
-        const stamp = new Date().toISOString().slice(0, 10);
-        downloadJson(`audit-pull-${audience}-${stamp}.json`, {
-          generatedAt: result.generatedAt,
-          windowStartAt: result.windowStartAt,
-          windowEndAt: result.windowEndAt,
-          audience,
-          totals: result.totals,
-          bundle: result.bundle,
-        });
+      if (result.deliveryMethod === "download") {
+        if (reportId) {
+          triggerReportDownload(reportId);
+        } else {
+          toast({
+            title: "Pull saved, but the PDF export didn't finish",
+            description: "Open it from the Reports library to retry.",
+            variant: "destructive",
+          });
+        }
       }
     },
     onError: (e: Error) => {
@@ -379,11 +381,10 @@ export function PreAuditPullDialog({
               <div className="rounded-lg border bg-emerald-50 border-emerald-200 p-3">
                 <p className="text-xs text-emerald-700 mb-1.5 font-medium">
                   <Download className="h-3.5 w-3.5 inline mr-1" />
-                  Bundle downloaded
+                  PDF downloaded
                 </p>
                 <p className="text-[11px] text-emerald-700">
-                  Your browser saved the JSON bundle. Check your Downloads
-                  folder.
+                  Your browser saved the PDF. Check your Downloads folder.
                 </p>
               </div>
             ) : (
@@ -614,24 +615,28 @@ export function PreAuditPullDialog({
               )}
             </div>
 
-            <label
-              className="flex items-start gap-2 rounded-md border bg-stone-50 p-2.5 text-xs cursor-pointer"
-              data-testid="preaudit-pull-save-to-reports"
-            >
-              <Checkbox
-                checked={saveToReports}
-                onCheckedChange={(v) => setSaveToReports(v === true)}
-                aria-label="Save to reports library"
-                className="mt-0.5"
-              />
-              <span>
-                <span className="font-medium block">Save to reports library</span>
-                <span className="text-muted-foreground">
-                  Mirror this pull into the Reports hub so auditors can retrieve
-                  it later, even after a share-link expires.
+            {/* For a download, the PDF *is* the persisted report row, so it's
+                always saved — this opt-in only applies to the share-link flow. */}
+            {delivery === "share_link" && (
+              <label
+                className="flex items-start gap-2 rounded-md border bg-stone-50 p-2.5 text-xs cursor-pointer"
+                data-testid="preaudit-pull-save-to-reports"
+              >
+                <Checkbox
+                  checked={saveToReports}
+                  onCheckedChange={(v) => setSaveToReports(v === true)}
+                  aria-label="Save to reports library"
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium block">Save to reports library</span>
+                  <span className="text-muted-foreground">
+                    Mirror this pull into the Reports hub so auditors can retrieve
+                    it later, even after a share-link expires.
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            )}
 
             <fieldset className="rounded-md border p-2.5 space-y-1.5">
               <legend className="text-xs font-medium text-muted-foreground px-1">
@@ -646,7 +651,7 @@ export function PreAuditPullDialog({
                   onChange={() => setDelivery("download")}
                   data-testid="preaudit-pull-delivery-download"
                 />
-                Download bundle (JSON)
+                Download PDF
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input

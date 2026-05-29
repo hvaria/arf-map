@@ -61,7 +61,7 @@ export function reportExtensionForMime(mime: ReportMimeType): string {
 
 /** Default mime per report kind (server may override). */
 export const REPORT_DEFAULT_MIME: Record<ReportKind, ReportMimeType> = {
-  preaudit_pull: "application/json",
+  preaudit_pull: "application/pdf",
   incident_summary: "application/pdf",
   mar_export: "text/csv",
   audit_trail: "text/csv",
