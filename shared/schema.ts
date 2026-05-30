@@ -326,6 +326,60 @@ export const applicantInterests = pgTable("applicant_interests", {
   updatedAt: ts("updated_at").notNull(),
 });
 
+// ── Applicant Profile Review (migration 0010) ────────────────────────────────
+// Two facility-side, per-interest collaboration tables. Both are scoped to a
+// single applicant_interests row via a composite FK against
+// (id, facility_number) so a child can never point at an interest in another
+// tenant (Phase 2 composite-FK pattern). FKs / CHECK constraints live in the
+// migration + bootstrap SQL, not in these Drizzle defs (repo convention).
+
+// Append-only audit of every status transition on an interest. Insert-only at
+// the application contract (Phase 3 append-only pattern: created_by only, no
+// updated_* and no trigger). `changed_by` is the facility account id.
+export const applicantStatusHistory = pgTable("applicant_status_history", {
+  id: serial("id").primaryKey(),
+  interestId: integer("interest_id").notNull(),
+  facilityNumber: text("facility_number").notNull(),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status").notNull(),
+  changedBy: text("changed_by").default("system"),
+  note: text("note"),
+  createdAt: ts("created_at").notNull(),
+});
+export type ApplicantStatusHistory = typeof applicantStatusHistory.$inferSelect;
+export type InsertApplicantStatusHistory = typeof applicantStatusHistory.$inferInsert;
+
+// Recruiter-only internal notes about an applicant. NEVER returned on any job
+// seeker API surface. Soft-delete (deleted_at/deleted_by) per the Phase 7
+// soft-delete policy — notes are operational/audit-grade. external_id is the
+// URL-exposed public id (nanoid(12), Phase 7). updated_at is maintained by the
+// set_updated_at_epoch_ms() trigger (Phase 3); created_by has a DB default of
+// 'system' and is deliberately not .notNull() in the Drizzle def.
+export const applicantNotes = pgTable("applicant_notes", {
+  id: serial("id").primaryKey(),
+  externalId: text("external_id").notNull().unique(),
+  interestId: integer("interest_id").notNull(),
+  facilityNumber: text("facility_number").notNull(),
+  body: text("body").notNull(),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+  createdBy: text("created_by").default("system"),
+  updatedBy: text("updated_by").default("system"),
+  deletedAt: ts("deleted_at"),
+  deletedBy: text("deleted_by"),
+});
+export type ApplicantNote = typeof applicantNotes.$inferSelect;
+export type InsertApplicantNote = typeof applicantNotes.$inferInsert;
+
+// Input schema for create/edit of a recruiter note. Body is bounded; the
+// schema is strict so unknown fields are a 400 (Phase 6 validation hardening).
+export const applicantNoteInputSchema = z
+  .object({
+    body: z.string().trim().min(1, "Note body is required").max(5000),
+  })
+  .strict();
+export type ApplicantNoteInput = z.infer<typeof applicantNoteInputSchema>;
+
 // One row per credential (license/certification/clearance) held by a job
 // seeker. 1:many on job_seeker_accounts.id (no FK constraint — follows the
 // existing repo convention; cf. job_seeker_profiles.account_id).
@@ -366,7 +420,17 @@ export type JobSeekerProfile = typeof jobSeekerProfiles.$inferSelect;
 // NEW: expression-of-interest types
 export type ApplicantInterest = typeof applicantInterests.$inferSelect;
 export type InsertApplicantInterest = typeof applicantInterests.$inferInsert;
-export const interestStatusSchema = z.enum(["pending", "viewed", "shortlisted"]);
+// Applicant pipeline statuses. `rejected` + `archived` were added with the
+// Applicant Profile Review feature (migration 0010). The DB enforces this set
+// via a CHECK constraint on applicant_interests.status — when adding a value
+// here, also drop + re-add that CHECK in a migration (Phase 2 invariant).
+export const interestStatusSchema = z.enum([
+  "pending",
+  "viewed",
+  "shortlisted",
+  "rejected",
+  "archived",
+]);
 export type InterestStatus = z.infer<typeof interestStatusSchema>;
 
 // ── Job seeker credentials ───────────────────────────────────────────────────

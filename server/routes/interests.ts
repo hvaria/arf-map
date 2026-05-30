@@ -2,10 +2,16 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { Request, Response, NextFunction } from "express";
-import { storage, getInterestsByFacilityAsync, getInterestsBySeekerAsync } from "../storage";
+import {
+  storage,
+  getInterestsByFacilityAsync,
+  getInterestsBySeekerAsync,
+  getApplicantProfileDetail,
+} from "../storage";
 import { requireJobSeekerAuth } from "../middleware/requireJobSeekerAuth";
-import { interestStatusSchema } from "@shared/schema";
+import { interestStatusSchema, applicantNoteInputSchema } from "@shared/schema";
 import type { ApplicantInterest } from "@shared/schema";
+import { respondError, AppError } from "../lib/respondError";
 
 export const interestsRouter = Router();
 
@@ -156,10 +162,128 @@ interestsRouter.patch("/facility/applicants/:externalId", requireFacilityAuth, a
       externalId,
       req.user!.facilityNumber,
       parsed.data.status,
+      String(req.user!.id),
     );
     if (!updated) return res.status(404).json({ message: "Applicant not found" });
     res.json(interestToWire(updated));
   } catch (err) {
     next(err);
+  }
+});
+
+/**
+ * GET /api/facility/applicants/:externalId — full applicant profile for the
+ * facility review drawer. Tenancy enforced in storage (facility_number scope);
+ * a foreign/unknown id 404s with no existence leak. Opening a `pending`
+ * applicant auto-transitions it to `viewed` (idempotent, recorded in history).
+ */
+interestsRouter.get("/facility/applicants/:externalId", requireFacilityAuth, async (req, res) => {
+  try {
+    const externalId = String(req.params.externalId ?? "");
+    if (!EXTERNAL_ID_REGEX.test(externalId)) {
+      throw new AppError("VALIDATION_ERROR", "Invalid id", 400);
+    }
+    const facilityNumber = req.user!.facilityNumber;
+    const result = await getApplicantProfileDetail(externalId, facilityNumber);
+    if (!result) {
+      throw new AppError("NOT_FOUND", "Applicant not found.", 404);
+    }
+
+    // Auto-advance pending → viewed on first open (recorded in status history).
+    if (result.detail.interest.status === "pending") {
+      await storage.updateApplicantInterestStatusByExternalId(
+        externalId,
+        facilityNumber,
+        "viewed",
+        String(req.user!.id),
+      );
+      result.detail.interest.status = "viewed";
+    }
+
+    res.json(result.detail);
+  } catch (err) {
+    respondError(res, err);
+  }
+});
+
+/** GET /api/facility/applicants/:externalId/notes — recruiter notes (newest first) */
+interestsRouter.get("/facility/applicants/:externalId/notes", requireFacilityAuth, async (req, res) => {
+  try {
+    const externalId = String(req.params.externalId ?? "");
+    if (!EXTERNAL_ID_REGEX.test(externalId)) {
+      throw new AppError("VALIDATION_ERROR", "Invalid id", 400);
+    }
+    const facilityNumber = req.user!.facilityNumber;
+    const interest = await storage.getApplicantInterestByExternalId(externalId, facilityNumber);
+    if (!interest) throw new AppError("NOT_FOUND", "Applicant not found.", 404);
+    const notes = await storage.listApplicantNotes(interest.id);
+    res.json({ notes });
+  } catch (err) {
+    respondError(res, err);
+  }
+});
+
+/** POST /api/facility/applicants/:externalId/notes — add a recruiter note */
+interestsRouter.post("/facility/applicants/:externalId/notes", requireFacilityAuth, async (req, res) => {
+  try {
+    const externalId = String(req.params.externalId ?? "");
+    if (!EXTERNAL_ID_REGEX.test(externalId)) {
+      throw new AppError("VALIDATION_ERROR", "Invalid id", 400);
+    }
+    const parsed = applicantNoteInputSchema.safeParse(req.body);
+    if (!parsed.success) throw parsed.error;
+    const facilityNumber = req.user!.facilityNumber;
+    const interest = await storage.getApplicantInterestByExternalId(externalId, facilityNumber);
+    if (!interest) throw new AppError("NOT_FOUND", "Applicant not found.", 404);
+    const note = await storage.addApplicantNote(
+      interest.id,
+      facilityNumber,
+      parsed.data.body,
+      String(req.user!.id),
+    );
+    res.status(201).json(note);
+  } catch (err) {
+    respondError(res, err);
+  }
+});
+
+/** PATCH /api/facility/applicants/:externalId/notes/:noteExternalId — edit a note */
+interestsRouter.patch("/facility/applicants/:externalId/notes/:noteExternalId", requireFacilityAuth, async (req, res) => {
+  try {
+    const noteExternalId = String(req.params.noteExternalId ?? "");
+    if (!EXTERNAL_ID_REGEX.test(noteExternalId)) {
+      throw new AppError("VALIDATION_ERROR", "Invalid id", 400);
+    }
+    const parsed = applicantNoteInputSchema.safeParse(req.body);
+    if (!parsed.success) throw parsed.error;
+    const updated = await storage.updateApplicantNoteByExternalId(
+      noteExternalId,
+      req.user!.facilityNumber,
+      parsed.data.body,
+      String(req.user!.id),
+    );
+    if (!updated) throw new AppError("NOT_FOUND", "Note not found.", 404);
+    res.json(updated);
+  } catch (err) {
+    respondError(res, err);
+  }
+});
+
+/** DELETE /api/facility/applicants/:externalId/notes/:noteExternalId — soft-delete a note */
+interestsRouter.delete("/facility/applicants/:externalId/notes/:noteExternalId", requireFacilityAuth, async (req, res) => {
+  try {
+    const noteExternalId = String(req.params.noteExternalId ?? "");
+    if (!EXTERNAL_ID_REGEX.test(noteExternalId)) {
+      throw new AppError("VALIDATION_ERROR", "Invalid id", 400);
+    }
+    const ok = await storage.softDeleteApplicantNoteByExternalId(
+      noteExternalId,
+      req.user!.facilityNumber,
+      String(req.user!.id),
+    );
+    if (!ok) throw new AppError("NOT_FOUND", "Note not found.", 404);
+    res.status(204).end();
+  } catch (err) {
+    respondError(res, err);
   }
 });

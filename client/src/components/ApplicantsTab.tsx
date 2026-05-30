@@ -1,6 +1,6 @@
 // NEW: expression-of-interest — facility-side applicant dashboard tab
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Users, MapPin, Briefcase, Clock, Mail, MessageSquare } from "lucide-react";
+import { Users, MapPin, Briefcase, Clock, Mail, MessageSquare, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,9 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ApplicantProfileDrawer, type ApplicantSeed } from "@/components/applicants/ApplicantProfileDrawer";
+import { useHashParam } from "@/hooks/useHashParam";
+import { cn } from "@/lib/utils";
 
 interface Applicant {
   // Phase 7: API exposes the URL-safe `externalId` (nanoid) instead of the
@@ -43,7 +46,15 @@ function timeAgo(ts: number): string {
   return `${days} days ago`;
 }
 
-function ApplicantCard({ applicant }: { applicant: Applicant }) {
+function ApplicantCard({
+  applicant,
+  selected,
+  onView,
+}: {
+  applicant: Applicant;
+  selected: boolean;
+  onView: () => void;
+}) {
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -66,8 +77,20 @@ function ApplicantCard({ applicant }: { applicant: Applicant }) {
 
   const location = [applicant.city, applicant.state].filter(Boolean).join(", ");
 
+  // Clicking the card opens the full-profile drawer. Interactive children
+  // (mailto link, status select, buttons) stopPropagation so they don't also
+  // trigger the drawer.
   return (
-    <div className="rounded-lg border p-4 space-y-3">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onView}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onView(); } }}
+      className={cn(
+        "rounded-lg border p-4 space-y-3 cursor-pointer transition-colors hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring",
+        selected && "border-l-2 border-l-primary bg-muted/40",
+      )}
+    >
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -78,6 +101,7 @@ function ApplicantCard({ applicant }: { applicant: Applicant }) {
             <p className="text-sm font-medium leading-tight truncate">{displayName}</p>
             <a
               href={`mailto:${applicant.email}`}
+              onClick={(e) => e.stopPropagation()}
               className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1"
             >
               <Mail className="h-3 w-3" />
@@ -138,9 +162,16 @@ function ApplicantCard({ applicant }: { applicant: Applicant }) {
         </div>
       )}
 
-      {/* Status control */}
-      <div className="flex items-center justify-between pt-1 border-t">
-        <span className="text-xs text-muted-foreground">Update status:</span>
+      {/* Footer: view profile + status control */}
+      <div className="flex items-center justify-between pt-1 border-t" onClick={(e) => e.stopPropagation()}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-primary"
+          onClick={onView}
+        >
+          View profile <ChevronRight className="h-3 w-3 ml-0.5" />
+        </Button>
         <Select
           value={applicant.status}
           onValueChange={(v) => statusMutation.mutate(v)}
@@ -153,6 +184,8 @@ function ApplicantCard({ applicant }: { applicant: Applicant }) {
             <SelectItem value="pending">Pending</SelectItem>
             <SelectItem value="viewed">Viewed</SelectItem>
             <SelectItem value="shortlisted">Shortlisted</SelectItem>
+            <SelectItem value="rejected">Rejected</SelectItem>
+            <SelectItem value="archived">Archived</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -161,11 +194,34 @@ function ApplicantCard({ applicant }: { applicant: Applicant }) {
 }
 
 export function ApplicantsTab() {
+  // Selection is URL-driven (`#/facility-portal/applicants?applicant=<id>`) so
+  // the open profile survives refresh, back-button, and internal share links.
+  const [selectedId, setSelectedId] = useHashParam("applicant");
+
   const { data: applicants, isLoading, isError } = useQuery<Applicant[]>({
     queryKey: ["/api/facility/applicants"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 30000,
   });
+
+  const toSeed = (a: Applicant): ApplicantSeed => ({
+    externalId: a.externalId,
+    firstName: a.firstName,
+    lastName: a.lastName,
+    email: a.email,
+    city: a.city,
+    state: a.state,
+    status: a.status,
+    jobTitle: a.jobTitle,
+  });
+
+  const orderedIds = (applicants ?? []).map((a) => a.externalId);
+  const selectedSeed = selectedId
+    ? (() => {
+        const a = (applicants ?? []).find((x) => x.externalId === selectedId);
+        return a ? toSeed(a) : null;
+      })()
+    : null;
 
   if (isLoading) {
     return (
@@ -213,9 +269,22 @@ export function ApplicantsTab() {
       </div>
       <div className="space-y-3">
         {applicants.map((a) => (
-          <ApplicantCard key={a.externalId} applicant={a} />
+          <ApplicantCard
+            key={a.externalId}
+            applicant={a}
+            selected={selectedId === a.externalId}
+            onView={() => setSelectedId(a.externalId)}
+          />
         ))}
       </div>
+
+      <ApplicantProfileDrawer
+        externalId={selectedId}
+        seed={selectedSeed}
+        orderedIds={orderedIds}
+        onNavigate={(id) => setSelectedId(id)}
+        onClose={() => setSelectedId(null)}
+      />
     </div>
   );
 }

@@ -22,6 +22,9 @@ import {
   jobSeekerWorkExperience,
   type JobSeekerWorkExperience,
   type WorkExperienceInput,
+  applicantNotes,
+  applicantStatusHistory,
+  type ApplicantNote,
 } from "@shared/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -112,7 +115,17 @@ export interface IStorage {
     externalId: string,
     facilityNumber: string,
     status: string,
+    changedBy?: string,
+    note?: string,
   ): Promise<ApplicantInterest | undefined>;
+
+  getApplicantInterestByExternalId(externalId: string, facilityNumber: string): Promise<ApplicantInterest | undefined>;
+
+  // Applicant recruiter notes (facility-side, soft-deleted).
+  listApplicantNotes(interestId: number): Promise<ApplicantNote[]>;
+  addApplicantNote(interestId: number, facilityNumber: string, body: string, by: string): Promise<ApplicantNote>;
+  updateApplicantNoteByExternalId(noteExternalId: string, facilityNumber: string, body: string, by: string): Promise<ApplicantNote | undefined>;
+  softDeleteApplicantNoteByExternalId(noteExternalId: string, facilityNumber: string, by: string): Promise<boolean>;
 
   listJobSeekerCredentials(accountId: number): Promise<JobSeekerCredential[]>;
   createJobSeekerCredential(accountId: number, input: CredentialInput): Promise<JobSeekerCredential>;
@@ -504,6 +517,8 @@ export class DatabaseStorage implements IStorage {
     externalId: string,
     facilityNumber: string,
     status: string,
+    changedBy?: string,
+    note?: string,
   ): Promise<ApplicantInterest | undefined> {
     const existingRows = await db
       .select()
@@ -512,13 +527,124 @@ export class DatabaseStorage implements IStorage {
         eq(applicantInterests.externalId, externalId),
         eq(applicantInterests.facilityNumber, facilityNumber),
       ));
-    if (!existingRows[0]) return undefined;
+    const existing = existingRows[0];
+    if (!existing) return undefined;
+    // No-op transitions don't churn the row or pollute the history timeline.
+    if (existing.status === status) return existing as ApplicantInterest;
+    const now = Date.now();
     const rows = await db
       .update(applicantInterests)
-      .set({ status, updatedAt: Date.now() })
-      .where(eq(applicantInterests.id, existingRows[0].id))
+      .set({ status, updatedAt: now })
+      .where(eq(applicantInterests.id, existing.id))
       .returning();
+    // Append-only audit of the transition (Phase 3 append-only pattern).
+    await db.insert(applicantStatusHistory).values({
+      interestId: existing.id,
+      facilityNumber,
+      fromStatus: existing.status,
+      toStatus: status,
+      changedBy: changedBy ?? "system",
+      note: note ?? null,
+      createdAt: now,
+    });
     return rows[0] as ApplicantInterest | undefined;
+  }
+
+  // Resolve a facility-scoped interest by its public external_id. Returns
+  // undefined for a foreign/unknown id so callers can 404 without leaking
+  // existence across tenants.
+  async getApplicantInterestByExternalId(
+    externalId: string,
+    facilityNumber: string,
+  ): Promise<ApplicantInterest | undefined> {
+    return getFirst(
+      db.select().from(applicantInterests).where(and(
+        eq(applicantInterests.externalId, externalId),
+        eq(applicantInterests.facilityNumber, facilityNumber),
+      )),
+    );
+  }
+
+  // ── Applicant recruiter notes (facility-side, soft-deleted) ────────────────
+  // All reads/writes are scoped by facility_number so a facility can only touch
+  // notes attached to its own applicants. interestId is resolved from the
+  // interest's external_id at the call site (route layer).
+  async listApplicantNotes(interestId: number): Promise<ApplicantNote[]> {
+    return db
+      .select()
+      .from(applicantNotes)
+      .where(and(
+        eq(applicantNotes.interestId, interestId),
+        isNull(applicantNotes.deletedAt),
+      ))
+      .orderBy(desc(applicantNotes.createdAt));
+  }
+
+  async addApplicantNote(
+    interestId: number,
+    facilityNumber: string,
+    body: string,
+    by: string,
+  ): Promise<ApplicantNote> {
+    const now = Date.now();
+    const rows = await db
+      .insert(applicantNotes)
+      .values({
+        externalId: generateExternalId(),
+        interestId,
+        facilityNumber,
+        body,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: by,
+        updatedBy: by,
+      })
+      .returning();
+    return rows[0] as ApplicantNote;
+  }
+
+  async updateApplicantNoteByExternalId(
+    noteExternalId: string,
+    facilityNumber: string,
+    body: string,
+    by: string,
+  ): Promise<ApplicantNote | undefined> {
+    const existing = await getFirst(
+      db.select().from(applicantNotes).where(and(
+        eq(applicantNotes.externalId, noteExternalId),
+        eq(applicantNotes.facilityNumber, facilityNumber),
+        isNull(applicantNotes.deletedAt),
+      )),
+    );
+    if (!existing) return undefined;
+    // updated_at is overwritten by the set_updated_at_epoch_ms() trigger; we
+    // still pass it for self-documenting storage code (CLAUDE.md Phase 3).
+    const rows = await db
+      .update(applicantNotes)
+      .set({ body, updatedAt: Date.now(), updatedBy: by })
+      .where(eq(applicantNotes.id, existing.id))
+      .returning();
+    return rows[0] as ApplicantNote | undefined;
+  }
+
+  async softDeleteApplicantNoteByExternalId(
+    noteExternalId: string,
+    facilityNumber: string,
+    by: string,
+  ): Promise<boolean> {
+    const existing = await getFirst(
+      db.select().from(applicantNotes).where(and(
+        eq(applicantNotes.externalId, noteExternalId),
+        eq(applicantNotes.facilityNumber, facilityNumber),
+        isNull(applicantNotes.deletedAt),
+      )),
+    );
+    if (!existing) return false;
+    await db
+      .update(applicantNotes)
+      .set({ deletedAt: Date.now(), deletedBy: by })
+      .where(eq(applicantNotes.id, existing.id));
+    return true;
   }
 
   async listJobSeekerCredentials(accountId: number): Promise<JobSeekerCredential[]> {
@@ -769,6 +895,200 @@ export async function getInterestsBySeekerAsync(jobSeekerId: number): Promise<Ap
     [jobSeekerId]
   );
   return result.rows;
+}
+
+// ── Applicant full-profile detail (facility-side review surface) ─────────────
+
+export type CredentialExpiryStatus = "valid" | "expiring" | "expired" | "none";
+
+// Computed server-side against server "now" so the chip tone never depends on
+// the client clock. expiresAt is a TZ-safe YYYY-MM-DD string (see schema).
+export function computeExpiryStatus(
+  expiresAt: string | null | undefined,
+  now: number = Date.now(),
+): CredentialExpiryStatus {
+  if (!expiresAt) return "none";
+  const exp = Date.parse(`${expiresAt}T00:00:00Z`);
+  if (Number.isNaN(exp)) return "none";
+  const days = (exp - now) / 86_400_000;
+  if (days < 0) return "expired";
+  if (days <= 60) return "expiring";
+  return "valid";
+}
+
+function normalizeJobTypes(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((v): v is string => typeof v === "string");
+  if (typeof raw === "string" && raw.length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+export interface ApplicantProfileDetail {
+  interest: {
+    externalId: string;
+    status: string;
+    roleInterest: string | null;
+    message: string | null;
+    createdAt: number;
+    updatedAt: number;
+    jobExternalId: string | null;
+    jobTitle: string | null;
+  };
+  profile: {
+    firstName: string | null;
+    lastName: string | null;
+    email: string;
+    phone: string | null;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    zipCode: string | null;
+    profilePictureUrl: string | null;
+    yearsExperience: number | null;
+    jobTypes: string[];
+    bio: string | null;
+  } | null;
+  credentials: Array<JobSeekerCredential & { expiryStatus: CredentialExpiryStatus }>;
+  workExperience: JobSeekerWorkExperience[];
+  notes: ApplicantNote[];
+  statusHistory: Array<{
+    fromStatus: string | null;
+    toStatus: string;
+    changedBy: string | null;
+    note: string | null;
+    createdAt: number;
+  }>;
+  completion: { percent: number; missing: string[] };
+}
+
+interface InterestHeaderRow {
+  id: number;
+  jobSeekerId: number;
+  status: string;
+  roleInterest: string | null;
+  message: string | null;
+  createdAt: number;
+  updatedAt: number;
+  jobExternalId: string | null;
+  jobTitle: string | null;
+  email: string;
+}
+
+/**
+ * Full applicant profile for the facility review drawer. Tenancy is enforced in
+ * the WHERE clause (facility_number) — a foreign or unknown externalId returns
+ * undefined (caller maps to 404, no existence leak). Returns the internal
+ * interest id alongside the DTO so the route can record an auto-"viewed"
+ * transition without a second lookup.
+ */
+export async function getApplicantProfileDetail(
+  externalId: string,
+  facilityNumber: string,
+): Promise<{ interestId: number; detail: ApplicantProfileDetail } | undefined> {
+  const headerRes = await pool.query<InterestHeaderRow>(
+    `SELECT
+       ai.id as "id",
+       ai.job_seeker_id as "jobSeekerId",
+       ai.status,
+       ai.role_interest as "roleInterest",
+       ai.message,
+       ai.created_at as "createdAt",
+       ai.updated_at as "updatedAt",
+       jp.external_id as "jobExternalId",
+       jp.title as "jobTitle",
+       a.email
+     FROM applicant_interests ai
+     JOIN job_seeker_accounts a ON a.id = ai.job_seeker_id
+     LEFT JOIN job_postings jp ON jp.id = ai.job_id
+     WHERE ai.external_id = $1 AND ai.facility_number = $2`,
+    [externalId, facilityNumber],
+  );
+  const header = headerRes.rows[0];
+  if (!header) return undefined;
+
+  const accountId = header.jobSeekerId;
+  const [profileRow, credentials, workExperience, notes, history] = await Promise.all([
+    storage.getJobSeekerProfile(accountId),
+    storage.listJobSeekerCredentials(accountId),
+    storage.listJobSeekerWorkExperience(accountId),
+    storage.listApplicantNotes(header.id),
+    db
+      .select()
+      .from(applicantStatusHistory)
+      .where(eq(applicantStatusHistory.interestId, header.id))
+      .orderBy(desc(applicantStatusHistory.createdAt)),
+  ]);
+
+  const now = Date.now();
+  const credentialsWithExpiry = credentials.map((c) => ({
+    ...c,
+    expiryStatus: computeExpiryStatus(c.expiresAt, now),
+  }));
+
+  const profile = profileRow
+    ? {
+        firstName: profileRow.firstName,
+        lastName: profileRow.lastName,
+        email: header.email,
+        phone: profileRow.phone,
+        address: profileRow.address,
+        city: profileRow.city,
+        state: profileRow.state,
+        zipCode: profileRow.zipCode,
+        profilePictureUrl: profileRow.profilePictureUrl,
+        yearsExperience: profileRow.yearsExperience,
+        jobTypes: normalizeJobTypes(profileRow.jobTypes),
+        bio: profileRow.bio,
+      }
+    : null;
+
+  // Equal-weight completion over the signals a recruiter actually triages on.
+  const signals: Array<[string, boolean]> = [
+    ["name", Boolean(profileRow?.firstName || profileRow?.lastName)],
+    ["contact", Boolean(profileRow?.phone)],
+    ["location", Boolean(profileRow?.city || profileRow?.state)],
+    ["experience", profileRow?.yearsExperience != null],
+    ["roles", normalizeJobTypes(profileRow?.jobTypes).length > 0],
+    ["bio", Boolean(profileRow?.bio)],
+    ["credentials", credentials.length > 0],
+    ["workHistory", workExperience.length > 0],
+  ];
+  const present = signals.filter(([, ok]) => ok).length;
+  const percent = Math.round((present / signals.length) * 100);
+  const missing = signals.filter(([, ok]) => !ok).map(([k]) => k);
+
+  const detail: ApplicantProfileDetail = {
+    interest: {
+      externalId,
+      status: header.status,
+      roleInterest: header.roleInterest,
+      message: header.message,
+      createdAt: header.createdAt,
+      updatedAt: header.updatedAt,
+      jobExternalId: header.jobExternalId,
+      jobTitle: header.jobTitle,
+    },
+    profile,
+    credentials: credentialsWithExpiry,
+    workExperience,
+    notes,
+    statusHistory: history.map((h) => ({
+      fromStatus: h.fromStatus,
+      toStatus: h.toStatus,
+      changedBy: h.changedBy,
+      note: h.note,
+      createdAt: h.createdAt,
+    })),
+    completion: { percent, missing },
+  };
+
+  return { interestId: header.id, detail };
 }
 
 // ── Facility DB helpers (raw SQL for performance) ─────────────────────────────

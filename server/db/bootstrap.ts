@@ -520,6 +520,71 @@ const MAIN_PG_SCHEMA_SQL = `
     ON billing_bypass_redemptions(account_id, redeemed_at DESC);
   CREATE UNIQUE INDEX IF NOT EXISTS uniq_bypass_redemptions_account_active
     ON billing_bypass_redemptions(account_id) WHERE revoked_at IS NULL;
+
+  -- ── Applicant Profile Review ─────────────────────────────────────────────
+  -- See migrations/0010_applicant_profile_review.sql for the canonical
+  -- definition. Mirrored here so fresh dev DBs get the wider status enum,
+  -- recruiter notes, and status history without running db:migrate.
+  --
+  -- Status enum widened to add 'rejected' + 'archived'. DROP-then-ADD keeps the
+  -- CHECK idempotent on every boot.
+  ALTER TABLE applicant_interests
+    DROP CONSTRAINT IF EXISTS applicant_interests_status_check;
+  ALTER TABLE applicant_interests
+    ADD CONSTRAINT applicant_interests_status_check
+    CHECK (status IN ('pending', 'viewed', 'shortlisted', 'rejected', 'archived'));
+  -- Composite UNIQUE so the two child tables can FK against
+  -- (id, facility_number) for DB-level tenant integrity.
+  ALTER TABLE applicant_interests
+    DROP CONSTRAINT IF EXISTS applicant_interests_id_facility_number_unique;
+  ALTER TABLE applicant_interests
+    ADD CONSTRAINT applicant_interests_id_facility_number_unique
+    UNIQUE (id, facility_number);
+
+  -- Append-only status-change audit (created_by only; no updated_*/trigger).
+  CREATE TABLE IF NOT EXISTS applicant_status_history (
+    id              SERIAL PRIMARY KEY,
+    interest_id     INTEGER NOT NULL,
+    facility_number TEXT NOT NULL,
+    from_status     TEXT,
+    to_status       TEXT NOT NULL,
+    changed_by      TEXT DEFAULT 'system',
+    note            TEXT,
+    created_at      BIGINT NOT NULL,
+    CONSTRAINT applicant_status_history_interest_fk
+      FOREIGN KEY (interest_id, facility_number)
+      REFERENCES applicant_interests (id, facility_number)
+      ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_applicant_status_history_interest
+    ON applicant_status_history (interest_id, created_at DESC);
+
+  -- Recruiter-only internal notes (soft-delete, external_id, updated_at trigger).
+  CREATE TABLE IF NOT EXISTS applicant_notes (
+    id              SERIAL PRIMARY KEY,
+    external_id     TEXT NOT NULL,
+    interest_id     INTEGER NOT NULL,
+    facility_number TEXT NOT NULL,
+    body            TEXT NOT NULL,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL,
+    created_by      TEXT DEFAULT 'system',
+    updated_by      TEXT DEFAULT 'system',
+    deleted_at      BIGINT,
+    deleted_by      TEXT,
+    CONSTRAINT applicant_notes_interest_fk
+      FOREIGN KEY (interest_id, facility_number)
+      REFERENCES applicant_interests (id, facility_number)
+      ON DELETE CASCADE
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uniq_applicant_notes_external_id
+    ON applicant_notes (external_id);
+  CREATE INDEX IF NOT EXISTS idx_applicant_notes_interest_live
+    ON applicant_notes (interest_id, created_at DESC) WHERE deleted_at IS NULL;
+
+  DROP TRIGGER IF EXISTS trg_applicant_notes_updated_at ON applicant_notes;
+  CREATE TRIGGER trg_applicant_notes_updated_at BEFORE UPDATE ON applicant_notes
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at_epoch_ms();
 `;
 
 // Bootstrap is idempotent, but concurrent vitest forks running ADD
