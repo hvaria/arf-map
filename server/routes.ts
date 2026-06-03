@@ -14,6 +14,7 @@ import { adminEtlRouter } from "./routes/adminEtl";
 import { interestsRouter } from "./routes/interests"; // NEW: expression-of-interest
 import { credentialsRouter } from "./routes/credentials";
 import { workExperienceRouter } from "./routes/workExperience";
+import { resumeRouter } from "./routes/resume";
 import { billingRouter } from "./routes/billing";
 import { facilityProfileRouter } from "./routes/facilityProfile";
 import { accountRouter } from "./routes/account";
@@ -166,6 +167,7 @@ export async function registerRoutes(server: Server, app: Express) {
   app.use("/api", interestsRouter); // NEW: expression-of-interest
   app.use("/api", credentialsRouter);
   app.use("/api", workExperienceRouter);
+  app.use("/api", resumeRouter);
   app.use("/api/billing", billingRouter);
   app.use("/api", facilityProfileRouter);
   // Phase 4 — CCPA / email-change endpoints. Mounted at /api/account/*.

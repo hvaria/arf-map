@@ -13,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { CredentialBadge, useCredentials } from "@/components/CredentialBadge";
 import WorkExperienceTimeline from "@/components/seeker/WorkExperienceTimeline";
 import { useWorkExperience } from "@/components/seeker/WorkExperienceSection";
+import { DownloadResumeButton } from "@/components/seeker/DownloadResumeButton";
 import type { JobSeekerProfile } from "@/components/seeker/SeekerProfileEditor";
 
 interface SeekerProfileCardProps {
@@ -93,9 +94,15 @@ export function SeekerProfileCard({ profile, email, onEdit }: SeekerProfileCardP
               )}
             </div>
 
-            <Button variant="outline" size="sm" onClick={onEdit}>
-              <Edit3 className="h-4 w-4 mr-1.5" />Edit
-            </Button>
+            <div className="flex flex-col gap-2 shrink-0 sm:flex-row">
+              <Button variant="outline" size="sm" onClick={onEdit}>
+                <Edit3 className="h-4 w-4 mr-1.5" />Edit
+              </Button>
+              {/* Resume export — pulls the seeker's saved profile data into a
+                  PDF. Always shown; the server returns a guiding 422 if the
+                  profile is too sparse (no name) to make a usable resume. */}
+              <DownloadResumeButton variant="outline" size="sm" />
+            </div>
           </div>
 
           {profile?.bio && (
