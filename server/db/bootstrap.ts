@@ -535,11 +535,21 @@ const MAIN_PG_SCHEMA_SQL = `
     CHECK (status IN ('pending', 'viewed', 'shortlisted', 'rejected', 'archived'));
   -- Composite UNIQUE so the two child tables can FK against
   -- (id, facility_number) for DB-level tenant integrity.
-  ALTER TABLE applicant_interests
-    DROP CONSTRAINT IF EXISTS applicant_interests_id_facility_number_unique;
-  ALTER TABLE applicant_interests
-    ADD CONSTRAINT applicant_interests_id_facility_number_unique
-    UNIQUE (id, facility_number);
+  -- Idempotent ADD-if-missing (NOT drop+recreate): once applicant_status_history
+  -- and applicant_notes exist, their FKs depend on this constraint, so an
+  -- unconditional DROP fails on every subsequent boot (Postgres 2BP01). The
+  -- constraint definition is stable, so we only create it when it's absent.
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'applicant_interests_id_facility_number_unique'
+    ) THEN
+      ALTER TABLE applicant_interests
+        ADD CONSTRAINT applicant_interests_id_facility_number_unique
+        UNIQUE (id, facility_number);
+    END IF;
+  END $$;
 
   -- Append-only status-change audit (created_by only; no updated_*/trigger).
   CREATE TABLE IF NOT EXISTS applicant_status_history (
