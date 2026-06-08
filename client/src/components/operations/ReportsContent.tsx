@@ -23,7 +23,7 @@
  * after the 90s safety timeout per row).
  *
  * API contract (BE in flight):
- *   GET    /api/ops/facilities/:fn/reports?reportKind=&status=&page=&limit=
+ *   GET    /api/ops/facilities/:fn/reports?reportKind=&page=&limit=
  *   GET    /api/ops/reports/:id
  *   POST   /api/ops/facilities/:fn/reports/generate { reportKind, ... }
  *   GET    /api/ops/reports/:id/download                # streams w/ Content-Disposition
@@ -691,7 +691,6 @@ export function ReportsContent({
   const isWritable = useIsWritable();
 
   const [kindFilter, setKindFilter] = useState<ReportKind | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<ReportStatus | "all">("all");
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [generateOpen, setGenerateOpen] = useState(false);
@@ -701,10 +700,9 @@ export function ReportsContent({
   const queryUrl = useMemo(() => {
     const params = new URLSearchParams();
     if (kindFilter !== "all") params.set("reportKind", kindFilter);
-    if (statusFilter !== "all") params.set("status", statusFilter);
     const qs = params.toString();
     return `/api/ops/facilities/${facilityNumber}/reports${qs ? `?${qs}` : ""}`;
-  }, [facilityNumber, kindFilter, statusFilter]);
+  }, [facilityNumber, kindFilter]);
 
   const listQuery = useQuery<ReportsListEnvelope | null>({
     queryKey: [queryUrl],
@@ -944,26 +942,6 @@ export function ReportsContent({
                 {REPORT_KIND_LABELS[k]}
               </SelectItem>
             ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={statusFilter}
-          onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}
-        >
-          <SelectTrigger
-            className="h-9 w-[150px]"
-            aria-label="Filter by status"
-            data-testid="reports-filter-status"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All status</SelectItem>
-            <SelectItem value="ready">Ready</SelectItem>
-            <SelectItem value="generating">Generating</SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
-            <SelectItem value="expired">Expired</SelectItem>
           </SelectContent>
         </Select>
 

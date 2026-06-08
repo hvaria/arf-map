@@ -6,18 +6,22 @@
  * in the appropriate mime, and returns the bytes + metadata for the
  * Reports hub to persist via markReportReady().
  *
- * Six generators are implemented in this PR:
- *   - preaudit_pull           — wraps generatePreauditBundle, writes JSON
- *   - incident_summary        — listIncidents (windowed) → PDF
- *   - mar_export              — pool.query on ops_med_passes (windowed) → CSV
- *   - audit_trail             — listAuditForFacility (windowed) → CSV
- *   - monthly_trust_statement — generateMonthlyStatement → PDF
- *   - vendor_coi_matrix       — listVendors → CSV
+ * All 12 non-custom generators are implemented (as of commit 1f797a7):
+ *   - preaudit_pull            — wraps generatePreauditBundle, writes JSON
+ *   - incident_summary         — listIncidents (windowed) → PDF
+ *   - mar_export               — pool.query on ops_med_passes (windowed) → CSV
+ *   - audit_trail              — listAuditForFacility (windowed) → CSV
+ *   - monthly_trust_statement  — generateMonthlyStatement → PDF
+ *   - vendor_coi_matrix        — listVendors → CSV
+ *   - tracker_export           — listEntries (windowed) → CSV
+ *   - credentials_matrix       — listStaffCredentials → CSV
+ *   - drill_log_export         — listDrillLogs (windowed) → CSV
+ *   - posting_verification_log — listPostingVerifications → CSV
+ *   - complaint_log            — listComplaints → CSV
+ *   - chart_completeness_snapshot — listChartCompleteness → CSV
  *
- * The remaining six (tracker_export, credentials_matrix, drill_log_export,
- * posting_verification_log, complaint_log, chart_completeness_snapshot)
- * throw a "Not implemented yet — coming in Wave 5+" so the FE can render
- * them in the kind picker but the generate path fails gracefully.
+ * The only kind without a generator is "custom"; requesting it from the
+ * generate path fails gracefully via getReportGenerator() returning undefined.
  *
  * Timeout handling is the responsibility of the caller (reportsRouter
  * wraps the generator call in a Promise.race). Generators throw on

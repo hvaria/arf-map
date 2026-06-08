@@ -1,14 +1,16 @@
 /**
  * Wave 5 — Reports Hub generators tests.
  *
- * Coverage (the six implemented generators):
+ * Coverage (representative of the implemented generators):
  *  - preaudit_pull           → application/pdf, %PDF header, non-empty bytes
  *  - incident_summary        → application/pdf, %PDF header, window honored
  *  - mar_export              → text/csv, header row + empty body for no rows
  *  - audit_trail             → text/csv, humanized "changes" column, window honored
  *  - monthly_trust_statement → application/pdf, %PDF header
  *  - vendor_coi_matrix       → text/csv, header + body rows
- *  - stubs (e.g. tracker_export) → throw "Not implemented yet"
+ *
+ * All 12 non-custom kinds are implemented (as of commit 1f797a7); only the
+ * "custom" kind has no generator (getReportGenerator returns undefined).
  */
 
 import "dotenv/config";
