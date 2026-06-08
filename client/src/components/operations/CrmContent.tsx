@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import { getQueryFn, apiRequest, invalidateOpsDashboard } from "@/lib/queryClient";
 import { AdmissionsContent } from "@/components/operations/AdmissionsContent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -140,6 +140,7 @@ function AddLeadDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/leads`] });
+      void invalidateOpsDashboard(qc, facilityNumber);
       toast({ title: "Lead added" });
       onOpenChange(false);
       setForm(EMPTY_FORM);
@@ -334,6 +335,7 @@ function LeadCard({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/leads`] });
+      void invalidateOpsDashboard(qc, facilityNumber);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });

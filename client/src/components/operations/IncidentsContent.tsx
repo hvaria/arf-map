@@ -30,7 +30,7 @@
  */
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import { getQueryFn, apiRequest, invalidateOpsDashboard } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -306,6 +306,7 @@ function ReportIncidentDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`] });
+      void invalidateOpsDashboard(qc, facilityNumber);
       toast({ title: "Incident reported" });
       onOpenChange(false);
       setForm({ ...makeEmptyForm(), residentId: "none" });
@@ -667,6 +668,7 @@ function CloseIncidentDialog({
       qc.invalidateQueries({
         queryKey: [`/api/ops/facilities/${facilityNumber}/incidents/past-sla`],
       });
+      void invalidateOpsDashboard(qc, facilityNumber);
       toast({ title: "Incident closed" });
       onOpenChange(false);
       setNote("");
@@ -782,6 +784,7 @@ function ReopenIncidentDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: detailKey });
       qc.invalidateQueries({ queryKey: listKey });
+      void invalidateOpsDashboard(qc, facilityNumber);
       toast({ title: "Incident reopened — status set to under review" });
       onOpenChange(false);
       setReason("");

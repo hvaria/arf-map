@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import { getQueryFn, apiRequest, invalidateOpsDashboard } from "@/lib/queryClient";
 import {
   useFacilityPortalRoute,
   type ResidentTab,
@@ -602,6 +602,7 @@ function ReportIncidentInlineDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents/${residentId}/incidents`] });
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/incidents`] });
+      void invalidateOpsDashboard(qc, facilityNumber);
       toast({ title: "Incident reported" });
       onOpenChange(false);
       setForm({ incidentType: "", incidentDate: today, description: "", immediateActionTaken: "", reportedBy: "Staff" });

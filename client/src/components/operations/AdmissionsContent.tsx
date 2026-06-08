@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import { getQueryFn, apiRequest, invalidateOpsDashboard } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -94,6 +94,12 @@ export function AdmissionsContent({
       return res.json();
     },
     onSuccess: () => {
+      // Convert creates an active ops_residents row and flips the lead to
+      // 'admitted' — both move dashboard KPI counts (activeResidents up,
+      // pendingLeads down), so refresh the rail plus the two affected lists.
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/residents`] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/leads`] });
+      void invalidateOpsDashboard(qc, facilityNumber);
       toast({ title: "Resident created from admission" });
       if (onBack) onBack();
     },

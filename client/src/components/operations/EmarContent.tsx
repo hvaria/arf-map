@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest, getQueryFn } from "@/lib/queryClient";
+import { apiRequest, getQueryFn, invalidateOpsDashboard } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -172,6 +172,7 @@ function MedCard({ entry, facilityNumber, isExpanded, onToggle, dateKey }: MedCa
       // Prefix invalidation: matches every `[base, dateOrAnything]` key in cache
       // — covers EMAR's day-scoped query AND OperationsTab's TodayStrip query.
       qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/med-pass`] });
+      void invalidateOpsDashboard(qc, facilityNumber);
       toast({ title: "Med pass charted" });
       onToggle();
       setStep("detail"); setMode(null); setNotes(""); setRefuseReason("");

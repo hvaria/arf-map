@@ -213,3 +213,30 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * Invalidate the Operations dashboard aggregate query for a facility.
+ *
+ * The dashboard endpoint (`/api/ops/facilities/:fn/dashboard`) is the single
+ * source for the KPI-card counts and the left-rail sidebar badges in
+ * OperationsTab (open incidents, pending med passes, active residents,
+ * overdue compliance, pending leads, …). Because the global query config sets
+ * `staleTime: Infinity` with no window-focus or interval refetch, those counts
+ * only refresh when a mutation explicitly invalidates THIS key. Invalidating
+ * the entity's list query (e.g. `…/incidents`) does NOT propagate — keys are
+ * single path strings, so prefix matching never reaches `…/dashboard`.
+ *
+ * Any mutation that changes a counted entity — create/close/reopen an
+ * incident, chart a med pass, admit/discharge a resident, add or convert a
+ * lead, resolve a compliance item — must call this alongside its list
+ * invalidation so the rail stays in sync with the detail view instead of going
+ * stale until a manual refresh.
+ */
+export function invalidateOpsDashboard(
+  qc: QueryClient,
+  facilityNumber: string | number,
+): Promise<void> {
+  return qc.invalidateQueries({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/dashboard`],
+  });
+}
