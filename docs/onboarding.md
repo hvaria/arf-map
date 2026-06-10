@@ -166,6 +166,7 @@ npm run test:server   # server-only (skip client tests)
 - Re-run one file: `npx vitest run server/__tests__/health.test.ts`
 - Watch mode: `npm run test:watch`
 - Tests that need a DB will skip automatically if `DATABASE_URL` is unset or the DB is unreachable. CI runs against a real Postgres, so locally-skipped tests don't reduce coverage.
+- Client tests (`client/src/__tests__/`) run via `npm run test:client`, which uses `--config vitest.client.config.ts` — **not** `--project client`. Shared jsdom setup lives in `client/src/__tests__/setup.ts` (includes a `scrollIntoView` polyfill jsdom lacks).
 
 ### Creating a facility-owner test account
 

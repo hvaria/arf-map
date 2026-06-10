@@ -154,6 +154,19 @@ interface Incident {
   eventSeverity?: "serious" | "non_emergent" | null;
 }
 
+// Minimal shapes for the resident trust-account section on the Profile tab.
+interface RegSettingRow {
+  key: string;
+  value: string;
+}
+
+interface TrustAccount {
+  id: number;
+  residentId: number;
+  status: string;
+  balanceCents: number;
+}
+
 function FieldRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start gap-3 px-4 py-3 text-sm border-b last:border-b-0">
@@ -1498,6 +1511,28 @@ export function ResidentProfileContent({
     enabled: !!facilityNumber && !!residentIdStr,
   });
 
+  // Resident trust account — gated behind the RESIDENT_TRUST_ENABLED
+  // reg-setting (mirrors RegSettingsContent's `enabledRow.value === "true"`
+  // read). While reg-settings is still loading we treat trust as disabled so
+  // the "Open trust account" button never flashes on facilities that don't
+  // have the feature on.
+  const { data: regSettingsEnvelope } = useQuery<{ success: boolean; data: RegSettingRow[] } | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/reg-settings`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber,
+  });
+  const trustEnabled =
+    regSettingsEnvelope?.data?.find((r) => r.key === "RESIDENT_TRUST_ENABLED")?.value === "true";
+
+  const trustAccountsKey = `/api/ops/facilities/${facilityNumber}/trust/accounts?residentId=${residentIdStr}`;
+  const { data: trustAccountsEnvelope } = useQuery<{ success: boolean; data: TrustAccount[] } | null>({
+    queryKey: [trustAccountsKey],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!facilityNumber && !!residentIdStr && trustEnabled,
+  });
+  const trustAccount =
+    trustAccountsEnvelope?.data?.find((a) => a.status === "active") ?? undefined;
+
   // W8 — per-resident chart completeness for the profile panel.
   const { data: chartEnvelope, isLoading: chartLoading } =
     useChartCompletenessForResident(residentId);
@@ -1542,6 +1577,20 @@ export function ResidentProfileContent({
     },
   });
 
+  const openTrustAccountMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", `/api/ops/trust/accounts`, { residentId }).then((r) => r.json()),
+    onSuccess: () => {
+      // Per-resident list (this view) + the un-parameterized list (the Reports
+      // monthly-statement picker key) so the new account shows up in both.
+      qc.invalidateQueries({ queryKey: [trustAccountsKey] });
+      qc.invalidateQueries({ queryKey: [`/api/ops/facilities/${facilityNumber}/trust/accounts`] });
+      toast({ title: "Trust account opened" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1695,6 +1744,41 @@ export function ResidentProfileContent({
             result={chartResult}
             isLoading={chartLoading}
           />
+
+          {/* Resident trust account — only when the facility has the feature
+              enabled (RESIDENT_TRUST_ENABLED reg-setting). Hidden entirely
+              otherwise. */}
+          {trustEnabled && (
+            <div>
+              <h2 className="text-sm font-medium mb-2">Trust account</h2>
+              {trustAccount ? (
+                <p className="text-sm text-muted-foreground">
+                  Trust account &middot; Active &middot;
+                  Balance{" "}
+                  {(trustAccount.balanceCents / 100).toLocaleString(undefined, {
+                    style: "currency",
+                    currency: "USD",
+                  })}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    No trust account on file for this resident.
+                  </p>
+                  {isWritable && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openTrustAccountMutation.mutate()}
+                      disabled={openTrustAccountMutation.isPending}
+                    >
+                      Open trust account
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </TabsContent>
 
         {/* Assessments Tab */}
