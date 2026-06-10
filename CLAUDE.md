@@ -312,7 +312,7 @@ The canonical HTTP error shape returned to the client is:
 **Status of migration.** Phase 0 ships the helper plus one reference route — [`server/routes/credentials.ts`](server/routes/credentials.ts). The legacy shapes elsewhere remain in place until a later mechanical migration phase:
 
 - `{ message }` — `server/routes.ts`, `server/routes/jobseekerAuth.ts`, `server/routes/workExperience.ts`, …
-- `{ success: false, error }` — `server/ops/opsRouter.ts`, `server/ops/auditorMiddleware.ts`
+- `{ success: false, error }` — `server/ops/opsRouter.ts`, `server/ops/auditorMiddleware.ts`. The reports generate route (`server/ops/reportsRouter.ts`) deliberately extends this shape with a structured `code` instead of switching to `respondError`: a `TrustDomainError` thrown during generation maps `code === "account_not_found"` → 404 and any other code (e.g. `invalid_period`) → 409, returning `{ success:false, error, code, data:{reportId} }` for sibling-catch-branch consistency. (Note: `code` is dropped by the client `queryClient`, so the FE branches on the `error` message literal — see `ReportsContent.tsx`.)
 - The 402 `SUBSCRIPTION_REQUIRED` envelope from `server/middleware/requireActiveSubscription.ts` is already aligned with the target shape (it has `code` + `message` + an extra `upgradeUrl`) and is intentionally left as-is.
 
 **New routes must use `respondError`.** Do not invent new error shapes; if you need a new failure mode, add an `AppError` with a new `code`.

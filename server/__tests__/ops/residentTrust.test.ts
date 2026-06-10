@@ -508,4 +508,89 @@ describe("generateMonthlyStatement", () => {
     const list = await listStatements(FACILITY_A, acct.id, { page: 1, limit: 50 });
     expect(list.total).toBe(1);
   });
+
+  // CRITICAL regression: a month with ZERO ledger activity must still produce a
+  // valid zero-balance statement, not error out. Guards the COALESCE(...,0) +
+  // `?? {zeros}` path in generateMonthlyStatement (residentTrustStorage.ts).
+  // Unlike the idempotency test above, this appends NO ledger entry.
+  it("succeeds with a zero-balance statement for a month with no ledger activity", async () => {
+    await enableTrust(FACILITY_A);
+    const acct = await ensureTrustAccount(FACILITY_A, 602, ACTOR.id, ACTOR);
+    const periodStart = Date.UTC(2026, 0, 1);
+    const periodEnd = Date.UTC(2026, 1, 1);
+    // No appendLedgerEntry — the whole point is an empty-ledger month.
+    const stmt = await generateMonthlyStatement(
+      FACILITY_A,
+      acct.id,
+      periodStart,
+      periodEnd,
+      ACTOR.id,
+      ACTOR,
+    );
+    expect(stmt.openingBalanceCents).toBe(0);
+    expect(stmt.closingBalanceCents).toBe(0);
+    expect(stmt.creditTotalCents).toBe(0);
+    expect(stmt.debitTotalCents).toBe(0);
+    expect(stmt.entryCount).toBe(0);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Regression guard for the Monthly Trust Report generate route's catch branch
+  // (server/ops/reportsRouter.ts). That route maps:
+  //   TrustDomainError code "account_not_found" → HTTP 404
+  //   any other TrustDomainError code           → HTTP 409
+  // The route keys on `err.code`, so these tests lock the exact `.code` values
+  // generateMonthlyStatement throws. A rename of either literal would silently
+  // break the route's status mapping; these catch it without an HTTP harness.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it("throws TrustDomainError code 'account_not_found' for a missing account (route → 404)", async () => {
+    await enableTrust(FACILITY_A);
+    const periodStart = Date.UTC(2026, 0, 1);
+    const periodEnd = Date.UTC(2026, 1, 1);
+    // No account with this id exists for FACILITY_A.
+    const MISSING_ACCOUNT_ID = 999_999_999;
+    let caught: unknown;
+    try {
+      await generateMonthlyStatement(
+        FACILITY_A,
+        MISSING_ACCOUNT_ID,
+        periodStart,
+        periodEnd,
+        ACTOR.id,
+        ACTOR,
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TrustDomainError);
+    // The literal the route branch maps to HTTP 404.
+    expect((caught as TrustDomainError).code).toBe("account_not_found");
+  });
+
+  it("throws a TrustDomainError with a non-'account_not_found' code for an invalid period (route → 409)", async () => {
+    await enableTrust(FACILITY_A);
+    const acct = await ensureTrustAccount(FACILITY_A, 601, ACTOR.id, ACTOR);
+    // periodStartAt >= periodEndAt is rejected before the account lookup.
+    const ts = Date.UTC(2026, 0, 1);
+    let caught: unknown;
+    try {
+      await generateMonthlyStatement(
+        FACILITY_A,
+        acct.id,
+        ts,
+        ts,
+        ACTOR.id,
+        ACTOR,
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TrustDomainError);
+    const code = (caught as TrustDomainError).code;
+    expect(code).toBe("invalid_period");
+    // The route maps every code except "account_not_found" to 409, so the
+    // invariant the 409 branch depends on is simply: this is not the 404 code.
+    expect(code).not.toBe("account_not_found");
+  });
 });

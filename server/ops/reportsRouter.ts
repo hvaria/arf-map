@@ -39,6 +39,7 @@ import {
 } from "./reportsStorage";
 import { getReportGenerator } from "./reportsGenerators";
 import { getRegSetting } from "./regSettings";
+import { TrustDomainError } from "./residentTrustStorage";
 
 export const reportsRouter = Router();
 
@@ -266,6 +267,15 @@ reportsRouter.post(
         return res.status(504).json({
           success: false,
           error: "timed_out",
+          data: { reportId: stub.id },
+        });
+      }
+      if (e instanceof TrustDomainError) {
+        const status = e.code === "account_not_found" ? 404 : 409;
+        return res.status(status).json({
+          success: false,
+          error: e.message,
+          code: e.code,
           data: { reportId: stub.id },
         });
       }

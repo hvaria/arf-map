@@ -108,6 +108,31 @@ interface ReportsListEnvelope {
   data: ReportRow[];
 }
 
+// Minimal trust-account shape consumed by the monthly_trust_statement picker.
+interface TrustAccountRow {
+  id: number;
+  residentId: number;
+  status: string;
+  balanceCents: number;
+}
+
+interface TrustAccountsEnvelope {
+  success: boolean;
+  data: TrustAccountRow[];
+}
+
+// Minimal resident shape used to label trust-account options.
+interface ResidentRow {
+  id: number;
+  firstName: string;
+  lastName: string;
+}
+
+interface ResidentsEnvelope {
+  success: boolean;
+  data: ResidentRow[];
+}
+
 // ── Visual tone palette ──────────────────────────────────────────────────────
 // Status tones mirror EmarContent.tsx:55-62 (badge shape + tones).
 
@@ -245,6 +270,61 @@ function GenerateReportDialog({
 
   const [showErrors, setShowErrors] = useState(false);
 
+  // Trust accounts + residents — fetched only for the trust-statement kind so
+  // the picker can show friendly labels instead of asking for a raw account id.
+  // Both fail soft (getQueryFn 401 → null) so an errored query degrades to the
+  // empty-list guidance rather than crashing the dialog.
+  const trustAccountsEnabled = open && kind === "monthly_trust_statement";
+  const trustAccountsKey = `/api/ops/facilities/${facilityNumber}/trust/accounts`;
+  const trustAccountsQuery = useQuery<TrustAccountsEnvelope | null>({
+    queryKey: [trustAccountsKey],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: trustAccountsEnabled && !!facilityNumber,
+    staleTime: 60_000,
+  });
+  // `?limit=100` because the residents list endpoint is paginated and defaults
+  // to limit 20 — without this, accounts owned by residents past the first 20
+  // silently fall back to the "Account #<id>" label (the trust-accounts
+  // endpoint is unpaginated, so the two must match cardinality). 100 is the
+  // endpoint's hard cap; a facility with >100 trust-account-holding residents
+  // would still hit the fallback, but that's well beyond any realistic ARF.
+  //
+  // The `?limit=100` is baked into the queryKey (getQueryFn fetches
+  // queryKey.join("/") verbatim) so this is INTENTIONALLY a distinct cache
+  // entry from the canonical `…/residents` key that useResidents /
+  // AdmissionsContent share. Sharing that key here would mean this full-roster
+  // read and the default 20-row read would clobber each other depending on
+  // mount order; a label-only lookup that needs full cardinality should not
+  // depend on (or pollute) the shared 20-row cache.
+  const residentsQuery = useQuery<ResidentsEnvelope | null>({
+    queryKey: [`/api/ops/facilities/${facilityNumber}/residents?limit=100`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: trustAccountsEnabled && !!facilityNumber,
+    staleTime: 60_000,
+  });
+
+  const trustAccounts = trustAccountsQuery.data?.data ?? [];
+  const residentNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const r of residentsQuery.data?.data ?? []) {
+      const name = `${r.firstName ?? ""} ${r.lastName ?? ""}`.trim();
+      if (name) map.set(r.id, name);
+    }
+    return map;
+  }, [residentsQuery.data]);
+
+  const trustAccountsLoaded =
+    trustAccountsEnabled && !trustAccountsQuery.isLoading;
+  const trustAccountsEmpty = trustAccountsLoaded && trustAccounts.length === 0;
+
+  const trustAccountLabel = (acc: TrustAccountRow): string => {
+    const name = residentNameById.get(acc.residentId);
+    const statusLabel = acc.status
+      ? acc.status.charAt(0).toUpperCase() + acc.status.slice(1)
+      : "Unknown";
+    return name ? `${name} — ${statusLabel}` : `Account #${acc.id}`;
+  };
+
   // Reset whenever the dialog re-opens.
   useEffect(() => {
     if (!open) return;
@@ -381,6 +461,23 @@ function GenerateReportDialog({
       onOpenChange(false);
     },
     onError: (e: Error) => {
+      // Intentionally coupled to the backend TrustDomainError message literal:
+      // queryClient surfaces only `error.message`, dropping the structured
+      // `code` field, so we have to branch on the human-readable string. A
+      // future BE reword of this message would silently break this branch and
+      // must update it here too.
+      if (e.message === "Trust account not found") {
+        // Stale picker selection — the account was closed/moved. Refresh the
+        // list so the user can pick a valid one.
+        qc.invalidateQueries({ queryKey: [trustAccountsKey] });
+        toast({
+          title: "Trust account unavailable",
+          description:
+            "This trust account no longer exists or was moved. Pick another account and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: "Couldn't generate report",
         description: e.message,
@@ -477,32 +574,60 @@ function GenerateReportDialog({
           )}
 
           {/* monthly_trust_statement */}
-          {kind === "monthly_trust_statement" && (
-            <div className="grid grid-cols-2 gap-3">
-              <FormField
-                label="Account ID"
-                required
-                error={showErrors ? errors.params : undefined}
+          {kind === "monthly_trust_statement" &&
+            (trustAccountsEmpty ? (
+              <p
+                className="text-sm text-muted-foreground rounded-md border border-dashed p-3"
+                data-testid="generate-report-trust-empty"
               >
-                <Input
-                  type="number"
-                  min={1}
-                  value={trustAccountId}
-                  onChange={(e) => setTrustAccountId(e.target.value)}
-                  placeholder="e.g. 12"
-                  aria-label="Trust account id"
-                />
-              </FormField>
-              <FormField label="Month" required>
-                <Input
-                  type="month"
-                  value={trustMonth}
-                  onChange={(e) => setTrustMonth(e.target.value)}
-                  aria-label="Statement month"
-                />
-              </FormField>
-            </div>
-          )}
+                This facility has no resident trust accounts yet. Open one from
+                a resident&apos;s profile (Operations &rarr; Residents &rarr;
+                select a resident &rarr; Profile tab &rarr; Trust account), then
+                generate a monthly statement.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <FormField
+                  label="Trust account"
+                  required
+                  error={showErrors ? errors.params : undefined}
+                >
+                  <Select
+                    value={trustAccountId || undefined}
+                    onValueChange={setTrustAccountId}
+                    disabled={trustAccountsQuery.isLoading}
+                  >
+                    <SelectTrigger
+                      aria-label="Trust account"
+                      data-testid="generate-report-trust-account"
+                    >
+                      <SelectValue
+                        placeholder={
+                          trustAccountsQuery.isLoading
+                            ? "Loading accounts…"
+                            : "Select an account…"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {trustAccounts.map((acc) => (
+                        <SelectItem key={acc.id} value={String(acc.id)}>
+                          {trustAccountLabel(acc)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormField>
+                <FormField label="Month" required>
+                  <Input
+                    type="month"
+                    value={trustMonth}
+                    onChange={(e) => setTrustMonth(e.target.value)}
+                    aria-label="Statement month"
+                  />
+                </FormField>
+              </div>
+            ))}
 
           {/* tracker_export */}
           {kind === "tracker_export" && (
